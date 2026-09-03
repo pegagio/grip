@@ -12,7 +12,9 @@ page files, not here.
 ## Decisions
 
 - [Implementation and delivery direction](./pages/implementation-and-delivery-direction.md)
+- [Proportional engineering rigor](./pages/proportional-engineering-rigor.md)
 - [Safety and recovery model](./pages/safety-and-recovery-model.md)
+- [Spec evolution and merge-bounded persistence](./pages/spec-evolution-and-merge-bounded-persistence.md)
 
 ## Components
 
@@ -23,3 +25,5 @@ page files, not here.
 ## References
 
 - [Filesystem support boundaries](./pages/filesystem-support-boundaries.md)
+- [Initial delivery roadmap](./pages/initial-delivery-roadmap.md)
+- [Roadmap open questions](./pages/roadmap-open-questions.md)
