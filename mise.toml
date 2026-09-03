@@ -1,7 +1,36 @@
 [tools]
 python = "3.11.16"
 uv = "0.12.5"
+rust = { version = "1.98.0", components = "rustfmt,clippy" }
 "pipx:specify-cli" = { version = "1.0.1", depends = ["python", "uv"] }
 
 [settings.task]
 run_auto_install = false
+
+[tasks.build]
+description = "Build Grip in the default development profile"
+run = "cargo build"
+
+[tasks.clean]
+description = "Remove Cargo build artifacts"
+run = "cargo clean"
+
+[tasks.test]
+description = "Run the complete default test suite"
+run = "cargo test"
+
+[tasks.validate]
+description = "Run formatting, lint, tests, and the release build"
+run = [
+  "cargo fmt --check",
+  "cargo clippy --all-targets --all-features -- -D warnings",
+  "cargo test",
+  "cargo build --release",
+]
+
+[tasks.performance]
+description = "Build and run the ignored release performance acceptance test"
+run = [
+  "cargo build --release",
+  "cargo test --release --test performance_acceptance -- --ignored --nocapture",
+]

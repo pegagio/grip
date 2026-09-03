@@ -27,3 +27,7 @@ page files, not here.
 - [Filesystem support boundaries](./pages/filesystem-support-boundaries.md)
 - [Initial delivery roadmap](./pages/initial-delivery-roadmap.md)
 - [Roadmap open questions](./pages/roadmap-open-questions.md)
+
+## How-tos
+
+- [Local development workflows](./pages/local-development-workflows.md)

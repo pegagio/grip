@@ -6,5 +6,23 @@ venv/
 dist/
 *.egg-info/
 
+# Rust
+target/
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+
+# Editors and local environment
+.idea/
+.vscode/
+*.log
+.env*
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
 # Agents
 .agents/
