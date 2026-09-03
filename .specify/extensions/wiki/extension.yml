@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: wiki
   name: "LLM Wiki"
-  version: "1.1.1"
+  version: "1.1.0"
   description: "LLM-maintained compounding project wiki: source ingestion, cited answers, and consistency linting"
   category: "docs"
   effect: "read-write"
