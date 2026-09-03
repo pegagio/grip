@@ -1,7 +1,7 @@
 ---
 title: Implementation and delivery direction
 type: decision
-sources: [S001]
+sources: [S001, S002, S003]
 updated: 2026-09-03
 ---
 
@@ -15,6 +15,15 @@ Stable Rust with the 2024 edition is the starting direction. A checked-in toolch
 
 Delivery proceeds through safety-increasing vertical slices: read-only discovery, snapshot and status, guarded push without deletion, reverse synchronization, bidirectional sync with separately authorized deletion, and deliberate metadata expansion. This order validates namespace and state semantics before exposing destructive behavior. (S001)
 
+Implementation choices must use the simplest mechanism that protects managed files and accepted state. New frameworks, services, caches, concurrency mechanisms, or persistent indexes require a concrete capability need and an explanation of their maintenance and correctness costs; reversible choices belong in feature plans rather than durable product governance. (S002)
+
+Common inspection and planning workflows must remain responsive on representative local trees. Performance changes are driven by measurement, and behavior that can change payloads, registry data, or baselines requires automated coverage in isolated temporary roots rather than the developer's real files or Grip home. (S002)
+
+The durable roadmap refines the product's six delivery milestones into nine planned specifications. It separates CLI and state foundations, mapping ownership, and discovery before baseline classification, then introduces push, pull, bidirectional conflict handling, authorized deletion, and final metadata and filesystem completion in dependency order. (S003)
+
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
+- [Proportional engineering rigor](./proportional-engineering-rigor.md)
+- [Spec evolution and merge-bounded persistence](./spec-evolution-and-merge-bounded-persistence.md)
+- [Initial delivery roadmap](./initial-delivery-roadmap.md)

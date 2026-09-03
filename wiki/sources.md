@@ -6,3 +6,5 @@ Sources are immutable inputs — the wiki never edits them.
 | ID | Source | Type | First ingested | Last ingested | Pages touched |
 |----|--------|------|----------------|---------------|---------------|
 | S001 | `docs/product-definition.md` | file | 2026-09-03 | 2026-09-03 | `grip-product-model.md`, `mappings-and-managed-membership.md`, `synchronization-and-conflicts.md`, `safety-and-recovery-model.md`, `command-line-and-path-selection.md`, `configuration-and-state.md`, `filesystem-support-boundaries.md`, `implementation-and-delivery-direction.md` |
+| S002 | `.specify/memory/constitution.md` | file | 2026-09-03 | 2026-09-03 | `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md`, `safety-and-recovery-model.md`, `implementation-and-delivery-direction.md` |
+| S003 | `.specify/memory/roadmap.md` | file | 2026-09-03 | 2026-09-03 | `initial-delivery-roadmap.md`, `roadmap-open-questions.md`, `implementation-and-delivery-direction.md` |
