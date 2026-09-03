@@ -1,13 +1,17 @@
 ---
 title: Command-line and path selection
 type: component
-sources: [S001]
+sources: [S001, S004]
 updated: 2026-09-03
 ---
 
 # Command-line and path selection
 
 The prospective executable name is `grip`, but exact command syntax for creating file and tree mappings remains open. Human-readable output and stable machine-readable output are separate interfaces, and automation needs a defined exit-code contract. (S001)
+
+Feature 001 implements `grip version` and the read-only `grip validate`. Both application commands support human output by default and JSON through `--output json`; repeated `-v` or `--verbose` flags enable redacted diagnostics on stderr. Conventional `--help` and `--version` displays do not access the Grip home. (S004)
+
+The implemented public exit contract is `0`/`ok`, `2`/`invalid_usage`, `10`/`invalid_configuration`, `11`/`unsupported_schema`, `12`/`corrupt_state`, and `20`/`operational_failure`. State-publication contention remains internal because Feature 001 exposes no public state-publishing command. (S004)
 
 `status`, `check`, and `diff` are always read-only. `push`, `pull`, and `sync` mutate by default; `-n` and `--dry-run` preview their deterministic plans. Conflict resolution requires an explicit complete-side choice, provisionally expressed as `resolve PATH --source` or `resolve PATH --destination`. (S001)
 
@@ -18,3 +22,4 @@ Multiple path selectors, interactive two-way text reconciliation, and metadata-o
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
+- [Local development workflows](./local-development-workflows.md)
