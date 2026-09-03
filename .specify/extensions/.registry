@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "diagram-roadmap": {
+      "version": "0.2.0",
+      "source": "local",
+      "manifest_hash": "sha256:8d9aa7a8cfac8b6bc06f4447d1f1a7ad699f4a9a9579d631b64da139bae4c19e",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "codex": [
+          "speckit.diagram-roadmap.write",
+          "speckit.diagram-roadmap.brief",
+          "speckit.diagram-roadmap.debrief",
+          "speckit.diagram-roadmap.sync"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-09-03T18:09:13.726815+00:00"
+    },
+    "wiki": {
+      "version": "1.1.1",
+      "source": "local",
+      "manifest_hash": "sha256:0ea849dbfb56f5f85078f17e4b900cc2fb464b811ef496689c3cbef413beadb6",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "codex": [
+          "speckit.wiki.init",
+          "speckit.wiki.ingest",
+          "speckit.wiki.query",
+          "speckit.wiki.lint",
+          "speckit.wiki.status"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-09-03T18:10:24.812537+00:00"
+    }
+  }
+}

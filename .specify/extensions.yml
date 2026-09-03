@@ -1,0 +1,54 @@
+installed:
+- diagram-roadmap
+- wiki
+settings:
+  auto_execute_hooks: true
+hooks:
+  after_constitution:
+  - extension: diagram-roadmap
+    command: speckit.diagram-roadmap.write
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Draft or update the spec roadmap now? (captures spec-specific decisions
+      and future-spec intent from the constitution discussion)
+    description: Capture a durable roadmap so constitution-phase decisions and not-yet-written-spec
+      intent are not lost
+    condition: null
+  before_implement:
+  - extension: diagram-roadmap
+    command: speckit.diagram-roadmap.brief
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Review the roadmap for this spec before implementing?
+    description: Surface the roadmap's expectations (outcome, scope, governing decisions,
+      dependencies) for the spec about to be built
+    condition: null
+  after_implement:
+  - extension: diagram-roadmap
+    command: speckit.diagram-roadmap.debrief
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Check the implementation against the roadmap?
+    description: Verify the implemented spec matches its roadmap entry's outcome and
+      scope
+    condition: null
+  - extension: wiki
+    command: speckit.wiki.ingest
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Record what this implementation taught into the project wiki?
+    description: Capture implementation learnings into the wiki after implementation
+    condition: null
+  after_plan:
+  - extension: wiki
+    command: speckit.wiki.ingest
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Ingest this feature's research and plan decisions into the project wiki?
+    description: Compound the feature's verified research into the wiki after planning
+    condition: null

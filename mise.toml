@@ -1,0 +1,7 @@
+[tools]
+python = "3.11.16"
+uv = "0.12.5"
+"pipx:specify-cli" = { version = "1.0.1", depends = ["python", "uv"] }
+
+[settings.task]
+run_auto_install = false
