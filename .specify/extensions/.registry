@@ -19,9 +19,9 @@
       "installed_at": "2026-09-03T18:09:13.726815+00:00"
     },
     "wiki": {
-      "version": "1.1.1",
+      "version": "1.1.0",
       "source": "local",
-      "manifest_hash": "sha256:0ea849dbfb56f5f85078f17e4b900cc2fb464b811ef496689c3cbef413beadb6",
+      "manifest_hash": "sha256:73a980cd1b0096e8b98e8f86aedafe2f8a5b456d792dbce47a387a4f6b6e72a2",
       "enabled": true,
       "priority": 10,
       "registered_commands": {
@@ -34,7 +34,7 @@
         ]
       },
       "registered_skills": [],
-      "installed_at": "2026-09-03T18:10:24.812537+00:00"
+      "installed_at": "2026-09-03T18:24:55.926827+00:00"
     }
   }
 }
