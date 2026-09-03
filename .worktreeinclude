@@ -1,0 +1,3 @@
+# Copy ignored local development tooling into Codex-managed worktrees.
+.agents/
+.idea/

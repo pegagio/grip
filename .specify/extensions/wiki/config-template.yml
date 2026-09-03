@@ -1,0 +1,34 @@
+# LLM Wiki configuration
+# Copy to .specify/extensions/wiki/wiki-config.yml and customize.
+# Every value here is optional — missing keys fall back to extension defaults.
+# Environment variable overrides use the SPECKIT_WIKI_* prefix
+# (e.g. SPECKIT_WIKI_INGEST_MAX_PAGES_PER_INGEST=8).
+
+# Where the wiki lives, relative to the repository root. Normalized paths that
+# escape the repository, including through existing symlinks, are rejected
+# before any wiki state is read or written. The wiki is ordinary markdown,
+# committed with the repo: diffable, PR-reviewable, agent-agnostic.
+state:
+  directory: wiki
+
+# Ingest is the only operation that writes knowledge into pages.
+ingest:
+  max_pages_per_ingest: 12   # positive whole number; hard cap per ingest run
+  page_max_words: 600        # positive whole number; split threshold per SCHEMA.md
+  require_citations: true    # every synthesized claim must carry a source ID (S001…)
+
+# Query answers strictly from wiki pages — it is how you test what the wiki knows.
+query:
+  pages_slice: 8             # positive whole number; max pages loaded per question
+  context_tokens: 4000       # positive whole number; soft rendered-context cap
+
+# Lint is the maintenance pass: mechanical issues can be auto-fixed,
+# semantic issues (contradictions, stale claims) are only ever reported.
+lint:
+  stale_after_days: 90       # non-negative whole number; age threshold for stale pages
+  auto_fix: index-and-links  # none | index-and-links (regenerate INDEX.md, update unambiguous renamed targets)
+
+# Page taxonomy enforced by SCHEMA.md. Edit SCHEMA.md in your wiki to change
+# definitions; keep this list in sync so commands classify pages consistently.
+schema:
+  page_types: [concept, decision, component, reference, howto]
