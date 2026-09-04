@@ -1,6 +1,37 @@
 # Grip
 
-Grip is an offline, per-user command-line tool for safely managing file mappings. Feature 001 establishes its CLI, configuration, and machine-state foundation; it does not yet create mappings, copy payloads, synchronize files, delete files, use Git, or contact remote services.
+Grip is a local, per-user tool for managing explicit file and tree mapping intent. Feature 002 records ownership only: mapping commands do not copy, delete, discover, reconcile, or otherwise modify payload files.
+
+## Mapping lifecycle
+
+Add mappings with canonical source-path identity:
+
+```sh
+grip mapping add file /absolute/source/file /absolute/destination/file
+grip mapping add tree /absolute/source/tree /absolute/destination/tree
+```
+
+The source must exist and match the requested kind. The destination may be absent, but its nearest existing ancestor must be safe. Both arguments must be absolute UTF-8 paths without `..`; symbolic-link endpoints and unsupported node kinds are rejected. Grip canonicalizes accepted paths and rejects duplicate, overlapping, nested, equal, or cross-recursive ownership across the complete registry.
+
+Inspect or remove intent by canonical source identity:
+
+```sh
+grip mapping list
+grip mapping show /absolute/source
+grip mapping remove /absolute/source
+```
+
+`mapping list` is ordered by canonical source. `mapping show` and `mapping remove` select exactly one mapping. Removal changes registry intent only and never removes payload data.
+
+All commands support `--output human|json`. JSON mapping values have stable `kind`, `source`, and `destination` fields, while failures include stable `operation` and `reason` details.
+
+## Registry publication safety
+
+`<GRIP_HOME>/config.toml` is the accepted v1 registry. It must be a current-user-owned, non-symlink regular file with group and other write bits unset; add and remove also require owner write permission. Deterministic rewrites preserve its exact permission mode, though presentation-only TOML whitespace, comments, and ordering may be normalized.
+
+Writers coordinate through the stable owner-only `<GRIP_HOME>/.registry.lock`. Before replacement, Grip verifies that the accepted bytes and mapping paths have not changed, then retains the exact prior registry under `<GRIP_HOME>/state/recovery/registry/sha256-<digest>/config.toml`. Recovery generations are immutable and content-addressed. Grip stages and verifies the complete candidate beside `config.toml`, atomically renames it, and syncs the containing directory. Lock, staging, and recovery artifacts never contain accepted synchronization state, and no mapping command mutates `<GRIP_HOME>/state/state.json`.
+
+Grip is offline and does not synchronize files, delete files, use Git, or contact remote services. Mapping declarations establish intent for later synchronization features.
 
 ## Install and build
 
@@ -39,7 +70,7 @@ Grip-owned state is optional. `validate` treats an absent `state/state.json` as 
 
 ## Commands and output
 
-Use `grip version` to report the application version and `grip validate` to validate the selected home, registry, and optional state. Both support `--output human` (the default) or `--output json`. Repeat `-v` or `--verbose` to emit redacted diagnostics on stderr. Conventional `--help` and `--version` displays do not access a Grip home.
+Use `grip version` to report the application version and `grip validate` to validate the selected home, registry, and optional state. These commands and the mapping lifecycle support `--output human` (the default) or `--output json`. Repeat `-v` or `--verbose` to emit redacted diagnostics on stderr. Conventional `--help` and `--version` displays do not access a Grip home.
 
 ```bash
 GRIP_HOME=/Users/pegagio/example-grip-home grip validate
@@ -57,4 +88,4 @@ grip --output json version
 | 12 | `corrupt_state` | Malformed or inconsistent machine state |
 | 20 | `operational_failure` | I/O, output, or another runtime failure |
 
-State-publication contention is internal in Feature 001; no public command publishes state yet.
+Registry-publication contention is reported as an operational failure. No public command publishes synchronization state yet.

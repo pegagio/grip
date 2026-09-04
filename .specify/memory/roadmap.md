@@ -1,25 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: none -> 1.0.0
-Bump rationale: Initial roadmap creation from the ratified constitution, approved feature ledger, and product definition.
+Version change: 1.0.1 -> 1.0.2
+Bump rationale: Record verified completion of Feature 002 after implementation convergence and roadmap debrief.
 
 Changes this revision:
-  - Added spec 001 — CLI, Configuration, and State Foundation
-  - Added spec 002 — Mapping Registry and Ownership Validation
-  - Added spec 003 — Source Discovery and Gripignore
-  - Added spec 004 — Baselines, Classification, and Status
-  - Added spec 005 — Safe Push and Recovery
-  - Added spec 006 — Reverse Synchronization
-  - Added spec 007 — Bidirectional Synchronization and Conflict Resolution
-  - Added spec 008 — Authorized Deletion and Retirement
-  - Added spec 009 — Metadata and Filesystem Contract Completion
-  - Recorded constraints C-01 through C-11
+  - Changed spec 002 from in-progress to verified
+  - Recorded the attributable Feature 002 debrief as verification evidence
 
-Specs affected: 001, 002, 003, 004, 005, 006, 007, 008, 009
-Open questions added/resolved: Q-01 through Q-13 added; none resolved
+Specs affected: 002
+Open questions added/resolved: none; Q-03, Q-04, and Q-09 remain resolved by the Feature 002 specification
 
-Notes: This roadmap decomposes the approved product definition into small, dependency-ordered specifications. Potential future expansions remain outside the initial product roadmap.
+Notes: Feature 002 passed implementation convergence and a complete HEAD-to-worktree roadmap debrief with no findings. Feature 003 is now dependency-eligible but remains planned until separately started.
 -->
 
 # Grip — Spec Roadmap
@@ -59,8 +51,9 @@ These constraints apply across the ledger. Each is grounded in the active user-a
 
 The following specifications form the approved path from a read-only foundation to the complete initial product. Every entry is planned; unresolved details are retained in its notes and in Open Questions for clarification when that specification begins.
 
-### 001 — CLI, Configuration, and State Foundation  [status: planned]
+### 001 — CLI, Configuration, and State Foundation  [status: verified]
 
+- **Spec dir:** `specs/001-cli-state-foundation`
 - **Description:** Establish the Rust application, command boundary, per-user Grip home, versioned configuration and state envelopes, and initial human and machine output contracts without changing mapped payloads.
 - **Outcome:** A runnable, testable `grip` CLI can locate and validate its per-user root, parse a versioned empty or minimal configuration, report structured errors, and exercise its output and exit-code boundaries without mutating user files.
 - **Scope (in):** Stable Rust and Rust 2024 project skeleton; thin CLI boundary; exact absolute `GRIP_HOME` override; default `~/.grip/`; separation of user-authored registry and machine-owned state; schema-version rejection; atomic publication primitives for Grip-owned state; initial human, machine, and diagnostic channels; conventional formatting, lint, test, and release-build checks.
@@ -70,8 +63,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Command-Line Experience, Configuration and State, Implementation Direction
 - **Notes:** The spec must settle Q-01, Q-02, and the foundation portion of Q-12. `clap`, Serde, `thiserror`, and `tracing` are candidates, not predetermined dependencies.
 
-### 002 — Mapping Registry and Ownership Validation  [status: planned]
+### 002 — Mapping Registry and Ownership Validation  [status: verified]
 
+- **Spec dir:** `specs/002-mapping-registry-ownership`
 - **Description:** Define file and tree mapping intent, canonical source-path identity, lifecycle commands, and complete ownership validation before discovery or mutation.
 - **Outcome:** Users can add, inspect, and remove non-overlapping mapping intent, and Grip rejects ambiguous, escaping, equal, nested, or self-recursive topologies before they can own filesystem entries.
 - **Scope (in):** File and tree mapping schemas; canonical path resolution; source-path identity without user-assigned IDs; complete tuple persistence; mapping selection; overlap and traversal rejection; atomic registry updates; non-destructive untracking; CLI contracts for mapping lifecycle.
@@ -79,7 +73,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 001
 - **Governed by:** C-02, C-04, C-05, C-06, C-10
 - **Addresses:** `docs/product-definition.md` — Mapping Model, Tracking and Untracking, Configuration and State
-- **Notes:** The spec must settle Q-03, Q-04, and Q-09. Tracking must not cause an unreviewed bulk payload mutation.
+- **Notes:** The spec resolves Q-03, Q-04, and Q-09. Tracking records intent only and does not cause an unreviewed bulk payload mutation. Verification evidence: `specs/002-mapping-registry-ownership/roadmap-reviews/debrief-20260904T171506Z.md` (`PROCEED`, no findings).
 
 ### 003 — Source Discovery and Gripignore  [status: planned]
 
@@ -190,4 +184,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-03
+**Version**: 1.0.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-04

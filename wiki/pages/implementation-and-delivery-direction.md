@@ -2,7 +2,7 @@
 title: Implementation and delivery direction
 type: decision
 sources: [S001, S002, S003, S004]
-updated: 2026-09-03
+updated: 2026-09-04
 ---
 
 # Implementation and delivery direction
@@ -13,6 +13,8 @@ Stable Rust with the 2024 edition is the starting direction. A checked-in toolch
 
 Feature 001 realizes that direction with a pinned Rust toolchain installed through mise and exposes named mise tasks for development builds, cleanup, tests, the full validation suite, and the release performance harness. (S004)
 
+Feature 002 extends the same single application with separate mapping-domain, path-policy, registry-publication, CLI, and result responsibilities. It records intent only, validates the complete ownership graph, revalidates accepted bytes and path evidence under a short-lived registry lock, retains exact prior-registry recovery, and publishes deterministic complete candidates without touching payloads or synchronization state. (S004)
+
 `clap` is the leading CLI-framework candidate, while the `ignore`, Serde, `thiserror`, and `tracing` ecosystems are possible supporting directions. These choices are advisory and should be introduced only when their capabilities and maintenance costs are justified; Grip-owned domain commands and structured errors should remain independent of framework details. (S001)
 
 Delivery proceeds through safety-increasing vertical slices: read-only discovery, snapshot and status, guarded push without deletion, reverse synchronization, bidirectional sync with separately authorized deletion, and deliberate metadata expansion. This order validates namespace and state semantics before exposing destructive behavior. (S001)
@@ -22,6 +24,8 @@ Implementation choices must use the simplest mechanism that protects managed fil
 Common inspection and planning workflows must remain responsive on representative local trees. Performance changes are driven by measurement, and behavior that can change payloads, registry data, or baselines requires automated coverage in isolated temporary roots rather than the developer's real files or Grip home. (S002)
 
 The durable roadmap refines the product's six delivery milestones into nine planned specifications. It separates CLI and state foundations, mapping ownership, and discovery before baseline classification, then introduces push, pull, bidirectional conflict handling, authorized deletion, and final metadata and filesystem completion in dependency order. (S003)
+
+Features 001 and 002 are verified. Feature 002 establishes the canonical mapping-ownership boundary without performing source discovery or payload synchronization, making Feature 003 dependency-eligible while leaving it planned until separately started. (S003)
 
 ## Related pages
 

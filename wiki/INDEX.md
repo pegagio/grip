@@ -20,6 +20,7 @@ page files, not here.
 
 - [Command-line and path selection](./pages/command-line-and-path-selection.md)
 - [Configuration and state](./pages/configuration-and-state.md)
+- [Mapping registry publication](./pages/mapping-registry-publication.md)
 - [Synchronization and conflicts](./pages/synchronization-and-conflicts.md)
 
 ## References

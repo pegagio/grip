@@ -1,3 +1,4 @@
+use crate::mapping::OwnershipConflict;
 use std::io;
 use thiserror::Error;
 
@@ -46,11 +47,24 @@ pub enum GripError {
     #[error("{0}")]
     InvalidConfiguration(String),
     #[error("{0}")]
+    RegistryIo(String),
+    #[error("{0}")]
     UnsupportedSchema(String),
     #[error("{0}")]
     CorruptState(String),
     #[error("state publication is already in progress")]
     StateContention,
+    #[error("{message}")]
+    Mapping {
+        operation: String,
+        reason: String,
+        paths: Vec<String>,
+        kind: Option<crate::mapping::MappingKind>,
+        publication_visible: bool,
+        category: ResultCategory,
+        message: String,
+        conflicts: Vec<OwnershipConflict>,
+    },
     #[error("{0}")]
     Internal(String),
 }
@@ -59,12 +73,133 @@ impl GripError {
     pub fn category(&self) -> ResultCategory {
         match self {
             Self::InvalidConfiguration(_) => ResultCategory::InvalidConfiguration,
+            Self::RegistryIo(_) => ResultCategory::InternalError,
             Self::UnsupportedSchema(_) => ResultCategory::UnsupportedSchema,
             Self::CorruptState(_) => ResultCategory::CorruptState,
+            Self::Mapping { category, .. } => *category,
             Self::StateContention | Self::Internal(_) => ResultCategory::InternalError,
         }
     }
     pub fn from_io(context: &str, error: io::Error) -> Self {
         Self::Internal(format!("{context}: {error}"))
+    }
+
+    pub fn mapping(operation: &str, reason: &str, paths: Vec<String>, message: &str) -> Self {
+        let category = if matches!(
+            reason,
+            "registry_contention" | "publication_failure" | "registry_recovery_failure"
+        ) {
+            ResultCategory::InternalError
+        } else {
+            ResultCategory::InvalidConfiguration
+        };
+        Self::mapping_with_category(operation, reason, paths, category, message)
+    }
+
+    fn mapping_with_category(
+        operation: &str,
+        reason: &str,
+        paths: Vec<String>,
+        category: ResultCategory,
+        message: &str,
+    ) -> Self {
+        Self::Mapping {
+            operation: operation.into(),
+            reason: reason.into(),
+            paths,
+            kind: None,
+            publication_visible: false,
+            category,
+            message: message.into(),
+            conflicts: Vec::new(),
+        }
+    }
+
+    pub fn ownership_conflicts(conflicts: Vec<OwnershipConflict>) -> Self {
+        Self::Mapping {
+            operation: "registry_validate".into(),
+            reason: "ownership_conflicts".into(),
+            paths: Vec::new(),
+            kind: None,
+            publication_visible: false,
+            category: ResultCategory::InvalidConfiguration,
+            message: "Mapping ownership conflicts with the accepted registry".into(),
+            conflicts,
+        }
+    }
+
+    pub fn for_operation(self, value: &str) -> Self {
+        match self {
+            Self::RegistryIo(message) => {
+                Self::mapping_operational(value, "invalid_registry", Vec::new(), &message)
+            }
+            mut error => {
+                if let Self::Mapping { operation, .. } = &mut error {
+                    *operation = value.into();
+                }
+                error
+            }
+        }
+    }
+
+    pub fn for_mapping_kind(mut self, value: crate::mapping::MappingKind) -> Self {
+        if let Self::Mapping { kind, .. } = &mut self {
+            *kind = Some(value);
+        }
+        self
+    }
+
+    pub fn for_mapping_operation(self, operation: &str) -> Self {
+        match self {
+            Self::InvalidConfiguration(message) => {
+                Self::mapping(operation, "invalid_registry", Vec::new(), &message)
+            }
+            Self::RegistryIo(message) => {
+                Self::mapping_operational(operation, "invalid_registry", Vec::new(), &message)
+            }
+            Self::UnsupportedSchema(message) => Self::mapping_with_category(
+                operation,
+                "invalid_registry",
+                Vec::new(),
+                ResultCategory::UnsupportedSchema,
+                &message,
+            ),
+            other => other.for_operation(operation),
+        }
+    }
+
+    fn mapping_operational(
+        operation: &str,
+        reason: &str,
+        paths: Vec<String>,
+        message: &str,
+    ) -> Self {
+        Self::mapping_with_category(
+            operation,
+            reason,
+            paths,
+            ResultCategory::InternalError,
+            message,
+        )
+    }
+
+    pub fn with_publication_visible(mut self, value: bool) -> Self {
+        if let Self::Mapping {
+            publication_visible,
+            ..
+        } = &mut self
+        {
+            *publication_visible = value;
+        }
+        self
+    }
+
+    pub fn with_paths_if_empty(mut self, value: Vec<String>) -> Self {
+        if let Self::Mapping { paths, .. } = &mut self
+            && paths.is_empty()
+        {
+            *paths = value;
+        }
+        self
     }
 }
