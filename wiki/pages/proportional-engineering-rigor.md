@@ -1,8 +1,8 @@
 ---
 title: Proportional engineering rigor
 type: decision
-sources: [S002]
-updated: 2026-09-03
+sources: [S002, S005]
+updated: 2026-09-04
 ---
 
 # Proportional engineering rigor
@@ -14,6 +14,8 @@ Long-lived filesystem locks, background watchers, persistent inode identity, ker
 Local concurrency is handled by narrow evidence capture, pre-action revalidation, safe publication, and explicit drift errors. Grip may use a short-lived per-user lock to protect its own registry or state publication when concurrent Grip processes could corrupt that data, but it cannot depend on inode identity remaining stable or prevent unrelated applications from editing user files. (S002)
 
 Performance work follows the same proportional rule: common read-only and planning workflows remain responsive, redundant filesystem work is avoided, and measurement of representative workloads must justify caches, parallelism, or additional indexing. (S002)
+
+Feature 002 validates up to 1,000 mappings with an auditable all-pairs ownership check instead of adding a trie, persistent index, graph framework, cache, or async runtime. Canonical accepted-registry validation is performed once per load, and a 100-run release harness verified canonical 1,000-mapping list results while keeping the p95 workflow below the feature's one-second threshold. (S005)
 
 ## Related pages
 

@@ -19,6 +19,23 @@ fn measure(mut command: impl FnMut() -> Command) -> Duration {
     p95(samples)
 }
 
+fn measure_consistent(mut command: impl FnMut() -> Command) -> Duration {
+    let expected = command().output().unwrap();
+    assert!(expected.status.success());
+    let samples = (0..100)
+        .map(|_| {
+            let start = Instant::now();
+            let output = command().output().unwrap();
+            let elapsed = start.elapsed();
+            assert!(output.status.success());
+            assert_eq!(output.stdout, expected.stdout);
+            assert_eq!(output.stderr, expected.stderr);
+            elapsed
+        })
+        .collect();
+    p95(samples)
+}
+
 #[test]
 #[ignore = "representative-workstation acceptance harness"]
 fn warm_release_commands_meet_p95_targets() {
@@ -26,6 +43,26 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(binary.is_file(), "build release binary first");
     let root = tempfile::tempdir().unwrap();
     let grip_home = support::minimal_home(root.path());
+    let source_root = root.path().join("sources");
+    let destination_root = root.path().join("destinations");
+    std::fs::create_dir(&source_root).unwrap();
+    std::fs::create_dir(&destination_root).unwrap();
+    let mappings = (0..1_000)
+        .map(|index| {
+            let source = source_root.join(format!("entry-{index:04}"));
+            std::fs::write(&source, index.to_string()).unwrap();
+            (
+                "file",
+                source,
+                destination_root.join(format!("entry-{index:04}")),
+            )
+        })
+        .collect::<Vec<_>>();
+    let borrowed = mappings
+        .iter()
+        .map(|(kind, source, destination)| (*kind, source.as_path(), destination.as_path()))
+        .collect::<Vec<_>>();
+    support::write_registry(&grip_home, &borrowed);
     eprintln!(
         "os={} arch={} rust={} profile=release runs=100",
         std::env::consts::OS,
@@ -50,8 +87,19 @@ fn warm_release_commands_meet_p95_targets() {
             .arg("validate");
         c
     });
-    eprintln!("p95 help={help:?} version={version:?} validate={validate:?}");
+    let mapping_list = measure_consistent(|| {
+        let mut c = Command::new(&binary);
+        c.env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", &grip_home)
+            .args(["--output=json", "mapping", "list"]);
+        c
+    });
+    eprintln!(
+        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?}"
+    );
     assert!(help <= Duration::from_millis(100));
     assert!(version <= Duration::from_millis(100));
-    assert!(validate <= Duration::from_millis(250));
+    assert!(validate <= Duration::from_secs(1));
+    assert!(mapping_list <= Duration::from_secs(1));
 }

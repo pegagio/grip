@@ -1,6 +1,8 @@
 pub mod cli;
 pub mod error;
 pub mod home;
+pub mod mapping;
+pub mod path_policy;
 pub mod registry;
 pub mod result;
 pub mod state;
@@ -52,7 +54,7 @@ pub fn run_process() -> std::process::ExitCode {
 }
 
 pub fn execute(cli: &cli::Cli) -> CommandOutcome {
-    match cli.command {
+    match &cli.command {
         cli::Command::Version => {
             let mut outcome =
                 CommandOutcome::success(format!("grip {}", env!("CARGO_PKG_VERSION")));
@@ -76,24 +78,176 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
             }
             Err(error) => CommandOutcome::failure(&error),
         },
+        cli::Command::Mapping(args) => match execute_mapping(&args.command) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
+    }
+}
+
+fn selected_home() -> Result<home::GripHome, GripError> {
+    let selected = home::select(std::env::var_os("GRIP_HOME"), ::home::home_dir())?;
+    home::validate(&selected)?;
+    Ok(selected)
+}
+
+fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, GripError> {
+    use cli::{MappingAddKind, MappingCommand};
+    use mapping::{Mapping, MappingKind};
+    use registry::publication;
+
+    let home = selected_home()?;
+    match command {
+        MappingCommand::Add(add) => {
+            let (kind, pair) = match &add.kind {
+                MappingAddKind::File(pair) => (MappingKind::File, pair),
+                MappingAddKind::Tree(pair) => (MappingKind::Tree, pair),
+            };
+            let operation = "mapping_add";
+            let snapshot = publication::load(&home, true).map_err(|error| {
+                error
+                    .for_mapping_operation(operation)
+                    .for_mapping_kind(kind)
+                    .with_paths_if_empty(vec![
+                        home.path().join("config.toml").display().to_string(),
+                    ])
+            })?;
+            let source_evidence = path_policy::inspect_endpoint(
+                std::path::Path::new(&pair.source),
+                kind,
+                true,
+                operation,
+            )
+            .map_err(|error| error.for_mapping_kind(kind))?;
+            let destination_evidence = path_policy::inspect_endpoint(
+                std::path::Path::new(&pair.destination),
+                kind,
+                false,
+                operation,
+            )
+            .map_err(|error| error.for_mapping_kind(kind))?;
+            let added = Mapping::new(
+                kind,
+                source_evidence.canonical.clone(),
+                destination_evidence.canonical.clone(),
+            );
+            let mut mappings = snapshot.registry.mappings().to_vec();
+            mappings.push(added.clone());
+            let candidate = registry::Registry::new(mappings)
+                .map_err(|error| error.for_operation(operation).for_mapping_kind(kind))?;
+            publication::publish_with_evidence(
+                &home,
+                &snapshot,
+                &candidate,
+                &[source_evidence, destination_evidence],
+            )
+            .map_err(|error| {
+                error
+                    .for_operation(operation)
+                    .for_mapping_kind(kind)
+                    .with_paths_if_empty(vec![
+                        home.path().join("config.toml").display().to_string(),
+                    ])
+            })?;
+            Ok(CommandOutcome::mapping_success(
+                operation,
+                "Mapping recorded",
+                &added,
+            ))
+        }
+        MappingCommand::List => {
+            let operation = "mapping_list";
+            let snapshot = publication::load(&home, false).map_err(|error| {
+                error
+                    .for_mapping_operation(operation)
+                    .with_paths_if_empty(vec![
+                        home.path().join("config.toml").display().to_string(),
+                    ])
+            })?;
+            Ok(CommandOutcome::mapping_list(snapshot.registry.mappings()))
+        }
+        MappingCommand::Show(args) => {
+            let operation = "mapping_show";
+            let snapshot = publication::load(&home, false).map_err(|error| {
+                error
+                    .for_mapping_operation(operation)
+                    .with_paths_if_empty(vec![
+                        home.path().join("config.toml").display().to_string(),
+                    ])
+            })?;
+            let source =
+                path_policy::resolve_selector(std::path::Path::new(&args.source), operation)?;
+            let value = snapshot
+                .registry
+                .mappings()
+                .iter()
+                .find(|mapping| mapping.source == source)
+                .ok_or_else(|| {
+                    GripError::mapping(
+                        operation,
+                        "mapping_not_found",
+                        vec![source.display().to_string()],
+                        "Mapping not found",
+                    )
+                })?;
+            Ok(CommandOutcome::mapping_success(
+                operation,
+                "Mapping found",
+                value,
+            ))
+        }
+        MappingCommand::Remove(args) => {
+            let operation = "mapping_remove";
+            let snapshot = publication::load(&home, true).map_err(|error| {
+                error
+                    .for_mapping_operation(operation)
+                    .with_paths_if_empty(vec![
+                        home.path().join("config.toml").display().to_string(),
+                    ])
+            })?;
+            let source =
+                path_policy::resolve_selector(std::path::Path::new(&args.source), operation)?;
+            let removed = snapshot
+                .registry
+                .mappings()
+                .iter()
+                .find(|mapping| mapping.source == source)
+                .cloned()
+                .ok_or_else(|| {
+                    GripError::mapping(
+                        operation,
+                        "mapping_not_found",
+                        vec![source.display().to_string()],
+                        "Mapping not found",
+                    )
+                })?;
+            let mappings = snapshot
+                .registry
+                .mappings()
+                .iter()
+                .filter(|mapping| mapping.source != source)
+                .cloned()
+                .collect();
+            let candidate = registry::Registry::new(mappings)
+                .map_err(|error| error.for_operation(operation))?;
+            publication::publish(&home, &snapshot, &candidate).map_err(|error| {
+                error.for_operation(operation).with_paths_if_empty(vec![
+                    home.path().join("config.toml").display().to_string(),
+                ])
+            })?;
+            Ok(CommandOutcome::mapping_success(
+                operation,
+                "Mapping removed",
+                &removed,
+            ))
+        }
     }
 }
 
 fn validate_selected_home() -> Result<(std::path::PathBuf, &'static str), GripError> {
     use std::fs;
-    let selected = home::select(std::env::var_os("GRIP_HOME"), ::home::home_dir())?;
-    home::validate(&selected)?;
-    let config_path = selected.path().join("config.toml");
-    let metadata = fs::symlink_metadata(&config_path)
-        .map_err(|e| GripError::InvalidConfiguration(format!("config.toml is unavailable: {e}")))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(GripError::InvalidConfiguration(
-            "config.toml must be a regular file".into(),
-        ));
-    }
-    let config = fs::read_to_string(&config_path)
-        .map_err(|e| GripError::InvalidConfiguration(format!("config.toml is unreadable: {e}")))?;
-    registry::decode(&config)?;
+    let selected = selected_home()?;
+    registry::publication::load(&selected, false)?;
     let state_path = selected.path().join("state/state.json");
     match fs::symlink_metadata(&state_path) {
         Ok(m) => {

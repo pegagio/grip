@@ -31,6 +31,44 @@ impl From<OutputArg> for OutputMode {
 pub enum Command {
     Version,
     Validate,
+    Mapping(MappingArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct MappingArgs {
+    #[command(subcommand)]
+    pub command: MappingCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MappingCommand {
+    Add(MappingAddArgs),
+    List,
+    Show(MappingSourceArgs),
+    Remove(MappingSourceArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct MappingAddArgs {
+    #[command(subcommand)]
+    pub kind: MappingAddKind,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MappingAddKind {
+    File(MappingPairArgs),
+    Tree(MappingPairArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct MappingPairArgs {
+    pub source: OsString,
+    pub destination: OsString,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct MappingSourceArgs {
+    pub source: OsString,
 }
 
 pub fn requests_json(args: &[OsString]) -> bool {

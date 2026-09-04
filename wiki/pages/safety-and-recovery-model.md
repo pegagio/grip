@@ -1,8 +1,8 @@
 ---
 title: Safety and recovery model
 type: decision
-sources: [S001, S002]
-updated: 2026-09-03
+sources: [S001, S002, S005]
+updated: 2026-09-04
 ---
 
 # Safety and recovery model
@@ -19,7 +19,10 @@ The constitution makes this safety model binding: every mutation derives from a 
 
 Concurrent external edits are handled through evidence capture, pre-action revalidation, safe publication, and explicit drift errors rather than attempts to lock whole payload trees. A short-lived per-user lock may protect Grip-owned registry or state publication, but it must remain bounded and provide actionable contention and stale-lock behavior. (S002)
 
+Feature 002 applies this boundary to registry replacement. A writer locks a stable owner-only file, rereads the accepted bytes, revalidates the exact submitted-path evidence and complete candidate, publishes and verifies a content-addressed recovery copy of the prior document, and verifies a same-directory staged candidate before rename. Failure before rename leaves the prior registry authoritative; a directory-sync failure after rename reports that visibility changed but durability was not confirmed. (S005)
+
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
+- [Mapping registry publication](./mapping-registry-publication.md)
 - [Proportional engineering rigor](./proportional-engineering-rigor.md)

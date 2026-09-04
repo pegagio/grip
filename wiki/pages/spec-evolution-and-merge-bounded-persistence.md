@@ -1,8 +1,8 @@
 ---
 title: Spec evolution and merge-bounded persistence
 type: decision
-sources: [S002]
-updated: 2026-09-03
+sources: [S002, S005]
+updated: 2026-09-04
 ---
 
 # Spec evolution and merge-bounded persistence
@@ -14,6 +14,8 @@ Flow-back cannot introduce material scope without review. Independently valuable
 Acceptance into the designated integration branch freezes the merged feature directory as a semantically immutable historical record. Later behavioral changes flow forward through a new feature directory that references material amendments, replacements, or dependencies; only meaning-preserving editorial corrections may alter merged history. (S002)
 
 The constitution takes precedence over conflicting project artifacts. Amendments require explicit user approval, a Sync Impact Report, and a semantic version increment, while feature specifications and plans identify applicable principles and justify any narrow exception before implementation or merge. (S002)
+
+Feature 002 demonstrates the pre-merge feedback loop: successive convergence passes appended tasks for descriptor identity, error precedence, absent selectors, canonical stored paths, performance, recovery staging, unsupported registry nodes, bounded path inspection, and submitted-path revalidation. Those tasks were implemented and checked before a complete-delta roadmap debrief returned `PROCEED` with no findings and recommended verification. (S005)
 
 ## Related pages
 
