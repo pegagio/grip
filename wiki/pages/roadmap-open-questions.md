@@ -2,7 +2,7 @@
 title: Roadmap open questions
 type: reference
 sources: [S003]
-updated: 2026-09-04
+updated: 2026-09-05
 ---
 
 # Roadmap open questions
@@ -11,7 +11,7 @@ The roadmap retains thirteen questions for the specification that owns each deci
 
 - **001:** confirm package and executable identity, choose registry and state serialization, and establish stable machine-output and exit-code contracts. (S003)
 - **002 (resolved):** the `mapping add`, `list`, `show`, and `remove` family defines lifecycle syntax; tracking records intent only; and complete-registry validation conservatively rejects duplicate, overlapping, equal, nested, and cross-recursive ownership. (S003)
-- **003:** select normative Gitignore behavior, decide whether `.gripignore` may ever be payload, and establish discovery treatment for empty directories and symbolic links. (S003)
+- **003 (resolved for discovery):** `.gripignore` follows the feature's enumerated Gitignore-compatible contract and remains policy-only; empty directories enter discovered membership; symbolic links are unsupported and never followed. Retirement, independent directory metadata, and any later explicit link-object support remain assigned to Features 008 and 009. (S003)
 - **004 and 009:** define initial and final metadata equality, modification-time semantics, user and group identity representation, directory metadata, symbolic-link disposition, and behavior across differing filesystem capabilities. (S003)
 - **005:** confirm stop-after-first-failure behavior and specify reporting and recovery for remaining planned actions. (S003)
 - **005 and 008:** define backup inspection and removal plus bounded recovery when registry or baseline state is missing, corrupt, unreadable, or inconsistent. (S003)

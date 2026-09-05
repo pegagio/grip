@@ -47,7 +47,15 @@ impl CommandOutcome {
                 .details
                 .insert("reason".into(), reason.clone().into());
             if !paths.is_empty() {
-                outcome.details.insert("paths".into(), paths.clone().into());
+                if operation == "mapping_inspect" {
+                    let safe_paths = paths
+                        .iter()
+                        .map(|display| serde_json::json!({"display": display}))
+                        .collect::<Vec<_>>();
+                    outcome.details.insert("paths".into(), safe_paths.into());
+                } else {
+                    outcome.details.insert("paths".into(), paths.clone().into());
+                }
             }
             if let Some(kind) = kind {
                 outcome.details.insert(
@@ -95,6 +103,43 @@ impl CommandOutcome {
         outcome.details.insert(
             "mappings".into(),
             serde_json::to_value(mappings).expect("mappings serialize"),
+        );
+        outcome
+    }
+
+    /// Build the stable human/JSON result for a complete read-only inventory.
+    pub fn discovery(inventory: &crate::discovery::model::DiscoveryInventory) -> Self {
+        use crate::discovery::model::DiscoveryScope;
+        let message = format!(
+            "Inspected {} entries; {} blocking finding(s)",
+            inventory.records.len(),
+            inventory.blocking_count
+        );
+        let mut outcome = Self::success(message);
+        outcome
+            .details
+            .insert("operation".into(), "mapping_inspect".into());
+        let mut scope = Map::new();
+        match &inventory.scope {
+            DiscoveryScope::All => {
+                scope.insert("kind".into(), "all".into());
+            }
+            DiscoveryScope::Mapping(source) => {
+                scope.insert("kind".into(), "mapping".into());
+                scope.insert("source".into(), source.display().to_string().into());
+            }
+        }
+        outcome.details.insert("scope".into(), scope.into());
+        outcome.details.insert(
+            "counts".into(),
+            serde_json::to_value(&inventory.counts).expect("discovery counts serialize"),
+        );
+        outcome
+            .details
+            .insert("blocking_count".into(), inventory.blocking_count.into());
+        outcome.details.insert(
+            "records".into(),
+            serde_json::to_value(&inventory.records).expect("discovery records serialize"),
         );
         outcome
     }
@@ -157,12 +202,55 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                     render_human_mapping(mapping, writer)?;
                 }
             }
+            if outcome.details.get("operation").and_then(Value::as_str) == Some("mapping_inspect")
+                && let Some(records) = outcome.details.get("records").and_then(Value::as_array)
+            {
+                for record in records {
+                    render_human_discovery_record(record, writer)?;
+                }
+            }
             Ok(())
         }
         OutputMode::Json => {
             serde_json::to_writer(&mut *writer, &ResultEnvelopeV1::from(outcome))?;
             writeln!(writer)
         }
+    }
+}
+
+fn render_human_discovery_record(record: &Value, writer: &mut dyn Write) -> io::Result<()> {
+    let category = record
+        .get("category")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let mapping = record
+        .get("mapping_source")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let relative = record
+        .get("relative_path")
+        .and_then(|path| path.get("display"))
+        .and_then(Value::as_str)
+        .unwrap_or(".");
+    let destination = record
+        .get("destination_path")
+        .and_then(|path| path.get("display"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let kind = record
+        .get("node_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if let Some(reason) = record.get("reason").and_then(Value::as_str) {
+        writeln!(
+            writer,
+            "{category} {mapping} {relative} -> {destination} {kind} {reason}"
+        )
+    } else {
+        writeln!(
+            writer,
+            "{category} {mapping} {relative} -> {destination} {kind}"
+        )
     }
 }
 
@@ -219,6 +307,22 @@ mod tests {
         assert!(
             render(
                 CommandOutcome::success("ok"),
+                OutputMode::Json,
+                &mut FailingWriter
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn discovery_renderer_propagates_output_failure() {
+        let inventory = crate::discovery::model::DiscoveryInventory::new(
+            crate::discovery::model::DiscoveryScope::All,
+            Vec::new(),
+        );
+        assert!(
+            render(
+                CommandOutcome::discovery(&inventory),
                 OutputMode::Json,
                 &mut FailingWriter
             )

@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.1 -> 1.0.2
-Bump rationale: Record verified completion of Feature 002 after implementation convergence and roadmap debrief.
+Version change: 1.0.3 -> 1.0.4
+Bump rationale: Record verified completion of Feature 003.
 
 Changes this revision:
-  - Changed spec 002 from in-progress to verified
-  - Recorded the attributable Feature 002 debrief as verification evidence
+  - Changed spec 003 from in-progress to verified
+  - Added Feature 003 verification evidence
 
-Specs affected: 002
-Open questions added/resolved: none; Q-03, Q-04, and Q-09 remain resolved by the Feature 002 specification
+Specs affected: 003
+Open questions added/resolved: none; Feature 003 records its decisions for Q-05 and the discovery portions of Q-06 and Q-07 while later assigned portions remain open
 
-Notes: Feature 002 passed implementation convergence and a complete HEAD-to-worktree roadmap debrief with no findings. Feature 003 is now dependency-eligible but remains planned until separately started.
+Notes: Feature 003 passed its specification, implementation, convergence, validation, performance, and roadmap-debrief gates. Verification evidence is `specs/003-source-discovery-gripignore/roadmap-reviews/debrief-20260905T164650Z.md` (`PROCEED`, no findings).
 -->
 
 # Grip — Spec Roadmap
@@ -75,8 +75,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Mapping Model, Tracking and Untracking, Configuration and State
 - **Notes:** The spec resolves Q-03, Q-04, and Q-09. Tracking records intent only and does not cause an unreviewed bulk payload mutation. Verification evidence: `specs/002-mapping-registry-ownership/roadmap-reviews/debrief-20260904T171506Z.md` (`PROCEED`, no findings).
 
-### 003 — Source Discovery and Gripignore  [status: planned]
+### 003 — Source Discovery and Gripignore  [status: verified]
 
+- **Spec dir:** `specs/003-source-discovery-gripignore`
 - **Description:** Discover the managed namespace of tree mappings from the source while applying root and nested `.gripignore` policy and preserving destination-only content as unmanaged.
 - **Outcome:** Grip produces a deterministic, read-only inventory of eligible managed entries, ignored paths, destination-only paths, and blocking unsupported source entries without requiring a per-file manifest.
 - **Scope (in):** Recursive source traversal; source-relative identity; root and nested `.gripignore`; Gitignore precedence, negation, and traversal behavior; explicit disabling of unrelated ignore sources; destination-only exclusion; non-following node inspection; nested mount detection; conformance and boundary tests.
@@ -84,7 +85,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 002
 - **Governed by:** C-02, C-04, C-08, C-09, C-10
 - **Addresses:** `docs/product-definition.md` — Tree Discovery and Gripignore, Supported Node Boundary
-- **Notes:** The spec must settle Q-05 and the discovery portions of Q-06 and Q-07. The Rust `ignore` crate is a candidate only if its defaults can be constrained to Grip policy and demonstrated through conformance tests.
+- **Notes:** The specification resolves Q-05 with an enumerated Gitignore-compatible contract and policy-only `.gripignore`, includes empty directories for the discovery portion of Q-06 while deferring retirement and independent directory metadata, and treats symbolic links as unsupported non-followed nodes for the discovery portion of Q-07. Verification evidence: `specs/003-source-discovery-gripignore/roadmap-reviews/debrief-20260905T164650Z.md` (`PROCEED`, no findings).
 
 ### 004 — Baselines, Classification, and Status  [status: planned]
 
@@ -184,4 +185,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-04
+**Version**: 1.0.4 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-05

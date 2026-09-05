@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod discovery;
 pub mod error;
 pub mod home;
 pub mod mapping;
@@ -165,6 +166,39 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                     ])
             })?;
             Ok(CommandOutcome::mapping_list(snapshot.registry.mappings()))
+        }
+        MappingCommand::Inspect(args) => {
+            let operation = "mapping_inspect";
+            let registry_path = home.path().join("config.toml").display().to_string();
+            let snapshot = publication::load(&home, false).map_err(|error| {
+                let message = error.to_string();
+                match error.category() {
+                    ResultCategory::UnsupportedSchema => error
+                        .for_mapping_operation(operation)
+                        .with_paths_if_empty(vec![registry_path]),
+                    ResultCategory::InternalError => GripError::discovery_operational(
+                        operation,
+                        "invalid_registry",
+                        vec![registry_path],
+                        &message,
+                    ),
+                    _ => GripError::discovery_invalid(
+                        operation,
+                        "invalid_registry",
+                        vec![registry_path],
+                        &message,
+                    ),
+                }
+            })?;
+            let selected_source = args
+                .source
+                .as_ref()
+                .map(|source| {
+                    path_policy::resolve_selector(std::path::Path::new(source), operation)
+                })
+                .transpose()?;
+            let inventory = discovery::inspect(&home, &snapshot, selected_source)?;
+            Ok(CommandOutcome::discovery(&inventory))
         }
         MappingCommand::Show(args) => {
             let operation = "mapping_show";

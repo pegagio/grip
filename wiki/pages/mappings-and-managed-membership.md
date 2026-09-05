@@ -1,8 +1,8 @@
 ---
 title: Mappings and managed membership
 type: concept
-sources: [S001, S005]
-updated: 2026-09-04
+sources: [S001, S004, S005, S006]
+updated: 2026-09-05
 ---
 
 # Mappings and managed membership
@@ -18,6 +18,10 @@ Canonical source identity is the only lookup key for `show` and `remove`; aliase
 For tree mappings, the dynamically discovered, non-ignored source namespace determines membership. New source entries can be proposed for management, while destination-only entries remain unmanaged unless their relative paths previously entered the managed namespace. Tracking establishes ownership but must not imply an unreviewed bulk mutation, and untracking removes ownership without silently deleting either copy. (S001)
 
 Source-side `.gripignore` files may appear at the mapping root or in nested directories and follow Gitignore-style precedence and negation rules. Destination-side ignore files and ordinary `.gitignore` files do not control membership, and `.gripignore` files are policy rather than synchronized payload by default. A newly ignored managed entry remains pending explicit retirement rather than being silently deleted or untracked. (S001)
+
+The implemented inspection derives tree membership fresh without creating a manifest or baseline. It includes ordinary files and directories, reports an ignored directory once without traversing descendants, and exposes eligible, ignored, destination-only, unsupported-source, and unsafe-destination-collision categories. File mappings contribute only their exact source and do not enumerate parent directories. (S004)
+
+Feature 003 fixes ignore evaluation to source-relative, hierarchical policy: root and nested `.gripignore` files apply in traversal order, later matches override earlier ones, negation can re-include entries, and neither ordinary Git exclusions nor destination-side policy participates. Ignored directories prune their descendants from both discovery and destination-only reporting. (S006)
 
 ## Related pages
 

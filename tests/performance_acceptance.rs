@@ -95,11 +95,47 @@ fn warm_release_commands_meet_p95_targets() {
             .args(["--output=json", "mapping", "list"]);
         c
     });
+    let discovery_home = root.path().join("discovery-home");
+    let discovery_source = root.path().join("discovery-source");
+    let discovery_destination = root.path().join("discovery-destination");
+    std::fs::create_dir(&discovery_home).unwrap();
+    std::fs::create_dir(&discovery_source).unwrap();
+    for directory_index in 0..100 {
+        let directory = discovery_source.join(format!("directory-{directory_index:03}"));
+        std::fs::create_dir(&directory).unwrap();
+        for file_index in 0..99 {
+            std::fs::write(
+                directory.join(format!("entry-{file_index:03}.txt")),
+                b"representative",
+            )
+            .unwrap();
+        }
+    }
+    std::fs::write(
+        discovery_source.join("directory-050/.gripignore"),
+        "*.ignored\n",
+    )
+    .unwrap();
+    support::write_registry(
+        &discovery_home,
+        &[("tree", &discovery_source, &discovery_destination)],
+    );
+    let discovery = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", &discovery_home)
+            .args(["--output=json", "mapping", "inspect"])
+            .arg(&discovery_source);
+        command
+    });
     eprintln!(
-        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?}"
+        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?}"
     );
     assert!(help <= Duration::from_millis(100));
     assert!(version <= Duration::from_millis(100));
     assert!(validate <= Duration::from_secs(1));
     assert!(mapping_list <= Duration::from_secs(1));
+    assert!(discovery <= Duration::from_secs(2));
 }

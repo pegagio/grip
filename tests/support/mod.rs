@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -68,6 +69,50 @@ pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
                 result.insert(relative.clone(), snapshot);
                 if metadata.is_dir() {
                     walk(base, &p, result);
+                }
+            }
+        }
+    }
+    let mut value = BTreeMap::new();
+    walk(root, root, &mut value);
+    value
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawMetadataSnapshot {
+    pub mode: u32,
+    pub device: u64,
+    pub inode: u64,
+    pub size: u64,
+    pub modified_seconds: i64,
+    pub modified_nanoseconds: i64,
+}
+
+pub fn raw_metadata_snapshot(root: &Path) -> BTreeMap<Vec<u8>, RawMetadataSnapshot> {
+    fn walk(base: &Path, at: &Path, result: &mut BTreeMap<Vec<u8>, RawMetadataSnapshot>) {
+        if let Ok(entries) = fs::read_dir(at) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path).unwrap();
+                let relative = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .as_os_str()
+                    .as_bytes()
+                    .to_vec();
+                result.insert(
+                    relative,
+                    RawMetadataSnapshot {
+                        mode: metadata.mode(),
+                        device: metadata.dev(),
+                        inode: metadata.ino(),
+                        size: metadata.size(),
+                        modified_seconds: metadata.mtime(),
+                        modified_nanoseconds: metadata.mtime_nsec(),
+                    },
+                );
+                if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                    walk(base, &path, result);
                 }
             }
         }
