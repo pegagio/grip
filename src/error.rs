@@ -183,6 +183,32 @@ impl GripError {
         )
     }
 
+    /// Construct a stable operational discovery failure.
+    pub fn discovery_operational(
+        operation: &str,
+        reason: &str,
+        paths: Vec<String>,
+        message: &str,
+    ) -> Self {
+        Self::mapping_operational(operation, reason, paths, message)
+    }
+
+    /// Construct a stable invalid discovery-configuration failure.
+    pub fn discovery_invalid(
+        operation: &str,
+        reason: &str,
+        paths: Vec<String>,
+        message: &str,
+    ) -> Self {
+        Self::mapping_with_category(
+            operation,
+            reason,
+            paths,
+            ResultCategory::InvalidConfiguration,
+            message,
+        )
+    }
+
     pub fn with_publication_visible(mut self, value: bool) -> Self {
         if let Self::Mapping {
             publication_visible,
@@ -201,5 +227,36 @@ impl GripError {
             *paths = value;
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[test]
+    fn discovery_policy_and_operational_failures_have_stable_categories() {
+        for reason in ["invalid_policy", "non_utf8_policy"] {
+            let error = GripError::discovery_invalid(
+                "mapping_inspect",
+                reason,
+                vec!["/source/.gripignore".into()],
+                "Invalid policy",
+            );
+            assert_eq!(error.category(), ResultCategory::InvalidConfiguration);
+        }
+        for reason in [
+            "unreadable_policy",
+            "directory_unreadable",
+            "stale_discovery_evidence",
+        ] {
+            let error = GripError::discovery_operational(
+                "mapping_inspect",
+                reason,
+                vec!["/source".into()],
+                "Inspection failed",
+            );
+            assert_eq!(error.category(), ResultCategory::InternalError);
+        }
     }
 }

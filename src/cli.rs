@@ -43,9 +43,15 @@ pub struct MappingArgs {
 #[derive(Debug, Subcommand)]
 pub enum MappingCommand {
     Add(MappingAddArgs),
+    Inspect(MappingInspectArgs),
     List,
     Show(MappingSourceArgs),
     Remove(MappingSourceArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct MappingInspectArgs {
+    pub source: Option<OsString>,
 }
 
 #[derive(Debug, clap::Args)]

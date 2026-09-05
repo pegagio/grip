@@ -1,8 +1,8 @@
 ---
 title: Command-line and path selection
 type: component
-sources: [S001, S004]
-updated: 2026-09-04
+sources: [S001, S004, S006]
+updated: 2026-09-05
 ---
 
 # Command-line and path selection
@@ -14,6 +14,10 @@ Feature 001 implements `grip version` and the read-only `grip validate`. Both ap
 The implemented public exit contract is `0`/`ok`, `2`/`invalid_usage`, `10`/`invalid_configuration`, `11`/`unsupported_schema`, `12`/`corrupt_state`, and `20`/`operational_failure`. State-publication contention remains internal because Feature 001 exposes no public state-publishing command. (S004)
 
 Feature 002 resolves the mapping lifecycle as `grip mapping add file SOURCE DESTINATION`, `grip mapping add tree SOURCE DESTINATION`, `grip mapping list`, `grip mapping show SOURCE`, and `grip mapping remove SOURCE`. Sources identify mappings by canonical absolute path; list output is canonically ordered, and removal changes registry intent without deleting payload data. (S004)
+
+Feature 003 adds `grip mapping inspect [SOURCE]`: omitting the source inspects every accepted mapping, while one canonical source selects a mapping. The command returns a deterministic human or JSON inventory, keeps diagnostics on stderr, and reports a successful complete inventory even when `blocking_count` is nonzero; failures to complete inspection remain nonzero errors. (S004)
+
+The Feature 003 contract also requires complete-registry validation before either all-mapping or selected-mapping inspection. Results identify the selected mapping, classify every discovered entry, and remain deterministically ordered by canonical source and source-relative raw path bytes. (S006)
 
 Mapping sources must exist and match their declared kind. Destinations may be absent when their nearest existing ancestor is safe; paths must be absolute UTF-8 without parent traversal, and final symbolic-link endpoints are rejected. Complete-registry ownership validation rejects duplicate, overlapping, nested, equal, and cross-recursive mappings. (S004)
 

@@ -25,6 +25,23 @@ grip mapping remove /absolute/source
 
 All commands support `--output human|json`. JSON mapping values have stable `kind`, `source`, and `destination` fields, while failures include stable `operation` and `reason` details.
 
+## Inspect managed membership
+
+Inspect the current source-defined membership of every mapping or one mapping selected by canonical source identity:
+
+```sh
+grip mapping inspect
+grip mapping inspect /absolute/source
+```
+
+Inspection is read-only. It derives tree membership fresh on every invocation, includes ordinary files and directories (including empty directories), and never creates a manifest, baseline, lock, recovery record, or payload change. File mappings contribute only their exact source and do not enumerate either parent directory.
+
+Source-side `.gripignore` files define policy for their containing directory and descendants using Gitignore-compatible comments, escaping, anchoring, wildcards, directory rules, negation, and last-match precedence. A nested policy can re-include an entry only while its ancestors remain traversable. An ignored directory is reported once as an exclusion root and is not traversed. `.gripignore` itself is always policy rather than payload; `.gitignore`, `.ignore`, global Git settings, destination-side policy files, and hidden-file status have no authority.
+
+The inventory distinguishes eligible entries, ignored source paths, destination-only unmanaged paths, unsupported source entries, and unsafe nodes occupying an eligible paired destination. Symbolic links, hard links, sparse files, special nodes, non-UTF-8 source names, and nested mount boundaries are never followed or opened as payload. Unsupported source entries and paired collisions are blocking findings, but a complete inspection still exits `0` and reports `blocking_count`; failures to produce a complete inventory return a nonzero error.
+
+Human output is deterministic and machine output uses stable categories plus escaped Safe Path values with `raw_hex` when exact non-UTF-8 identity must be retained. Diagnostics remain on stderr when verbosity is enabled.
+
 ## Registry publication safety
 
 `<GRIP_HOME>/config.toml` is the accepted v1 registry. It must be a current-user-owned, non-symlink regular file with group and other write bits unset; add and remove also require owner write permission. Deterministic rewrites preserve its exact permission mode, though presentation-only TOML whitespace, comments, and ordering may be normalized.

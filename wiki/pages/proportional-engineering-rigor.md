@@ -1,8 +1,8 @@
 ---
 title: Proportional engineering rigor
 type: decision
-sources: [S002, S005]
-updated: 2026-09-04
+sources: [S002, S005, S006]
+updated: 2026-09-05
 ---
 
 # Proportional engineering rigor
@@ -16,6 +16,8 @@ Local concurrency is handled by narrow evidence capture, pre-action revalidation
 Performance work follows the same proportional rule: common read-only and planning workflows remain responsive, redundant filesystem work is avoided, and measurement of representative workloads must justify caches, parallelism, or additional indexing. (S002)
 
 Feature 002 validates up to 1,000 mappings with an auditable all-pairs ownership check instead of adding a trie, persistent index, graph framework, cache, or async runtime. Canonical accepted-registry validation is performed once per load, and a 100-run release harness verified canonical 1,000-mapping list results while keeping the p95 workflow below the feature's one-second threshold. (S005)
+
+Feature 003 retained sequential source and destination traversal after a release harness measured a 10,000-entry inspection at 129.403125 ms p95 across 100 runs, below its two-second threshold. The evidence did not justify caches, parallel traversal, persistent indexes, or background state. (S006)
 
 ## Related pages
 

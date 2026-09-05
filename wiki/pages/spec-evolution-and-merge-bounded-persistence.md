@@ -1,8 +1,8 @@
 ---
 title: Spec evolution and merge-bounded persistence
 type: decision
-sources: [S002, S005]
-updated: 2026-09-04
+sources: [S002, S005, S006]
+updated: 2026-09-05
 ---
 
 # Spec evolution and merge-bounded persistence
@@ -16,6 +16,8 @@ Acceptance into the designated integration branch freezes the merged feature dir
 The constitution takes precedence over conflicting project artifacts. Amendments require explicit user approval, a Sync Impact Report, and a semantic version increment, while feature specifications and plans identify applicable principles and justify any narrow exception before implementation or merge. (S002)
 
 Feature 002 demonstrates the pre-merge feedback loop: successive convergence passes appended tasks for descriptor identity, error precedence, absent selectors, canonical stored paths, performance, recovery staging, unsupported registry nodes, bounded path inspection, and submitted-path revalidation. Those tasks were implemented and checked before a complete-delta roadmap debrief returned `PROCEED` with no findings and recommended verification. (S005)
+
+Feature 003 likewise kept specification, plan, tasks, contracts, implementation, tests, and performance evidence in one reviewable pre-merge boundary. Its complete-delta debrief returned `PROCEED` with no findings, after which the roadmap transitioned the feature from `in-progress` to `verified`. (S006)
 
 ## Related pages
 

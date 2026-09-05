@@ -227,6 +227,41 @@ pub fn load(home: &GripHome, writable: bool) -> Result<RegistrySnapshot, GripErr
     })
 }
 
+/// Revalidate an accepted snapshot without acquiring a publication lock or writing state.
+pub fn revalidate_readonly(
+    home: &GripHome,
+    expected: &RegistrySnapshot,
+    operation: &str,
+) -> Result<(), GripError> {
+    for evidence in &expected.evidence {
+        path_policy::revalidate(evidence, operation).map_err(|error| {
+            GripError::discovery_operational(
+                operation,
+                "stale_discovery_evidence",
+                vec![evidence.canonical.display().to_string()],
+                &error.to_string(),
+            )
+        })?;
+    }
+    let current = read_accepted(home, false).map_err(|error| {
+        GripError::discovery_operational(
+            operation,
+            "stale_discovery_evidence",
+            vec![home.path().join("config.toml").display().to_string()],
+            &error.to_string(),
+        )
+    })?;
+    if current.bytes != expected.bytes || current.identity != expected.identity {
+        return Err(GripError::discovery_operational(
+            operation,
+            "stale_discovery_evidence",
+            vec![home.path().join("config.toml").display().to_string()],
+            "Accepted registry changed during inspection",
+        ));
+    }
+    Ok(())
+}
+
 fn inspect_mappings(
     mappings: &[crate::mapping::Mapping],
     operation: &str,
@@ -730,4 +765,44 @@ fn publish_candidate(
     }
     drop(lock);
     result
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    fn empty_home() -> (tempfile::TempDir, GripHome) {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("config.toml"),
+            "schema_version = 1\nmappings = []\n",
+        )
+        .unwrap();
+        let home = crate::home::select(Some(root.path().as_os_str().to_owned()), None).unwrap();
+        (root, home)
+    }
+
+    #[test]
+    fn readonly_revalidation_does_not_acquire_the_registry_lock() {
+        let (root, home) = empty_home();
+        let snapshot = load(&home, false).unwrap();
+        std::fs::write(root.path().join(".registry.lock"), "occupied").unwrap();
+        revalidate_readonly(&home, &snapshot, "mapping_inspect").unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join(".registry.lock")).unwrap(),
+            b"occupied"
+        );
+    }
+
+    #[test]
+    fn readonly_revalidation_detects_registry_byte_drift() {
+        let (root, home) = empty_home();
+        let snapshot = load(&home, false).unwrap();
+        std::fs::write(
+            root.path().join("config.toml"),
+            "schema_version = 1\n\nmappings = []\n",
+        )
+        .unwrap();
+        assert!(revalidate_readonly(&home, &snapshot, "mapping_inspect").is_err());
+    }
 }
