@@ -1,7 +1,7 @@
 ---
 title: Command-line and path selection
 type: component
-sources: [S001, S004, S006, S007]
+sources: [S001, S004, S006, S007, S008]
 updated: 2026-09-06
 ---
 
@@ -26,6 +26,8 @@ Mapping sources must exist and match their declared kind. Destinations may be ab
 Feature 004 implements `grip status [PATH]`, `grip check [PATH]`, `grip diff [PATH]`, and `grip baseline accept [PATH]`. Each optional selector names one mapping, entry, or component-boundary subtree; `--destination` switches path space, and `--` protects dash-prefixed paths. Status returns complete classification, check distinguishes attention from failure, diff reports three available comparison dimensions without payload content, and baseline acceptance publishes evidence only for complete equivalent pairs. (S004)
 
 The initial command contract permits one optional path selector. Selectors use the source path space by default, while `--destination` selects destination-path interpretation; `--` terminates option parsing so paths beginning with a hyphen can be selected safely. Complete registry validation still applies even when an action is scoped to one mapping or subtree. (S001)
+
+Feature 005 implements `grip push [-n|--dry-run] [--destination] [--] [PATH]`. Execute mode mutates from source to destination; `--destination` changes only selector interpretation. Dry run emits the same complete ordered plan without taking the mutation lock or creating payload, operation, recovery, or baseline state. JSON and human results distinguish planned, blocked, no-op, applied, partial, and failed outcomes while keeping diagnostics separate. (S004) (S008)
 
 Multiple path selectors, interactive two-way text reconciliation, and metadata-only remapping are potential future expansions rather than initial command commitments. A future remap would update registry and state only after separately performed filesystem movement and verified baseline continuity. (S001)
 

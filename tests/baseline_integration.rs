@@ -205,6 +205,46 @@ fn state_and_registry_contention_are_nonblocking_and_retryable() {
     );
 }
 
+#[test]
+fn changed_acceptance_uses_outer_mutation_lock_but_no_op_stays_lock_free() {
+    let (root, grip_home, _, _) = file_fixture();
+    let selected = grip::home::select(Some(grip_home.clone().into_os_string()), None).unwrap();
+    let held = grip::state::mutation_lock::MutationLock::acquire(&selected, "push").unwrap();
+    let blocked = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &["--output", "json", "baseline", "accept"],
+    );
+    assert_eq!(blocked.status.code(), Some(13));
+    assert_eq!(
+        support::json(&blocked)["details"]["reason"],
+        "state_contention"
+    );
+    assert_eq!(
+        support::json(&blocked)["details"]["owner"]["operation"],
+        "push"
+    );
+    drop(held);
+    assert!(
+        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
+            .status
+            .success()
+    );
+
+    let held = grip::state::mutation_lock::MutationLock::acquire(&selected, "push").unwrap();
+    let no_op = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &["--output", "json", "baseline", "accept"],
+    );
+    assert!(no_op.status.success());
+    assert_eq!(
+        support::json(&no_op)["details"]["result"],
+        "already_current"
+    );
+    drop(held);
+}
+
 fn direct_accept_with_hook<F>(
     grip_home: &std::path::Path,
     after_initial: F,
@@ -296,4 +336,45 @@ fn acceptance_rejects_registry_and_state_drift_with_stable_reasons() {
         fs::read(grip_home.join("state/state.json")).unwrap(),
         accepted
     );
+}
+
+#[test]
+fn push_publishes_one_scoped_generation_and_preserves_out_of_scope_baselines() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let grip_home = support::minimal_home(root.path());
+    let source_a = root.path().join("source-a");
+    let source_b = root.path().join("source-b");
+    let destination_a = root.path().join("destination-a");
+    let destination_b = root.path().join("destination-b");
+    for path in [&source_a, &source_b, &destination_a, &destination_b] {
+        fs::write(path, "accepted").unwrap();
+    }
+    support::write_registry(
+        &grip_home,
+        &[
+            ("file", &source_a, &destination_a),
+            ("file", &source_b, &destination_b),
+        ],
+    );
+    let accepted =
+        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"]);
+    assert!(accepted.status.success());
+    fs::write(&source_a, "pushed-a").unwrap();
+    fs::write(&source_b, "pending-b").unwrap();
+    let pushed = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &["--output=json", "push", source_a.to_str().unwrap()],
+    );
+    assert!(pushed.status.success());
+    assert_eq!(
+        support::json(&pushed)["details"]["baseline"]["published_generation"],
+        1
+    );
+    assert_eq!(fs::read_to_string(destination_a).unwrap(), "pushed-a");
+    assert_eq!(fs::read_to_string(destination_b).unwrap(), "accepted");
+    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    assert_eq!(state.accepted.generation, Some(1));
+    assert_eq!(state.accepted.baselines.len(), 2);
 }

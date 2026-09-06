@@ -1,4 +1,5 @@
 pub mod lock;
+pub mod mutation_lock;
 pub mod publication;
 
 use crate::error::GripError;

@@ -1,7 +1,7 @@
 ---
 title: Spec evolution and merge-bounded persistence
 type: decision
-sources: [S002, S005, S006]
+sources: [S002, S005, S006, S008]
 updated: 2026-09-05
 ---
 
@@ -18,6 +18,8 @@ The constitution takes precedence over conflicting project artifacts. Amendments
 Feature 002 demonstrates the pre-merge feedback loop: successive convergence passes appended tasks for descriptor identity, error precedence, absent selectors, canonical stored paths, performance, recovery staging, unsupported registry nodes, bounded path inspection, and submitted-path revalidation. Those tasks were implemented and checked before a complete-delta roadmap debrief returned `PROCEED` with no findings and recommended verification. (S005)
 
 Feature 003 likewise kept specification, plan, tasks, contracts, implementation, tests, and performance evidence in one reviewable pre-merge boundary. Its complete-delta debrief returned `PROCEED` with no findings, after which the roadmap transitioned the feature from `in-progress` to `verified`. (S006)
+
+Feature 005 required a convergence phase after its first implementation pass. The appended work removed planner filesystem reads, made operation and recovery access descriptor-relative, preserved phase-specific side-effect truth, routed post-journal failures through terminal evidence, completed result parity, and expanded adversarial tests before the complete-delta debrief returned `PROCEED` with no findings. (S008)
 
 ## Related pages
 

@@ -3,12 +3,49 @@
 use crate::classification::model::{Classification, ClassificationRecord};
 use crate::error::GripError;
 use crate::state::AcceptedState;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub next: AcceptedState,
     pub selected_count: usize,
     pub changed_count: usize,
+}
+
+/// Build a scoped accepted-state candidate from only verified actioned identities.
+pub fn build_from_actioned(
+    expected: &AcceptedState,
+    records: &[ClassificationRecord],
+    actioned: &BTreeSet<crate::observation::model::EntryIdentity>,
+) -> Result<Candidate, GripError> {
+    let mut next = expected.clone();
+    let mut changed_count = 0;
+    for identity in actioned {
+        let record = records
+            .iter()
+            .find(|record| &record.identity == identity)
+            .ok_or_else(|| {
+                GripError::Internal("actioned identity missing from final observation".into())
+            })?;
+        if record.blocking || record.source.is_none() || record.source != record.destination {
+            return Err(GripError::BaselineNotAcceptable {
+                records: vec![record.clone()],
+            });
+        }
+        let state = record
+            .source
+            .clone()
+            .expect("equivalent actioned entry has source");
+        if expected.baselines.get(identity) != Some(&state) {
+            next.baselines.insert(identity.clone(), state);
+            changed_count += 1;
+        }
+    }
+    Ok(Candidate {
+        next,
+        selected_count: records.len(),
+        changed_count,
+    })
 }
 
 pub fn build(

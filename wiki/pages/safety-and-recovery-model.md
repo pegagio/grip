@@ -1,7 +1,7 @@
 ---
 title: Safety and recovery model
 type: decision
-sources: [S001, S002, S005, S007]
+sources: [S001, S002, S004, S005, S007, S008]
 updated: 2026-09-06
 ---
 
@@ -20,6 +20,10 @@ The constitution makes this safety model binding: every mutation derives from a 
 Concurrent external edits are handled through evidence capture, pre-action revalidation, safe publication, and explicit drift errors rather than attempts to lock whole payload trees. A short-lived per-user lock may protect Grip-owned registry or state publication, but it must remain bounded and provide actionable contention and stale-lock behavior. (S002)
 
 Feature 002 applies this boundary to registry replacement. A writer locks a stable owner-only file, rereads the accepted bytes, revalidates the exact submitted-path evidence and complete candidate, publishes and verifies a content-addressed recovery copy of the prior document, and verifies a same-directory staged candidate before rename. Failure before rename leaves the prior registry authoritative; a directory-sync failure after rename reports that visibility changed but durability was not confirmed. (S005)
+
+Feature 005 applies the full boundary to source-to-destination payload mutation. An actionful push acquires the per-user mutation lock only after complete preflight, rebuilds and compares the plan under that lock, initializes a durable operation record immediately before mutation, and checkpoints revalidation, recovery, staging, publication, verification, and terminal baseline evidence. It stops on the first failure without rollback and leaves every later action unattempted. (S008)
+
+Replacement actions preserve and verify the prior destination as a private operation-local payload before publishing the staged source. A partial failure retains visible changes and recovery evidence but leaves the prior baseline authoritative; a successful run publishes exactly one accepted generation after every action and a final complete observation verify. Result-delivery failure cannot revoke an already published baseline. (S004) (S008)
 
 ## Related pages
 

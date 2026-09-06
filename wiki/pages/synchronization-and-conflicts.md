@@ -1,7 +1,7 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001, S004, S007]
+sources: [S001, S004, S007, S008]
 updated: 2026-09-06
 ---
 
@@ -12,6 +12,8 @@ Grip compares the current source, current destination, and last accepted baselin
 Feature 004 implements this model as deterministic typed records shared by `status`, `check`, and `diff`. Explicit baseline acceptance is allowed only when all selected source and destination evidence is complete and equivalent; an already-current acceptance is an exact no-op, and acceptance-relevant drift detected before publication preserves the prior baseline. (S004)
 
 `push` propagates eligible source-side changes, `pull` propagates eligible destination-side changes, and `sync` plans all unambiguous one-sided changes in both directions. An accepted operation updates the baseline only after its changes have been applied and verified. (S001)
+
+Feature 005 implements only the `push` portion: source additions and source-only changes become actions, synchronized and other non-action classifications remain reported, and any blocker prevents all mutation. Pull, bidirectional planning, conflict winners, deletion, retirement, and automatic recovery remain later-feature work. (S008)
 
 A divergent change on both sides is a whole-entry conflict, including cases where content changed on one side and supported metadata changed on the other. The plan of record requires an explicit source-wins or destination-wins decision; it does not combine the two current states. Grip must re-inspect if either side changes between conflict reporting and resolution. (S001)
 
