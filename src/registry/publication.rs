@@ -32,6 +32,26 @@ pub struct RegistrySnapshot {
     evidence: Vec<PathEvidence>,
 }
 
+/// Held registry publication guard used to enforce registry-before-state ordering.
+pub struct RegistryGuard {
+    _lock: PublicationLock,
+}
+
+/// Acquire the bounded registry publication lock for a compound state transaction.
+pub fn acquire_guard(home: &GripHome, operation: &str) -> Result<RegistryGuard, GripError> {
+    PublicationLock::acquire(&home.path().join(".registry.lock"))
+        .map(|lock| RegistryGuard { _lock: lock })
+        .map_err(|error| match error {
+            GripError::StateContention => GripError::mapping(
+                operation,
+                "registry_contention",
+                vec![home.path().join(".registry.lock").display().to_string()],
+                "registry publication is already in progress",
+            ),
+            other => other,
+        })
+}
+
 struct AcceptedFile {
     bytes: Vec<u8>,
     identity: FileIdentity,
@@ -268,13 +288,13 @@ fn inspect_mappings(
 ) -> Result<Vec<PathEvidence>, GripError> {
     let mut evidence = Vec::with_capacity(mappings.len() * 2);
     for mapping in mappings {
-        evidence.push(path_policy::inspect_endpoint(
+        evidence.push(path_policy::inspect_durable_endpoint(
             &mapping.source,
             mapping.kind,
             true,
             operation,
         )?);
-        evidence.push(path_policy::inspect_endpoint(
+        evidence.push(path_policy::inspect_durable_endpoint(
             &mapping.destination,
             mapping.kind,
             false,

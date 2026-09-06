@@ -32,6 +32,29 @@ pub enum Command {
     Version,
     Validate,
     Mapping(MappingArgs),
+    Status(InspectionArgs),
+    Check(InspectionArgs),
+    Diff(InspectionArgs),
+    Baseline(BaselineArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct InspectionArgs {
+    #[arg(long)]
+    pub destination: bool,
+    #[arg(value_name = "PATH")]
+    pub path: Option<OsString>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BaselineArgs {
+    #[command(subcommand)]
+    pub command: BaselineCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BaselineCommand {
+    Accept(InspectionArgs),
 }
 
 #[derive(Debug, clap::Args)]

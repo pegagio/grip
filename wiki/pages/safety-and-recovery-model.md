@@ -1,8 +1,8 @@
 ---
 title: Safety and recovery model
 type: decision
-sources: [S001, S002, S005]
-updated: 2026-09-04
+sources: [S001, S002, S005, S007]
+updated: 2026-09-06
 ---
 
 # Safety and recovery model
@@ -24,5 +24,6 @@ Feature 002 applies this boundary to registry replacement. A writer locks a stab
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
+- [Baseline classification and status](./baseline-classification-and-status.md)
 - [Mapping registry publication](./mapping-registry-publication.md)
 - [Proportional engineering rigor](./proportional-engineering-rigor.md)

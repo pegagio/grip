@@ -2,7 +2,7 @@
 title: Implementation and delivery direction
 type: decision
 sources: [S001, S002, S003, S004, S006]
-updated: 2026-09-05
+updated: 2026-09-06
 ---
 
 # Implementation and delivery direction
@@ -25,7 +25,7 @@ Common inspection and planning workflows must remain responsive on representativ
 
 The durable roadmap refines the product's six delivery milestones into nine planned specifications. It separates CLI and state foundations, mapping ownership, and discovery before baseline classification, then introduces push, pull, bidirectional conflict handling, authorized deletion, and final metadata and filesystem completion in dependency order. (S003)
 
-Features 001 through 003 are verified. Feature 003 adds deterministic read-only source discovery, nested source-side `.gripignore` policy, destination-only reporting, and unsupported-node boundaries without baseline or payload mutation, making Feature 004 dependency-eligible. (S003)
+Features 001 through 004 are verified. Feature 004 adds accepted baseline evidence and deterministic read-only classification through `status`, `check`, and `diff`, making Feature 005 dependency-eligible while leaving payload mutation to that next feature. (S003)
 
 Feature 003 implements that slice with Grip-owned discovery models, `ignore` for matching only, and `rustix` descriptor-relative filesystem access. Two sequential traversal passes keep source policy and destination-only classification explicit; no cache, persistent index, watcher, lock, or parallel traversal was introduced. (S006)
 

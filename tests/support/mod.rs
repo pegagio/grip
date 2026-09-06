@@ -155,3 +155,38 @@ pub fn write_registry(grip_home: &Path, mappings: &[(&str, &Path, &Path)]) {
     }
     fs::write(grip_home.join("config.toml"), document).unwrap();
 }
+
+pub fn json(output: &Output) -> serde_json::Value {
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "invalid JSON output: {error}; stdout={}; stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+pub fn write_v2_state(
+    grip_home: &Path,
+    generation: u64,
+    baselines: BTreeMap<
+        grip::observation::model::EntryIdentity,
+        grip::observation::model::SupportedState,
+    >,
+) {
+    let state = grip::state::AcceptedState {
+        generation: Some(generation),
+        baselines,
+        accepted_bytes: None,
+    };
+    let directory = grip_home.join("state");
+    fs::create_dir_all(&directory).unwrap();
+    fs::set_permissions(
+        &directory,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
+    let path = directory.join("state.json");
+    fs::write(&path, grip::state::encode_v2(&state, generation).unwrap()).unwrap();
+    fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+}

@@ -19,6 +19,7 @@ pub struct PathEvidence {
     pub canonical: PathBuf,
     pub kind: MappingKind,
     pub source: bool,
+    allow_absent: bool,
     pub exists: bool,
     anchor: PathBuf,
     device: u64,
@@ -227,7 +228,27 @@ pub fn inspect_endpoint(
     source: bool,
     operation: &str,
 ) -> Result<PathEvidence, GripError> {
-    let inspected = inspect_path(path, !source, operation)?;
+    inspect_endpoint_with_absence(path, kind, source, !source, operation)
+}
+
+/// Inspect a durable accepted endpoint without requiring it to remain present.
+pub fn inspect_durable_endpoint(
+    path: &Path,
+    kind: MappingKind,
+    source: bool,
+    operation: &str,
+) -> Result<PathEvidence, GripError> {
+    inspect_endpoint_with_absence(path, kind, source, true, operation)
+}
+
+fn inspect_endpoint_with_absence(
+    path: &Path,
+    kind: MappingKind,
+    source: bool,
+    allow_absent: bool,
+    operation: &str,
+) -> Result<PathEvidence, GripError> {
+    let inspected = inspect_path(path, allow_absent, operation)?;
     validate_endpoint_kind(&inspected, path, kind, operation)?;
     Ok(PathEvidence {
         submitted: path.to_path_buf(),
@@ -235,6 +256,7 @@ pub fn inspect_endpoint(
         canonical: inspected.canonical,
         kind,
         source,
+        allow_absent,
         anchor: inspected.anchor,
         device: inspected.metadata.dev(),
         inode: inspected.metadata.ino(),
@@ -244,10 +266,11 @@ pub fn inspect_endpoint(
 
 /// Reinspect an endpoint and reject drift from the captured evidence.
 pub fn revalidate(evidence: &PathEvidence, operation: &str) -> Result<(), GripError> {
-    let current = inspect_endpoint(
+    let current = inspect_endpoint_with_absence(
         &evidence.submitted,
         evidence.kind,
         evidence.source,
+        evidence.allow_absent,
         operation,
     )?;
     if current != *evidence {

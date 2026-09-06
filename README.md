@@ -42,6 +42,23 @@ The inventory distinguishes eligible entries, ignored source paths, destination-
 
 Human output is deterministic and machine output uses stable categories plus escaped Safe Path values with `raw_hex` when exact non-UTF-8 identity must be retained. Diagnostics remain on stderr when verbosity is enabled.
 
+## Baselines and synchronization status
+
+Grip compares current source and destination metadata with explicitly accepted evidence. It fingerprints ordinary file content with SHA-256 and records the first supported metadata set: node kind, file content and length where applicable, and the full Unix permission mode. Modification time is diagnostic only and does not make content different.
+
+```sh
+grip status [PATH]
+grip check [PATH]
+grip diff [PATH]
+grip baseline accept [PATH]
+```
+
+Each optional path selects one mapping, entry, or component-boundary subtree in source space. Add `--destination` to interpret it in destination space, and use `--` before a dash-prefixed path. `status` reports the complete deterministic classification; `check` returns exit `1` and `attention_required` when its otherwise successful result needs attention; `diff` reports the available source-to-baseline, destination-to-baseline, and source-to-destination metadata dimensions without printing payload content.
+
+`baseline accept` records evidence only when every selected source and destination entry is complete and equivalent. A scoped acceptance preserves all evidence outside the scope. Repeating an already-current acceptance is an exact no-op. State Envelope V2 generations are integrity checked, published atomically under `<GRIP_HOME>/state/state.json`, and retain exact prior bytes as immutable recovery evidence. Grip continues to read State V1 as an empty-baseline predecessor.
+
+Removed mappings and newly ignored accepted entries remain visible as pending retirement; acceptance cannot silently discard them. Payload copying, conflict resolution, deletion, and retirement are outside these commands.
+
 ## Registry publication safety
 
 `<GRIP_HOME>/config.toml` is the accepted v1 registry. It must be a current-user-owned, non-symlink regular file with group and other write bits unset; add and remove also require owner write permission. Deterministic rewrites preserve its exact permission mode, though presentation-only TOML whitespace, comments, and ordering may be normalized.
@@ -99,10 +116,12 @@ grip --output json version
 | Exit | Symbol | Meaning |
 |---:|---|---|
 | 0 | `ok` | Success |
+| 1 | `attention_required` | Check completed with entries requiring attention |
 | 2 | `invalid_usage` | Invalid command or arguments |
 | 10 | `invalid_configuration` | Invalid home policy or registry |
 | 11 | `unsupported_schema` | Unsupported registry or state schema |
 | 12 | `corrupt_state` | Malformed or inconsistent machine state |
+| 13 | `state_contention` | Another baseline publication holds the state lock |
 | 20 | `operational_failure` | I/O, output, or another runtime failure |
 
-Registry-publication contention is reported as an operational failure. No public command publishes synchronization state yet.
+Registry-publication contention is reported as an operational failure. Only explicit `baseline accept` publishes synchronization state; status, check, and diff are read-only.

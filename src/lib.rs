@@ -1,8 +1,11 @@
+pub mod baseline;
+pub mod classification;
 pub mod cli;
 pub mod discovery;
 pub mod error;
 pub mod home;
 pub mod mapping;
+pub mod observation;
 pub mod path_policy;
 pub mod registry;
 pub mod result;
@@ -83,7 +86,208 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
             Ok(outcome) => outcome,
             Err(error) => CommandOutcome::failure(&error),
         },
+        cli::Command::Status(args) => inspection_outcome("status", args),
+        cli::Command::Check(args) => inspection_outcome("check", args),
+        cli::Command::Diff(args) => inspection_outcome("diff", args),
+        cli::Command::Baseline(args) => match &args.command {
+            cli::BaselineCommand::Accept(arguments) => match execute_baseline_accept(arguments) {
+                Ok(outcome) => outcome,
+                Err(error) => CommandOutcome::failure(&error),
+            },
+        },
     }
+}
+
+fn inspection_outcome(operation: &str, args: &cli::InspectionArgs) -> CommandOutcome {
+    match execute_inspection(operation, args) {
+        Ok(outcome) => outcome,
+        Err(error) => CommandOutcome::failure(&error),
+    }
+}
+
+fn execute_inspection(
+    operation: &str,
+    args: &cli::InspectionArgs,
+) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation(operation))?;
+    let state = state::publication::load(&home)?;
+    let path_space = if args.destination {
+        observation::model::PathSpace::Destination
+    } else {
+        observation::model::PathSpace::Source
+    };
+    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        selector,
+        path_space,
+        operation,
+    )?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation(operation))?;
+    state::publication::revalidate(&home, &state)
+        .map_err(|error| error.for_operation(operation))?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .collect();
+    let scope = classification_scope(&selection, selector, path_space);
+    let result = classification::model::ClassificationResult::new(operation, scope, records);
+    Ok(CommandOutcome::classification(&result))
+}
+
+fn classification_scope(
+    selection: &observation::model::Selection,
+    selector: Option<&std::path::Path>,
+    path_space: observation::model::PathSpace,
+) -> classification::model::ClassificationScope {
+    use observation::model::Selection;
+    let (kind, mapping_source) = match selection {
+        Selection::All => ("all", None),
+        Selection::Mapping(mapping) => ("mapping", Some(mapping.source.display().to_string())),
+        Selection::Entry(identity) => {
+            ("entry", Some(identity.mapping.source.display().to_string()))
+        }
+        Selection::Subtree(identity) => (
+            "subtree",
+            Some(identity.mapping.source.display().to_string()),
+        ),
+        Selection::Unmanaged(_) => ("unmanaged", None),
+    };
+    classification::model::ClassificationScope {
+        kind: kind.into(),
+        path_space,
+        selector: selector.map(crate::discovery::model::SafePath::from_path),
+        mapping_source,
+    }
+}
+
+fn execute_baseline_accept(args: &cli::InspectionArgs) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    execute_baseline_accept_with_hook(&home, args, || {})
+}
+
+#[doc(hidden)]
+pub fn execute_baseline_accept_with_hook<F>(
+    home: &home::GripHome,
+    args: &cli::InspectionArgs,
+    after_initial: F,
+) -> Result<CommandOutcome, GripError>
+where
+    F: FnOnce(),
+{
+    let expected_registry = registry::publication::load(home, false)
+        .map_err(|error| error.for_mapping_operation("baseline_accept"))?;
+    let expected_state = state::publication::load(home)?;
+    let path_space = if args.destination {
+        observation::model::PathSpace::Destination
+    } else {
+        observation::model::PathSpace::Source
+    };
+    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selection = observation::model::resolve_selection(
+        &expected_registry,
+        &expected_state.accepted,
+        selector,
+        path_space,
+        "baseline_accept",
+    )?;
+    let observed = observation::inspect(
+        home,
+        &expected_registry,
+        &expected_state.accepted,
+        &selection,
+    )
+    .map_err(|error| error.for_operation("baseline_accept"))?;
+    state::publication::revalidate(home, &expected_state)
+        .map_err(|error| error.for_operation("baseline_accept"))?;
+    let records = observed
+        .values()
+        .map(|entry| {
+            classification::classify(
+                entry,
+                expected_state.accepted.baselines.get(&entry.identity),
+            )
+        })
+        .collect::<Vec<_>>();
+    let candidate = baseline::build(&expected_state.accepted, &records)?;
+    if candidate.changed_count == 0 {
+        return Ok(CommandOutcome::baseline(
+            &baseline::AcceptanceResult::already_current(
+                candidate.selected_count,
+                expected_state.accepted.generation,
+            ),
+        ));
+    }
+    after_initial();
+
+    let _registry_guard = registry::publication::acquire_guard(home, "baseline_accept")?;
+    let state_dir = state::publication::prepare_directory(home)?;
+    let _state_guard = state::lock::PublicationLock::acquire(&state_dir.join("state.lock"))?;
+    let locked_registry = registry::publication::load(home, false)
+        .map_err(|error| error.for_mapping_operation("baseline_accept"))?;
+    if locked_registry.bytes != expected_registry.bytes
+        || locked_registry.registry != expected_registry.registry
+    {
+        return Err(GripError::discovery_operational(
+            "baseline_accept",
+            "stale_registry_evidence",
+            vec![home.path().join("config.toml").display().to_string()],
+            "accepted registry changed before baseline publication",
+        ));
+    }
+    state::publication::revalidate(home, &expected_state)
+        .map_err(|error| error.for_operation("baseline_accept"))?;
+    let locked_selection = observation::model::resolve_selection(
+        &locked_registry,
+        &expected_state.accepted,
+        selector,
+        path_space,
+        "baseline_accept",
+    )?;
+    let locked_observed = observation::inspect(
+        home,
+        &locked_registry,
+        &expected_state.accepted,
+        &locked_selection,
+    )
+    .map_err(|error| error.for_operation("baseline_accept"))?;
+    let locked_records = locked_observed
+        .values()
+        .map(|entry| {
+            classification::classify(
+                entry,
+                expected_state.accepted.baselines.get(&entry.identity),
+            )
+        })
+        .collect::<Vec<_>>();
+    if locked_records != records {
+        return Err(GripError::discovery_operational(
+            "baseline_accept",
+            "stale_baseline_evidence",
+            Vec::new(),
+            "accepted baseline evidence changed before publication",
+        ));
+    }
+    let locked_candidate = baseline::build(&expected_state.accepted, &locked_records)?;
+    registry::publication::revalidate_readonly(home, &locked_registry, "baseline_accept")?;
+    let generation =
+        state::publication::publish_accepted_locked(home, &expected_state, &locked_candidate.next)?;
+    let result = match generation {
+        Some(generation) => baseline::AcceptanceResult::accepted(
+            locked_candidate.selected_count,
+            locked_candidate.changed_count,
+            generation,
+        ),
+        None => baseline::AcceptanceResult::already_current(
+            locked_candidate.selected_count,
+            expected_state.accepted.generation,
+        ),
+    };
+    Ok(CommandOutcome::baseline(&result))
 }
 
 fn selected_home() -> Result<home::GripHome, GripError> {
@@ -290,9 +494,9 @@ fn validate_selected_home() -> Result<(std::path::PathBuf, &'static str), GripEr
                     "state.json must be a regular file".into(),
                 ));
             }
-            let text = fs::read_to_string(&state_path)
+            let bytes = fs::read(&state_path)
                 .map_err(|e| GripError::CorruptState(format!("state.json is unreadable: {e}")))?;
-            state::decode(&text)?;
+            state::decode_accepted(Some(&bytes))?;
             Ok((selected.path().to_owned(), "valid"))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

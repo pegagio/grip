@@ -2,7 +2,7 @@
 title: Filesystem support boundaries
 type: reference
 sources: [S001, S004, S005, S006]
-updated: 2026-09-05
+updated: 2026-09-06
 ---
 
 # Filesystem support boundaries
@@ -19,7 +19,7 @@ Feature 003 inspection reports symbolic links, hard links, sparse files, special
 
 The implementation uses descriptor-relative, no-follow inspection for traversed entries and performs separate source and destination passes. Policy files are accepted only as regular, single-link, non-sparse UTF-8 files; unreadable or unsupported `.gripignore` files fail inspection instead of weakening policy silently. (S006)
 
-Content and the supported metadata set both participate in equality and conflict detection. The exact first-release metadata fields remain open, but the product intends to preserve attributes when permitted and report unsupported or unauthorized transitions precisely rather than silently degrading them. (S001)
+Content and the supported metadata set both participate in equality and conflict detection. Feature 004's first set fingerprints ordinary-file bytes with SHA-256 and compares node kind, file length and digest, and the full Unix permission mode; modification time is diagnostic rather than equality-defining. Unsupported or unavailable evidence remains explicit rather than being silently coerced. (S004)
 
 The initial platform contract may target macOS and Unix explicitly. Cross-platform metadata fidelity, case sensitivity, Unicode normalization, user and group identity reproduction, and symlink behavior require explicit contracts rather than assumptions inherited from a broad filesystem abstraction. (S001)
 

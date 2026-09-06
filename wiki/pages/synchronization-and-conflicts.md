@@ -1,13 +1,15 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001]
-updated: 2026-09-03
+sources: [S001, S004, S007]
+updated: 2026-09-06
 ---
 
 # Synchronization and conflicts
 
 Grip compares the current source, current destination, and last accepted baseline for each managed entry. That comparison distinguishes synchronized entries, initial additions or collisions, one-sided changes, converged identical changes, divergent changes, deletions, delete/change conflicts, and entries pending retirement after becoming ignored. (S001)
+
+Feature 004 implements this model as deterministic typed records shared by `status`, `check`, and `diff`. Explicit baseline acceptance is allowed only when all selected source and destination evidence is complete and equivalent; an already-current acceptance is an exact no-op, and acceptance-relevant drift detected before publication preserves the prior baseline. (S004)
 
 `push` propagates eligible source-side changes, `pull` propagates eligible destination-side changes, and `sync` plans all unambiguous one-sided changes in both directions. An accepted operation updates the baseline only after its changes have been applied and verified. (S001)
 
@@ -18,3 +20,4 @@ Mutating operations perform a complete preflight and block before the first muta
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
+- [Baseline classification and status](./baseline-classification-and-status.md)

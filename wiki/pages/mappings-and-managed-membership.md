@@ -2,7 +2,7 @@
 title: Mappings and managed membership
 type: concept
 sources: [S001, S004, S005, S006]
-updated: 2026-09-05
+updated: 2026-09-06
 ---
 
 # Mappings and managed membership
@@ -22,6 +22,8 @@ Source-side `.gripignore` files may appear at the mapping root or in nested dire
 The implemented inspection derives tree membership fresh without creating a manifest or baseline. It includes ordinary files and directories, reports an ignored directory once without traversing descendants, and exposes eligible, ignored, destination-only, unsupported-source, and unsafe-destination-collision categories. File mappings contribute only their exact source and do not enumerate parent directories. (S004)
 
 Feature 003 fixes ignore evaluation to source-relative, hierarchical policy: root and nested `.gripignore` files apply in traversal order, later matches override earlier ones, negation can re-include entries, and neither ordinary Git exclusions nor destination-side policy participates. Ignored directories prune their descendants from both discovery and destination-only reporting. (S006)
+
+Accepted entries that later become newly ignored or lose their mapping remain visible as pending-retirement evidence. Scoped baseline acceptance preserves every accepted record outside the selected source or destination subtree and cannot silently retire prior membership. (S004)
 
 ## Related pages
 
