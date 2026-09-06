@@ -18,6 +18,7 @@ page files, not here.
 
 ## Components
 
+- [Baseline classification and status](./pages/baseline-classification-and-status.md)
 - [Command-line and path selection](./pages/command-line-and-path-selection.md)
 - [Configuration and state](./pages/configuration-and-state.md)
 - [Mapping registry publication](./pages/mapping-registry-publication.md)

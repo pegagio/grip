@@ -5,10 +5,12 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCategory {
     Success,
+    AttentionRequired,
     InvalidUsage,
     InvalidConfiguration,
     UnsupportedSchema,
     CorruptState,
+    StateContention,
     InternalError,
 }
 
@@ -16,25 +18,29 @@ impl ResultCategory {
     pub const fn code(self) -> &'static str {
         match self {
             Self::Success => "ok",
+            Self::AttentionRequired => "attention_required",
             Self::InvalidUsage => "invalid_usage",
             Self::InvalidConfiguration => "invalid_configuration",
             Self::UnsupportedSchema => "unsupported_schema",
             Self::CorruptState => "corrupt_state",
+            Self::StateContention => "state_contention",
             Self::InternalError => "operational_failure",
         }
     }
     pub const fn exit_code(self) -> u8 {
         match self {
             Self::Success => 0,
+            Self::AttentionRequired => 1,
             Self::InvalidUsage => 2,
             Self::InvalidConfiguration => 10,
             Self::UnsupportedSchema => 11,
             Self::CorruptState => 12,
+            Self::StateContention => 13,
             Self::InternalError => 20,
         }
     }
     pub const fn status(self) -> &'static str {
-        if matches!(self, Self::Success) {
+        if matches!(self, Self::Success | Self::AttentionRequired) {
             "ok"
         } else {
             "error"
@@ -54,6 +60,10 @@ pub enum GripError {
     CorruptState(String),
     #[error("state publication is already in progress")]
     StateContention,
+    #[error("selected baseline evidence is not complete and equivalent")]
+    BaselineNotAcceptable {
+        records: Vec<crate::classification::model::ClassificationRecord>,
+    },
     #[error("{message}")]
     Mapping {
         operation: String,
@@ -77,7 +87,9 @@ impl GripError {
             Self::UnsupportedSchema(_) => ResultCategory::UnsupportedSchema,
             Self::CorruptState(_) => ResultCategory::CorruptState,
             Self::Mapping { category, .. } => *category,
-            Self::StateContention | Self::Internal(_) => ResultCategory::InternalError,
+            Self::StateContention => ResultCategory::StateContention,
+            Self::BaselineNotAcceptable { .. } => ResultCategory::InvalidConfiguration,
+            Self::Internal(_) => ResultCategory::InternalError,
         }
     }
     pub fn from_io(context: &str, error: io::Error) -> Self {

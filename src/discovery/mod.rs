@@ -322,8 +322,11 @@ fn inspect_file_mapping(
     records: &mut Vec<DiscoveryRecord>,
     evidence_map: &mut BTreeMap<(EvidenceSide, PathBuf, Vec<u8>), model::NodeEvidence>,
 ) -> Result<(), GripError> {
-    let metadata = metadata_at_path(&mapping.source)
-        .map_err(|error| unavailable(&mapping.source, "path_unavailable", error))?;
+    let metadata = match metadata_at_path(&mapping.source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(unavailable(&mapping.source, "path_unavailable", error)),
+    };
     let kind = metadata.classify(metadata.stat.st_dev as u64);
     evidence_map.insert(
         (EvidenceSide::Source, mapping.source.clone(), Vec::new()),
@@ -358,8 +361,11 @@ fn inspect_tree_mapping(
     evidence_map: &mut BTreeMap<(EvidenceSide, PathBuf, Vec<u8>), model::NodeEvidence>,
     policy_evidence: &mut BTreeMap<Vec<u8>, model::PolicyEvidence>,
 ) -> Result<(), GripError> {
-    let root = Directory::open(&mapping.source)
-        .map_err(|error| unavailable(&mapping.source, "directory_unreadable", error))?;
+    let root = match Directory::open(&mapping.source) {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(unavailable(&mapping.source, "directory_unreadable", error)),
+    };
     let root_device = root.root_metadata().st_dev as u64;
     let names = root
         .child_names()

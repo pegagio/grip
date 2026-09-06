@@ -100,15 +100,17 @@ fn warm_release_commands_meet_p95_targets() {
     let discovery_destination = root.path().join("discovery-destination");
     std::fs::create_dir(&discovery_home).unwrap();
     std::fs::create_dir(&discovery_source).unwrap();
+    std::fs::create_dir(&discovery_destination).unwrap();
     for directory_index in 0..100 {
-        let directory = discovery_source.join(format!("directory-{directory_index:03}"));
+        let relative_directory = format!("directory-{directory_index:03}");
+        let directory = discovery_source.join(&relative_directory);
+        let destination_directory = discovery_destination.join(&relative_directory);
         std::fs::create_dir(&directory).unwrap();
+        std::fs::create_dir(&destination_directory).unwrap();
         for file_index in 0..99 {
-            std::fs::write(
-                directory.join(format!("entry-{file_index:03}.txt")),
-                b"representative",
-            )
-            .unwrap();
+            let name = format!("entry-{file_index:03}.txt");
+            std::fs::write(directory.join(&name), b"representative").unwrap();
+            std::fs::write(destination_directory.join(name), b"representative").unwrap();
         }
     }
     std::fs::write(
@@ -130,12 +132,30 @@ fn warm_release_commands_meet_p95_targets() {
             .arg(&discovery_source);
         command
     });
+    let accepted = Command::new(&binary)
+        .env_clear()
+        .env("HOME", root.path())
+        .env("GRIP_HOME", &discovery_home)
+        .args(["baseline", "accept"])
+        .output()
+        .unwrap();
+    assert!(accepted.status.success());
+    let status = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", &discovery_home)
+            .args(["--output=json", "status"]);
+        command
+    });
     eprintln!(
-        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?}"
+        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?}"
     );
     assert!(help <= Duration::from_millis(100));
     assert!(version <= Duration::from_millis(100));
     assert!(validate <= Duration::from_secs(1));
     assert!(mapping_list <= Duration::from_secs(1));
     assert!(discovery <= Duration::from_secs(2));
+    assert!(status <= Duration::from_secs(2));
 }

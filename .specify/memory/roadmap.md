@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.3 -> 1.0.4
-Bump rationale: Record verified completion of Feature 003.
+Version change: 1.0.6 -> 1.0.7
+Bump rationale: Record verified completion of Feature 004.
 
 Changes this revision:
-  - Changed spec 003 from in-progress to verified
-  - Added Feature 003 verification evidence
+  - Transitioned Feature 004 from in-progress to verified
+  - Added the Feature 004 debrief as verification evidence
 
-Specs affected: 003
-Open questions added/resolved: none; Feature 003 records its decisions for Q-05 and the discovery portions of Q-06 and Q-07 while later assigned portions remain open
+Specs affected: 004
+Open questions added/resolved: none
 
-Notes: Feature 003 passed its specification, implementation, convergence, validation, performance, and roadmap-debrief gates. Verification evidence is `specs/003-source-discovery-gripignore/roadmap-reviews/debrief-20260905T164650Z.md` (`PROCEED`, no findings).
+Notes: Feature 004 satisfies its roadmap outcome with a trustworthy implementation delta and no debrief findings.
 -->
 
 # Grip — Spec Roadmap
@@ -87,8 +87,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Tree Discovery and Gripignore, Supported Node Boundary
 - **Notes:** The specification resolves Q-05 with an enumerated Gitignore-compatible contract and policy-only `.gripignore`, includes empty directories for the discovery portion of Q-06 while deferring retirement and independent directory metadata, and treats symbolic links as unsupported non-followed nodes for the discovery portion of Q-07. Verification evidence: `specs/003-source-discovery-gripignore/roadmap-reviews/debrief-20260905T164650Z.md` (`PROCEED`, no findings).
 
-### 004 — Baselines, Classification, and Status  [status: planned]
+### 004 — Baselines, Classification, and Status  [status: verified]
 
+- **Spec dir:** `specs/004-baselines-classification-status`
 - **Description:** Capture current state and an accepted baseline, implement the complete three-way entry-classification model, and expose deterministic read-only inspection commands.
 - **Outcome:** `status`, `check`, and `diff` can distinguish synchronization, additions, initial collisions, unmanaged destination entries, one-sided drift, converged edits, divergent conflicts, deletions, unsafe collisions, and pending retirement without changing payloads.
 - **Scope (in):** Fingerprints; first supported metadata set; versioned and integrity-checked baseline state; explicit classification types; deterministic planning model; one optional source-path selector; `--destination` interpretation; `--` option termination; human and machine results; automation-oriented exit behavior; corrupt or missing state detection.
@@ -96,7 +97,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 003
 - **Governed by:** C-03, C-04, C-08, C-09, C-10, C-11
 - **Addresses:** `docs/product-definition.md` — Synchronization Model, Content and Metadata, Command-Line Experience
-- **Notes:** The spec must settle Q-08 and complete Q-12. Every source/destination/baseline classification requires behavioral coverage before mutation work begins.
+- **Notes:** The spec must settle Q-08 and complete Q-12. Every source/destination/baseline classification requires behavioral coverage before mutation work begins. Verification evidence: `specs/004-baselines-classification-status/roadmap-reviews/debrief-20260906T133558Z.md` (`PROCEED`, no findings).
 
 ### 005 — Safe Push and Recovery  [status: planned]
 
@@ -185,4 +186,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.4 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-05
+**Version**: 1.0.7 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-06

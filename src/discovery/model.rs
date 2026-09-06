@@ -1,7 +1,7 @@
 //! Domain values for deterministic, non-persisted discovery inventories.
 
 use crate::mapping::MappingKind;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::os::unix::ffi::OsStrExt;
@@ -123,7 +123,7 @@ pub enum RecordCategory {
 }
 
 /// Stable observed node kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     File,

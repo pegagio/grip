@@ -78,6 +78,26 @@ impl CommandOutcome {
                 );
             }
         }
+        if let GripError::BaselineNotAcceptable { records } = error {
+            outcome
+                .details
+                .insert("operation".into(), "baseline_accept".into());
+            outcome
+                .details
+                .insert("reason".into(), "baseline_not_acceptable".into());
+            outcome.details.insert(
+                "records".into(),
+                serde_json::to_value(records).expect("classification records serialize"),
+            );
+        }
+        if matches!(error, GripError::StateContention) {
+            outcome
+                .details
+                .insert("operation".into(), "baseline_accept".into());
+            outcome
+                .details
+                .insert("reason".into(), "state_contention".into());
+        }
         outcome
     }
 
@@ -142,6 +162,61 @@ impl CommandOutcome {
             serde_json::to_value(&inventory.records).expect("discovery records serialize"),
         );
         outcome
+    }
+
+    pub fn classification(result: &crate::classification::model::ClassificationResult) -> Self {
+        let category = if result.operation == "check" && result.attention_count > 0 {
+            ResultCategory::AttentionRequired
+        } else {
+            ResultCategory::Success
+        };
+        let mut value = serde_json::to_value(result).expect("classification result serializes");
+        let details = value
+            .as_object_mut()
+            .expect("classification result is an object")
+            .clone();
+        Self {
+            category,
+            message: format!(
+                "{} complete: {} entries; {} attention; {} blocking",
+                title(&result.operation),
+                result.records.len(),
+                result.attention_count,
+                result.blocking_count
+            ),
+            details,
+        }
+    }
+
+    pub fn baseline(result: &crate::baseline::AcceptanceResult) -> Self {
+        let mut value = serde_json::to_value(result).expect("baseline result serializes");
+        let details = value
+            .as_object_mut()
+            .expect("baseline result is an object")
+            .clone();
+        let message = if result.published {
+            format!(
+                "Accepted {} baseline entries; generation {}",
+                result.changed_count,
+                result.generation.expect("published result has generation")
+            )
+        } else {
+            "Baseline already current; no state published".into()
+        };
+        Self {
+            category: ResultCategory::Success,
+            message,
+            details,
+        }
+    }
+}
+
+fn title(operation: &str) -> &str {
+    match operation {
+        "status" => "Status",
+        "check" => "Check",
+        "diff" => "Diff",
+        _ => "Inspection",
     }
 }
 
@@ -209,12 +284,85 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                     render_human_discovery_record(record, writer)?;
                 }
             }
+            if matches!(
+                outcome.details.get("operation").and_then(Value::as_str),
+                Some("status" | "check" | "diff")
+            ) && let Some(records) = outcome.details.get("records").and_then(Value::as_array)
+            {
+                for record in records {
+                    render_human_classification_record(record, writer)?;
+                }
+            }
             Ok(())
         }
         OutputMode::Json => {
             serde_json::to_writer(&mut *writer, &ResultEnvelopeV1::from(outcome))?;
             writeln!(writer)
         }
+    }
+}
+
+fn render_human_classification_record(record: &Value, writer: &mut dyn Write) -> io::Result<()> {
+    let classification = record
+        .get("classification")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let source = record
+        .get("source_path")
+        .and_then(|path| path.get("display"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let direction = record
+        .get("prospective_direction")
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    writeln!(
+        writer,
+        "{classification} {source} direction={direction} attention={} blocking={}",
+        yes_no(record.get("attention")),
+        yes_no(record.get("blocking"))
+    )?;
+    if let Some(reasons) = record.get("reasons").and_then(Value::as_array)
+        && !reasons.is_empty()
+    {
+        let value = reasons
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(",");
+        writeln!(writer, "  reasons {value}")?;
+    }
+    if let Some(dimensions) = record.get("changed_dimensions").and_then(Value::as_object) {
+        for label in [
+            "source_to_baseline",
+            "destination_to_baseline",
+            "source_to_destination",
+        ] {
+            match dimensions.get(label) {
+                Some(Value::Null) | None => writeln!(writer, "  {label} unavailable")?,
+                Some(Value::Array(values)) if values.is_empty() => {
+                    writeln!(writer, "  {label} none")?
+                }
+                Some(Value::Array(values)) => {
+                    let value = values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    writeln!(writer, "  {label} {value}")?;
+                }
+                Some(_) => writeln!(writer, "  {label} unavailable")?,
+            }
+        }
+    }
+    Ok(())
+}
+
+fn yes_no(value: Option<&Value>) -> &'static str {
+    if value.and_then(Value::as_bool).unwrap_or(false) {
+        "yes"
+    } else {
+        "no"
     }
 }
 
