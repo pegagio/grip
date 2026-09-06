@@ -6,7 +6,9 @@ pub mod error;
 pub mod home;
 pub mod mapping;
 pub mod observation;
+pub mod operation;
 pub mod path_policy;
+pub mod push;
 pub mod registry;
 pub mod result;
 pub mod state;
@@ -50,11 +52,46 @@ pub fn run_process() -> std::process::ExitCode {
         "command completed",
         &mut io::stderr().lock(),
     );
-    if result::render(outcome, parsed.output.into(), &mut io::stdout().lock()).is_err() {
+    let render_home = selected_home().ok();
+    if render_command_result(
+        outcome,
+        parsed.output.into(),
+        &mut io::stdout().lock(),
+        render_home.as_ref(),
+    )
+    .is_err()
+    {
         let _ = writeln!(io::stderr().lock(), "grip: could not write command result");
         return std::process::ExitCode::from(20);
     }
     std::process::ExitCode::from(exit)
+}
+
+/// Render once and finalize only the associated operation's delivery evidence.
+#[doc(hidden)]
+pub fn render_command_result(
+    outcome: CommandOutcome,
+    mode: result::OutputMode,
+    writer: &mut dyn std::io::Write,
+    home: Option<&home::GripHome>,
+) -> std::io::Result<()> {
+    let operation_id = outcome
+        .details
+        .get("operation_record")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|record| record.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let rendered = result::render(outcome, mode, writer);
+    if let (Some(operation_id), Some(home)) = (&operation_id, home) {
+        let delivery = if rendered.is_ok() {
+            "delivered"
+        } else {
+            "failed"
+        };
+        let _ = operation::publication::finalize_result_delivery(home, operation_id, delivery);
+    }
+    rendered
 }
 
 pub fn execute(cli: &cli::Cli) -> CommandOutcome {
@@ -89,6 +126,10 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
         cli::Command::Status(args) => inspection_outcome("status", args),
         cli::Command::Check(args) => inspection_outcome("check", args),
         cli::Command::Diff(args) => inspection_outcome("diff", args),
+        cli::Command::Push(args) => match execute_push(args) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
         cli::Command::Baseline(args) => match &args.command {
             cli::BaselineCommand::Accept(arguments) => match execute_baseline_accept(arguments) {
                 Ok(outcome) => outcome,
@@ -96,6 +137,48 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
             },
         },
     }
+}
+
+fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation("push"))?;
+    let state = state::publication::load(&home)?;
+    let path_space = if args.destination {
+        observation::model::PathSpace::Destination
+    } else {
+        observation::model::PathSpace::Source
+    };
+    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        selector,
+        path_space,
+        "push",
+    )?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("push"))?;
+    state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("push"))?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .collect();
+    let scope = classification_scope(&selection, selector, path_space);
+    let plan = push::plan::build_with_parent_requirements(
+        scope,
+        records,
+        registry.missing_destination_parents(),
+    )?;
+    if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
+        return Ok(CommandOutcome::push_plan(
+            &plan,
+            if args.dry_run { "dry_run" } else { "execute" },
+            state.accepted.generation,
+        ));
+    }
+    let applied = push::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::push_applied(&applied))
 }
 
 fn inspection_outcome(operation: &str, args: &cli::InspectionArgs) -> CommandOutcome {
@@ -224,6 +307,7 @@ where
     }
     after_initial();
 
+    let _mutation_guard = state::mutation_lock::MutationLock::acquire(home, "baseline_accept")?;
     let _registry_guard = registry::publication::acquire_guard(home, "baseline_accept")?;
     let state_dir = state::publication::prepare_directory(home)?;
     let _state_guard = state::lock::PublicationLock::acquire(&state_dir.join("state.lock"))?;
@@ -340,6 +424,7 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
             mappings.push(added.clone());
             let candidate = registry::Registry::new(mappings)
                 .map_err(|error| error.for_operation(operation).for_mapping_kind(kind))?;
+            let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, operation)?;
             publication::publish_with_evidence(
                 &home,
                 &snapshot,
@@ -468,6 +553,7 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                 .collect();
             let candidate = registry::Registry::new(mappings)
                 .map_err(|error| error.for_operation(operation))?;
+            let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, operation)?;
             publication::publish(&home, &snapshot, &candidate).map_err(|error| {
                 error.for_operation(operation).with_paths_if_empty(vec![
                     home.path().join("config.toml").display().to_string(),

@@ -35,7 +35,23 @@ pub enum Command {
     Status(InspectionArgs),
     Check(InspectionArgs),
     Diff(InspectionArgs),
+    /// Copy eligible source state to mapped destinations.
+    Push(PushArgs),
     Baseline(BaselineArgs),
+}
+
+/// Arguments shared by push preview and execution.
+#[derive(Debug, clap::Args)]
+pub struct PushArgs {
+    /// Preview the complete plan without locking or mutation.
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    /// Interpret PATH in destination space without reversing push direction.
+    #[arg(long)]
+    pub destination: bool,
+    /// Select one mapping, entry, or component-boundary subtree.
+    #[arg(value_name = "PATH")]
+    pub path: Option<OsString>,
 }
 
 #[derive(Debug, clap::Args)]

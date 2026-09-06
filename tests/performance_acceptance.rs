@@ -107,7 +107,7 @@ fn warm_release_commands_meet_p95_targets() {
         let destination_directory = discovery_destination.join(&relative_directory);
         std::fs::create_dir(&directory).unwrap();
         std::fs::create_dir(&destination_directory).unwrap();
-        for file_index in 0..99 {
+        for file_index in 33..99 {
             let name = format!("entry-{file_index:03}.txt");
             std::fs::write(directory.join(&name), b"representative").unwrap();
             std::fs::write(destination_directory.join(name), b"representative").unwrap();
@@ -140,6 +140,23 @@ fn warm_release_commands_meet_p95_targets() {
         .output()
         .unwrap();
     assert!(accepted.status.success());
+    for directory_index in 0..100 {
+        let source_directory = discovery_source.join(format!("directory-{directory_index:03}"));
+        for file_index in 0..33 {
+            std::fs::write(
+                source_directory.join(format!("entry-{file_index:03}.txt")),
+                b"source addition",
+            )
+            .unwrap();
+        }
+        for file_index in 33..66 {
+            std::fs::write(
+                source_directory.join(format!("entry-{file_index:03}.txt")),
+                b"source replacement",
+            )
+            .unwrap();
+        }
+    }
     let status = measure_consistent(|| {
         let mut command = Command::new(&binary);
         command
@@ -149,8 +166,62 @@ fn warm_release_commands_meet_p95_targets() {
             .args(["--output=json", "status"]);
         command
     });
+    let dry_run_push = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", &discovery_home)
+            .args(["--output=json", "push", "--dry-run"]);
+        command
+    });
+    let home = grip::home::select(Some(discovery_home.clone().into_os_string()), None).unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let selection = grip::observation::model::Selection::All;
+    let build_plan = || {
+        let observed =
+            grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
+        let records = observed
+            .values()
+            .map(|entry| {
+                grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
+            })
+            .collect();
+        grip::push::plan::build_with_parent_requirements(
+            grip::classification::model::ClassificationScope {
+                kind: "all".into(),
+                path_space: grip::observation::model::PathSpace::Source,
+                selector: None,
+                mapping_source: None,
+            },
+            records,
+            registry.missing_destination_parents(),
+        )
+        .unwrap()
+    };
+    let expected_plan = build_plan();
+    let execute_mode_plan = p95((0..100)
+        .map(|_| {
+            let start = Instant::now();
+            assert_eq!(build_plan(), expected_plan);
+            start.elapsed()
+        })
+        .collect());
+    let dry_run_output = Command::new(&binary)
+        .env_clear()
+        .env("HOME", root.path())
+        .env("GRIP_HOME", &discovery_home)
+        .args(["--output=json", "push", "--dry-run"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        support::json(&dry_run_output)["details"]["plan_id"]["digest"],
+        expected_plan.plan_id
+    );
+    assert_eq!(expected_plan.counts.actionable, 6_600);
     eprintln!(
-        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?}"
+        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?}"
     );
     assert!(help <= Duration::from_millis(100));
     assert!(version <= Duration::from_millis(100));
@@ -158,4 +229,5 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(mapping_list <= Duration::from_secs(1));
     assert!(discovery <= Duration::from_secs(2));
     assert!(status <= Duration::from_secs(2));
+    assert!(dry_run_push <= Duration::from_secs(2));
 }

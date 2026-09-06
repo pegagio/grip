@@ -1297,3 +1297,40 @@ fn unsupported_registry_schema_retains_mapping_details_for_every_operation() {
         assert_eq!(support::snapshot(root.path()), before);
     }
 }
+
+#[test]
+fn mapping_writes_use_outer_mutation_lock_while_reads_remain_lock_free() {
+    let root = tempfile::tempdir().unwrap();
+    let grip_home = support::minimal_home(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "payload").unwrap();
+    let selected = home::select(Some(grip_home.clone().into_os_string()), None).unwrap();
+    let held = grip::state::mutation_lock::MutationLock::acquire(&selected, "push").unwrap();
+
+    let read = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &["--output=json", "mapping", "list"],
+    );
+    assert!(read.status.success());
+
+    let blocked = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &[
+            "--output=json",
+            "mapping",
+            "add",
+            "file",
+            source.to_str().unwrap(),
+            destination.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(blocked.status.code(), Some(13));
+    let value = support::json(&blocked);
+    assert_eq!(value["details"]["reason"], "state_contention");
+    assert_eq!(value["details"]["owner"]["operation"], "push");
+    assert!(!destination.exists());
+    drop(held);
+}

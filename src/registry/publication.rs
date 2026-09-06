@@ -32,6 +32,28 @@ pub struct RegistrySnapshot {
     evidence: Vec<PathEvidence>,
 }
 
+impl RegistrySnapshot {
+    /// Return missing destination parents captured during validated registry loading.
+    pub fn missing_destination_parents(&self) -> Vec<crate::push::plan::ParentRequirement> {
+        let mut requirements = Vec::new();
+        for mapping in &self.registry.mappings {
+            if let Some(evidence) = self
+                .evidence
+                .iter()
+                .find(|evidence| !evidence.source && evidence.canonical == mapping.destination)
+            {
+                requirements.extend(evidence.missing_destination_parents().into_iter().map(
+                    |path| crate::push::plan::ParentRequirement {
+                        mapping: crate::observation::model::MappingSnapshot::from(mapping),
+                        path,
+                    },
+                ));
+            }
+        }
+        requirements
+    }
+}
+
 /// Held registry publication guard used to enforce registry-before-state ordering.
 pub struct RegistryGuard {
     _lock: PublicationLock,

@@ -1,7 +1,7 @@
 ---
 title: Configuration and state
 type: component
-sources: [S001, S004, S005, S007]
+sources: [S001, S004, S005, S007, S008]
 updated: 2026-09-06
 ---
 
@@ -20,6 +20,8 @@ The accepted registry must be a current-user-owned, non-symlink regular file wit
 Baseline records contain fingerprints and accepted supported metadata, not historical copies of file contents. Recovery copies belong to the operation backup namespace and are a separate concern from baseline comparison. (S001)
 
 Feature 004 publishes integrity-checked State Envelope V2 generations atomically at `<GRIP_HOME>/state/state.json` and retains exact prior bytes as immutable recovery evidence. The state directory must be a current-user-owned, non-symlink directory with exact owner-only mode. State V1 remains readable as an empty-baseline predecessor, while corrupt, unsupported, or stale evidence produces stable non-success results rather than guessed recovery. (S004)
+
+Feature 005 adds partitioned Operation Record V1 under `state/operations/<operation-id>/`: immutable plan intent, a bounded operation summary, one bounded checkpoint per started action, and private recovery payloads. These records are evidence rather than accepted synchronization state. A later push may proceed from a fresh complete plan after an interrupted record, but it never silently resumes, repairs, rolls back, or deletes that retained history. (S008)
 
 ## Related pages
 

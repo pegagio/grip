@@ -2,6 +2,18 @@ use crate::mapping::OwnershipConflict;
 use std::io;
 use thiserror::Error;
 
+#[derive(Debug)]
+pub struct PushFailure {
+    pub operation_id: String,
+    pub plan: crate::push::model::PushPlan,
+    pub baseline: crate::push::model::BaselineOutcome,
+    pub reason: String,
+    pub paths: Vec<crate::discovery::model::SafePath>,
+    pub completion: String,
+    pub category: ResultCategory,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCategory {
     Success,
@@ -60,9 +72,23 @@ pub enum GripError {
     CorruptState(String),
     #[error("state publication is already in progress")]
     StateContention,
+    #[error("another Grip writer holds the mutation lock")]
+    MutationContention {
+        owner: Option<crate::state::mutation_lock::MutationLockOwner>,
+    },
     #[error("selected baseline evidence is not complete and equivalent")]
     BaselineNotAcceptable {
         records: Vec<crate::classification::model::ClassificationRecord>,
+    },
+    #[error("{}", .0.message)]
+    PushFailed(Box<PushFailure>),
+    #[error("{message}")]
+    PushSideEffect {
+        reason: String,
+        publication_visible: bool,
+        verification: String,
+        durability_confirmed: bool,
+        message: String,
     },
     #[error("{message}")]
     Mapping {
@@ -87,9 +113,29 @@ impl GripError {
             Self::UnsupportedSchema(_) => ResultCategory::UnsupportedSchema,
             Self::CorruptState(_) => ResultCategory::CorruptState,
             Self::Mapping { category, .. } => *category,
-            Self::StateContention => ResultCategory::StateContention,
+            Self::StateContention | Self::MutationContention { .. } => {
+                ResultCategory::StateContention
+            }
             Self::BaselineNotAcceptable { .. } => ResultCategory::InvalidConfiguration,
+            Self::PushFailed(failure) => failure.category,
+            Self::PushSideEffect { .. } => ResultCategory::InternalError,
             Self::Internal(_) => ResultCategory::InternalError,
+        }
+    }
+
+    pub fn push_side_effect(
+        reason: &str,
+        publication_visible: bool,
+        verification: &str,
+        durability_confirmed: bool,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::PushSideEffect {
+            reason: reason.into(),
+            publication_visible,
+            verification: verification.into(),
+            durability_confirmed,
+            message: message.into(),
         }
     }
     pub fn from_io(context: &str, error: io::Error) -> Self {

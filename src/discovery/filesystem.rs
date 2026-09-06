@@ -1,7 +1,7 @@
 //! Descriptor-relative, non-following filesystem inspection.
 
 use crate::discovery::model::{EvidenceSide, NodeEvidence, NodeKind};
-use rustix::fd::OwnedFd;
+use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, Stat, fstat, open, openat, statat};
 use std::ffi::CString;
 use std::io;
@@ -37,6 +37,11 @@ impl Directory {
     /// Return the root metadata captured from the opened descriptor.
     pub const fn root_metadata(&self) -> &Stat {
         &self.metadata
+    }
+
+    /// Borrow the opened directory descriptor for descriptor-relative operations.
+    pub(crate) fn as_fd(&self) -> BorrowedFd<'_> {
+        self.descriptor.as_fd()
     }
 
     /// Enumerate exact child names in deterministic raw-byte order.

@@ -98,6 +98,63 @@ impl CommandOutcome {
                 .details
                 .insert("reason".into(), "state_contention".into());
         }
+        if let GripError::MutationContention { owner } = error {
+            outcome.details.insert(
+                "operation".into(),
+                owner
+                    .as_ref()
+                    .map(|value| value.operation.clone())
+                    .unwrap_or_else(|| "unknown".into())
+                    .into(),
+            );
+            outcome
+                .details
+                .insert("reason".into(), "state_contention".into());
+            if let Some(owner) = owner {
+                outcome.details.insert(
+                    "owner".into(),
+                    serde_json::to_value(owner).expect("mutation lock owner serializes"),
+                );
+            }
+        }
+        if let GripError::PushFailed(failure) = error {
+            let plan = &failure.plan;
+            outcome.message = format!(
+                "Push failed after {} of {} actions",
+                plan.counts.completed, plan.counts.actionable
+            );
+            outcome.details.insert("operation".into(), "push".into());
+            outcome.details.insert("mode".into(), "execute".into());
+            outcome
+                .details
+                .insert("completion".into(), failure.completion.clone().into());
+            outcome.details.insert("result".into(), "failed".into());
+            outcome.details.insert("scope".into(), json(&plan.scope));
+            outcome
+                .details
+                .insert("plan_id".into(), plan_id(&plan.plan_id));
+            outcome.details.insert("counts".into(), json(&plan.counts));
+            outcome
+                .details
+                .insert("entries".into(), json(&plan.entries));
+            outcome
+                .details
+                .insert("actions".into(), json(&plan.actions));
+            outcome
+                .details
+                .insert("blockers".into(), json(&plan.blockers));
+            outcome.details.insert(
+                "failure".into(),
+                serde_json::json!({"reason":failure.reason,"paths":failure.paths}),
+            );
+            outcome.details.insert(
+                "operation_record".into(),
+                serde_json::json!({"available":true,"id":failure.operation_id}),
+            );
+            outcome
+                .details
+                .insert("baseline".into(), json(&failure.baseline));
+        }
         outcome
     }
 
@@ -209,6 +266,120 @@ impl CommandOutcome {
             details,
         }
     }
+
+    /// Build the stable result for a complete push plan.
+    pub fn push_plan(
+        plan: &crate::push::model::PushPlan,
+        mode: &str,
+        generation: Option<u64>,
+    ) -> Self {
+        let (category, completion, result, message) = if !plan.blockers.is_empty() {
+            (
+                ResultCategory::InvalidConfiguration,
+                "blocked",
+                "blocked",
+                format!(
+                    "Push blocked: {} selected; {} action(s); {} blocker(s)",
+                    plan.counts.selected, plan.counts.actionable, plan.counts.blockers
+                ),
+            )
+        } else if plan.actions.is_empty() {
+            (
+                ResultCategory::Success,
+                "complete",
+                "no_op",
+                format!(
+                    "Push complete: {} selected; no actions",
+                    plan.counts.selected
+                ),
+            )
+        } else {
+            (
+                ResultCategory::Success,
+                "complete",
+                "planned",
+                format!(
+                    "Push preview complete: {} selected; {} action(s); 0 blockers",
+                    plan.counts.selected, plan.counts.actionable
+                ),
+            )
+        };
+        let mut details = Map::new();
+        details.insert("operation".into(), "push".into());
+        details.insert("mode".into(), mode.into());
+        details.insert("completion".into(), completion.into());
+        details.insert("result".into(), result.into());
+        details.insert("scope".into(), json(&plan.scope));
+        details.insert("plan_id".into(), plan_id(&plan.plan_id));
+        details.insert("counts".into(), json(&plan.counts));
+        details.insert("entries".into(), json(&plan.entries));
+        details.insert("actions".into(), json(&plan.actions));
+        details.insert("blockers".into(), json(&plan.blockers));
+        details.insert("operation_record".into(), Value::Null);
+        details.insert(
+            "baseline".into(),
+            serde_json::json!({
+                "outcome": "not_attempted",
+                "prior_generation": generation,
+                "published_generation": null,
+                "authoritative_generation": generation,
+                "publication_visible": false,
+                "durability_confirmed": true
+            }),
+        );
+        Self {
+            category,
+            message,
+            details,
+        }
+    }
+
+    /// Build the stable successful result for an accepted push execution.
+    pub fn push_applied(success: &crate::push::execution::ExecutionSuccess) -> Self {
+        let plan = &success.plan;
+        let mut details = Map::new();
+        details.insert("operation".into(), "push".into());
+        details.insert("mode".into(), "execute".into());
+        details.insert("completion".into(), "complete".into());
+        details.insert("result".into(), "applied".into());
+        details.insert("scope".into(), json(&plan.scope));
+        details.insert("plan_id".into(), plan_id(&plan.plan_id));
+        details.insert("counts".into(), json(&plan.counts));
+        details.insert("entries".into(), json(&plan.entries));
+        details.insert("actions".into(), json(&plan.actions));
+        details.insert("blockers".into(), json(&plan.blockers));
+        details.insert(
+            "operation_record".into(),
+            serde_json::json!({"available":true,"id":success.operation_id}),
+        );
+        details.insert(
+            "baseline".into(),
+            serde_json::json!({
+                "outcome":"published",
+                "prior_generation":success.prior_generation,
+                "published_generation":success.generation,
+                "authoritative_generation":success.generation,
+                "publication_visible":true,
+                "durability_confirmed":true
+            }),
+        );
+        Self {
+            category: ResultCategory::Success,
+            message: format!(
+                "Push applied: {} action(s); accepted generation {}",
+                plan.counts.completed, success.generation
+            ),
+            details,
+        }
+    }
+}
+
+fn json<T: Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).expect("typed result value serializes")
+}
+
+fn plan_id(digest: &str) -> Value {
+    serde_json::json!({"algorithm":"sha256","digest":digest})
 }
 
 fn title(operation: &str) -> &str {
@@ -291,6 +462,128 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
             {
                 for record in records {
                     render_human_classification_record(record, writer)?;
+                }
+            }
+            if outcome.details.get("operation").and_then(Value::as_str) == Some("push") {
+                if let Some(actions) = outcome.details.get("actions").and_then(Value::as_array) {
+                    for action in actions {
+                        let status = action
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("planned");
+                        let status = if status == "unattempted"
+                            && outcome.details.get("mode").and_then(Value::as_str)
+                                == Some("dry_run")
+                        {
+                            "planned"
+                        } else {
+                            status
+                        };
+                        let source = action
+                            .get("source_path")
+                            .and_then(|path| path.get("display"))
+                            .and_then(Value::as_str);
+                        let destination = action
+                            .get("destination_path")
+                            .and_then(|path| path.get("display"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        let milestones = action.get("milestones").unwrap_or(&Value::Null);
+                        let failure = action
+                            .get("failure")
+                            .and_then(Value::as_str)
+                            .map(|reason| format!(" reason={reason}"))
+                            .unwrap_or_default();
+                        let attempted = matches!(status, "completed" | "failed" | "in_progress");
+                        let evidence = if attempted {
+                            format!(
+                                " visible={} verified={} durable={}",
+                                if milestones.get("publication").and_then(Value::as_str)
+                                    == Some("visible")
+                                {
+                                    "yes"
+                                } else {
+                                    "no"
+                                },
+                                if milestones.get("verification").and_then(Value::as_str)
+                                    == Some("verified")
+                                {
+                                    "yes"
+                                } else {
+                                    "no"
+                                },
+                                if milestones
+                                    .get("durability_confirmed")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false)
+                                {
+                                    "yes"
+                                } else {
+                                    "no"
+                                },
+                            )
+                        } else {
+                            String::new()
+                        };
+                        writeln!(
+                            writer,
+                            "{} {} {}{}{}{}{} recovery={}",
+                            status,
+                            action
+                                .get("kind")
+                                .and_then(Value::as_str)
+                                .unwrap_or("action"),
+                            source.unwrap_or(destination),
+                            if source.is_some() { " -> " } else { "" },
+                            if source.is_some() { destination } else { "" },
+                            failure,
+                            evidence,
+                            milestones
+                                .get("recovery")
+                                .and_then(Value::as_str)
+                                .unwrap_or("not_required")
+                        )?;
+                    }
+                }
+                if let Some(blockers) = outcome.details.get("blockers").and_then(Value::as_array) {
+                    for blocker in blockers {
+                        writeln!(
+                            writer,
+                            "blocked {}",
+                            blocker
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or("blocking_evidence")
+                        )?;
+                    }
+                }
+                if let Some(baseline) = outcome.details.get("baseline") {
+                    let baseline_outcome = baseline
+                        .get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .replace('_', " ");
+                    writeln!(
+                        writer,
+                        "Baseline {}; generation {} remains authoritative",
+                        baseline_outcome,
+                        baseline
+                            .get("authoritative_generation")
+                            .map(Value::to_string)
+                            .unwrap_or_else(|| "none".into())
+                    )?;
+                }
+                if let Some(record) = outcome.details.get("operation_record")
+                    && record.get("available").and_then(Value::as_bool) == Some(true)
+                {
+                    writeln!(
+                        writer,
+                        "Operation record {} preserved",
+                        record
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                    )?;
                 }
             }
             Ok(())

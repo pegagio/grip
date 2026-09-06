@@ -181,6 +181,36 @@ pub fn inspect_relative(
     inspect_file_descriptor(descriptor, || {})
 }
 
+/// Fingerprint one child relative to an already validated parent directory.
+pub(crate) fn inspect_open_child(
+    parent: &crate::discovery::filesystem::Directory,
+    name: &[u8],
+    expected_kind: NodeKind,
+) -> Result<(SupportedState, DiagnosticEvidence), GripError> {
+    if expected_kind == NodeKind::Directory {
+        let child = parent
+            .open_child_directory(name)
+            .map_err(|error| GripError::from_io("could not open observed directory", error))?;
+        let metadata = child.root_metadata();
+        return Ok((
+            SupportedState::directory(),
+            DiagnosticEvidence {
+                modified_seconds: metadata.st_mtime,
+                modified_nanoseconds: metadata.st_mtime_nsec,
+            },
+        ));
+    }
+    if expected_kind != NodeKind::File {
+        return Err(GripError::Internal(
+            "unsupported nodes are not fingerprinted".into(),
+        ));
+    }
+    let descriptor = parent
+        .open_child_file(name)
+        .map_err(|error| GripError::from_io("could not open observed file", error))?;
+    inspect_file_descriptor(descriptor, || {})
+}
+
 fn inspect_file_descriptor<F>(
     descriptor: OwnedFd,
     after_read: F,

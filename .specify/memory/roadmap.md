@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.6 -> 1.0.7
-Bump rationale: Record verified completion of Feature 004.
+Version change: 1.0.8 -> 1.0.9
+Bump rationale: Verify completed Feature 005 implementation.
 
 Changes this revision:
-  - Transitioned Feature 004 from in-progress to verified
-  - Added the Feature 004 debrief as verification evidence
+  - Transitioned Feature 005 from in-progress to verified
+  - Added the Feature 005 post-implementation debrief as verification evidence
 
-Specs affected: 004
+Specs affected: 005
 Open questions added/resolved: none
 
-Notes: Feature 004 satisfies its roadmap outcome with a trustworthy implementation delta and no debrief findings.
+Notes: Feature 005 met its roadmap outcome with no debrief findings; its sole dependency, Feature 004, remains verified.
 -->
 
 # Grip — Spec Roadmap
@@ -99,8 +99,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Synchronization Model, Content and Metadata, Command-Line Experience
 - **Notes:** The spec must settle Q-08 and complete Q-12. Every source/destination/baseline classification requires behavioral coverage before mutation work begins. Verification evidence: `specs/004-baselines-classification-status/roadmap-reviews/debrief-20260906T133558Z.md` (`PROCEED`, no findings).
 
-### 005 — Safe Push and Recovery  [status: planned]
+### 005 — Safe Push and Recovery  [status: verified]
 
+- **Spec dir:** `specs/005-safe-push-recovery`
 - **Description:** Apply eligible source-to-destination additions and changes under Grip's deterministic planning, revalidation, staging, backup, verification, and baseline-publication contract.
 - **Outcome:** `push` mutates by default and `push --dry-run` or `push -n` previews the same plan without mutation; stale evidence, conflicts, unsupported entries, or failed verification cannot produce a falsely accepted baseline.
 - **Scope (in):** Complete preflight; deterministic action ordering; relevant pre-action revalidation; short-lived state-publication coordination if required; destination-parent handling; same-filesystem staging where possible; replacement and recovery namespaces; verification; partial-failure reporting; successful baseline publication; representative performance measurements.
@@ -108,7 +109,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 004
 - **Governed by:** C-02, C-04, C-05, C-06, C-07, C-08, C-09, C-10
 - **Addresses:** `docs/product-definition.md` — Safety Model, Dry Runs, Incremental Delivery Milestone 3
-- **Notes:** The spec must settle Q-10 and the initial portions of Q-11. The safe default for isolated operational failure is to stop; any alternative requires explicit acceptance and equally truthful recovery semantics.
+- **Notes:** The specification settles Q-10 with stop-after-first-operational-failure behavior and the creation, preservation, binding, and reporting portion of Q-11; later backup inspection, cleanup, rollback, and broader state recovery remain Feature 008 work. Verification evidence: `specs/005-safe-push-recovery/roadmap-reviews/debrief-20260906T185539Z.md` (`PROCEED`, no findings).
 
 ### 006 — Reverse Synchronization  [status: planned]
 
@@ -186,4 +187,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.7 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-06
+**Version**: 1.0.9 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-06

@@ -57,6 +57,20 @@ Each optional path selects one mapping, entry, or component-boundary subtree in 
 
 `baseline accept` records evidence only when every selected source and destination entry is complete and equivalent. A scoped acceptance preserves all evidence outside the scope. Repeating an already-current acceptance is an exact no-op. State Envelope V2 generations are integrity checked, published atomically under `<GRIP_HOME>/state/state.json`, and retain exact prior bytes as immutable recovery evidence. Grip continues to read State V1 as an empty-baseline predecessor.
 
+## Push safely to destinations
+
+`push` copies supported source files and directories to their mapped destinations. It mutates by default; use `-n` or `--dry-run` to inspect the complete deterministic plan without acquiring a mutation lock, creating operation evidence, changing payloads, or publishing a baseline.
+
+```text
+grip push [-n|--dry-run] [--destination] [--] [PATH]
+```
+
+The optional path uses source space unless `--destination` is supplied; that option changes selection only and never reverses the source-to-destination direction. Grip reports every blocker before mutation. An actionful execution acquires the global writer lock, repeats inspection under the lock, and stops at the first failed action.
+
+File writes use non-following directory handles, exclusive sibling staging, content and mode verification, atomic rename, and containing-directory sync. Replacements first preserve the prior destination in a private, operation-local recovery entry. Additions have no backup. Successful execution publishes one accepted-state generation only after all selected actions and a final complete observation verify.
+
+Machine-readable results include the complete selected entries, dependency-ordered actions, blockers, SHA-256 plan identity, opaque operation ID, recovery availability, and independent baseline visibility and durability. A partial failure retains completed effects and recovery evidence, leaves later actions unattempted, and does not publish a baseline. Recovery inspection and rollback remain outside this command.
+
 Removed mappings and newly ignored accepted entries remain visible as pending retirement; acceptance cannot silently discard them. Payload copying, conflict resolution, deletion, and retirement are outside these commands.
 
 ## Registry publication safety
@@ -121,7 +135,7 @@ grip --output json version
 | 10 | `invalid_configuration` | Invalid home policy or registry |
 | 11 | `unsupported_schema` | Unsupported registry or state schema |
 | 12 | `corrupt_state` | Malformed or inconsistent machine state |
-| 13 | `state_contention` | Another baseline publication holds the state lock |
+| 13 | `state_contention` | Another Grip writer holds the global mutation lock |
 | 20 | `operational_failure` | I/O, output, or another runtime failure |
 
-Registry-publication contention is reported as an operational failure. Only explicit `baseline accept` publishes synchronization state; status, check, and diff are read-only.
+Registry-publication contention is reported as an operational failure. `push` and explicit `baseline accept` can publish synchronization state; status, check, diff, and dry-run push are read-only.

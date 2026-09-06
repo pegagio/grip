@@ -1,7 +1,7 @@
 ---
 title: Filesystem support boundaries
 type: reference
-sources: [S001, S004, S005, S006]
+sources: [S001, S004, S005, S006, S008]
 updated: 2026-09-06
 ---
 
@@ -18,6 +18,10 @@ A non-ignored unsupported source entry or an unsupported node colliding with a m
 Feature 003 inspection reports symbolic links, hard links, sparse files, special nodes, non-UTF-8 source names, and nested mount boundaries without following or opening them as payload. Unsupported source nodes and unsafe paired-destination collisions are blocking findings, while unsupported destination-only nodes remain nonblocking and unmanaged. Non-UTF-8 path identity is preserved through escaped display plus `raw_hex` in machine output. (S004)
 
 The implementation uses descriptor-relative, no-follow inspection for traversed entries and performs separate source and destination passes. Policy files are accepted only as regular, single-link, non-sparse UTF-8 files; unreadable or unsupported `.gripignore` files fail inspection instead of weakening policy silently. (S006)
+
+Feature 005 publishes ordinary files through a no-follow source descriptor and an exclusive verified sibling staging file. Addition uses no-replace rename; replacement first preserves a verified private recovery copy and then atomically renames over the expected destination. The containing directory is synchronized after visibility, and final supported state is reopened and verified so visibility, verification, and durability can be reported independently. (S008)
+
+Missing destination parents are explicit dependency-ordered plan actions derived from endpoint evidence captured during validated registry loading. The pure planner does not inspect the filesystem, and concurrent appearance or ancestry substitution fails instead of being adopted recursively. (S008)
 
 Content and the supported metadata set both participate in equality and conflict detection. Feature 004's first set fingerprints ordinary-file bytes with SHA-256 and compares node kind, file length and digest, and the full Unix permission mode; modification time is diagnostic rather than equality-defining. Unsupported or unavailable evidence remains explicit rather than being silently coerced. (S004)
 

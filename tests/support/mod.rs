@@ -1,10 +1,25 @@
-#![allow(dead_code)]
+#![allow(dead_code, clippy::result_large_err)]
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+pub struct FailingWriter;
+
+impl std::io::Write for FailingWriter {
+    fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "injected output failure",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 pub fn command(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_grip"))
@@ -189,4 +204,75 @@ pub fn write_v2_state(
     let path = directory.join("state.json");
     fs::write(&path, grip::state::encode_v2(&state, generation).unwrap()).unwrap();
     fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+}
+
+pub fn supported_file_state(path: &Path) -> grip::observation::model::SupportedState {
+    grip::observation::fingerprint::inspect(path, grip::discovery::model::NodeKind::File)
+        .unwrap()
+        .0
+}
+
+pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
+    use grip::classification::model::ClassificationScope;
+    use grip::discovery::model::SafePath;
+    use grip::observation::model::PathSpace;
+    use grip::push::model::{ActionEvidence, ActionKind, ActionStatus, PushAction, PushCounts};
+    let actions = (0..action_count)
+        .map(|index| PushAction {
+            index,
+            kind: ActionKind::AddFile,
+            identity: None,
+            dependent_identities: Vec::new(),
+            source_path: Some(SafePath::from_path(Path::new("/source"))),
+            destination: Path::new("/destination").to_path_buf(),
+            destination_path: SafePath::from_path(Path::new("/destination")),
+            expected_source: None,
+            expected_destination: None,
+            dependencies: Vec::new(),
+            status: ActionStatus::Unattempted,
+            milestones: ActionEvidence::default(),
+            failure: None,
+        })
+        .collect::<Vec<_>>();
+    grip::push::model::PushPlan {
+        plan_id: "a".repeat(64),
+        scope: ClassificationScope {
+            kind: "all".into(),
+            path_space: PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        entries: Vec::new(),
+        blockers: Vec::new(),
+        counts: PushCounts {
+            actionable: action_count,
+            unattempted: action_count,
+            ..PushCounts::default()
+        },
+        actions,
+    }
+}
+
+pub fn read_operation_component<T>(path: &Path) -> grip::operation::model::EnvelopeV1<T>
+where
+    T: Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + grip::operation::model::ValidatePayload,
+{
+    grip::operation::model::decode(&fs::read(path).unwrap()).unwrap()
+}
+
+pub fn fail_push_at(
+    expected: grip::push::FaultPhase,
+) -> impl FnMut(grip::push::FaultPhase) -> Result<(), grip::GripError> {
+    move |actual| {
+        if actual == expected {
+            Err(grip::GripError::Internal(format!(
+                "injected push failure at {actual:?}"
+            )))
+        } else {
+            Ok(())
+        }
+    }
 }

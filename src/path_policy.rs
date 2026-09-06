@@ -27,6 +27,33 @@ pub struct PathEvidence {
     node_mode: u32,
 }
 
+impl PathEvidence {
+    /// Return absent destination parent components from the validated anchor outward.
+    pub(crate) fn missing_destination_parents(&self) -> Vec<PathBuf> {
+        if self.source || self.exists {
+            return Vec::new();
+        }
+        let mut parents = Vec::new();
+        let mut current = if self.kind == MappingKind::Tree {
+            Some(self.canonical.as_path())
+        } else {
+            self.canonical.parent()
+        };
+        while let Some(path) = current {
+            if path == self.anchor {
+                break;
+            }
+            if !path.starts_with(&self.anchor) {
+                break;
+            }
+            parents.push(path.to_path_buf());
+            current = path.parent();
+        }
+        parents.reverse();
+        parents
+    }
+}
+
 struct ResolvedPath {
     canonical: PathBuf,
     exists: bool,
