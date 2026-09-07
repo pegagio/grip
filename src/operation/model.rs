@@ -145,15 +145,35 @@ impl ValidatePayload for OperationPlanPayloadV1 {
         }
         if self.plan.get("plan_id").and_then(serde_json::Value::as_str)
             != Some(self.plan_id.as_str())
-            || self
-                .plan
-                .get("direction")
-                .and_then(serde_json::Value::as_str)
-                != Some(self.operation.as_str())
         {
             return Err(corrupt(
-                "operation plan identity or direction does not match its payload",
+                "operation plan identity does not match its payload",
             ));
+        }
+        let embedded_operation = self
+            .plan
+            .get("operation")
+            .and_then(serde_json::Value::as_str);
+        if embedded_operation.is_some_and(|value| value != self.operation)
+            || embedded_operation.is_none() && !matches!(self.operation.as_str(), "push" | "pull")
+        {
+            return Err(corrupt("operation plan command does not match its payload"));
+        }
+        let direction = self
+            .plan
+            .get("direction")
+            .and_then(serde_json::Value::as_str);
+        if matches!(self.operation.as_str(), "push" | "pull")
+            && direction != Some(self.operation.as_str())
+            || matches!(self.operation.as_str(), "sync" | "resolve") && direction.is_some()
+        {
+            return Err(corrupt("operation plan direction is invalid"));
+        }
+        let winner = self.plan.get("winner").and_then(serde_json::Value::as_str);
+        if self.operation == "resolve" && !matches!(winner, Some("source" | "destination"))
+            || self.operation != "resolve" && winner.is_some()
+        {
+            return Err(corrupt("operation plan winner is invalid"));
         }
         let actions = self
             .plan
@@ -165,6 +185,20 @@ impl ValidatePayload for OperationPlanPayloadV1 {
                 return Err(corrupt(
                     "operation plan actions must be dense and canonically ordered",
                 ));
+            }
+            if embedded_operation.is_some() {
+                let action_direction = action.get("direction").and_then(serde_json::Value::as_str);
+                let direction_valid = match self.operation.as_str() {
+                    "push" => action_direction == Some("push"),
+                    "pull" => action_direction == Some("pull"),
+                    "sync" => matches!(action_direction, Some("push" | "pull")),
+                    "resolve" if winner == Some("source") => action_direction == Some("push"),
+                    "resolve" if winner == Some("destination") => action_direction == Some("pull"),
+                    _ => false,
+                };
+                if !direction_valid {
+                    return Err(corrupt("operation action direction is invalid"));
+                }
             }
         }
         Ok(())
@@ -283,7 +317,7 @@ fn validate_common(
         || !operation_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        || operation.is_some_and(|value| !matches!(value, "push" | "pull"))
+        || operation.is_some_and(|value| !matches!(value, "push" | "pull" | "sync" | "resolve"))
         || !is_digest(plan_id)
     {
         return Err(corrupt("operation record identity is invalid"));
@@ -420,6 +454,23 @@ mod tests {
             operation: "push".into(),
             plan_id: plan_id.clone(),
             plan: serde_json::json!({"direction":"push","plan_id":plan_id,"actions":[{"index":1}]}),
+        };
+        assert!(OperationPlanEnvelopeV1::new(payload).is_err());
+    }
+
+    #[test]
+    fn validate_plan_rejects_winner_direction_mismatch() {
+        let plan_id = "a".repeat(64);
+        let payload = OperationPlanPayloadV1 {
+            operation_id: "resolve-1".into(),
+            operation: "resolve".into(),
+            plan_id: plan_id.clone(),
+            plan: serde_json::json!({
+                "operation":"resolve",
+                "winner":"source",
+                "plan_id":plan_id,
+                "actions":[{"index":0,"direction":"pull"}]
+            }),
         };
         assert!(OperationPlanEnvelopeV1::new(payload).is_err());
     }

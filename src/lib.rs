@@ -12,8 +12,10 @@ pub mod path_policy;
 pub mod pull;
 pub mod push;
 pub mod registry;
+pub mod resolve;
 pub mod result;
 pub mod state;
+pub mod sync;
 
 pub use error::{GripError, ResultCategory};
 pub use result::{CommandOutcome, ResultEnvelopeV1};
@@ -136,6 +138,14 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
             Ok(outcome) => outcome,
             Err(error) => CommandOutcome::failure(&error),
         },
+        cli::Command::Sync(args) => match execute_sync(args) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
+        cli::Command::Resolve(args) => match execute_resolve(args) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
         cli::Command::Baseline(args) => match &args.command {
             cli::BaselineCommand::Accept(arguments) => match execute_baseline_accept(arguments) {
                 Ok(outcome) => outcome,
@@ -223,6 +233,130 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     }
     let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::mutation_applied(&applied))
+}
+
+fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation("sync"))?;
+    let state = state::publication::load(&home)?;
+    let path_space = if args.destination {
+        observation::model::PathSpace::Destination
+    } else {
+        observation::model::PathSpace::Source
+    };
+    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        selector,
+        path_space,
+        "sync",
+    )?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("sync"))?;
+    state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("sync"))?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .collect();
+    let scope = classification_scope(&selection, selector, path_space);
+    let plan = mutation::plan::build_sync_with_parent_requirements(
+        scope,
+        records,
+        registry.missing_destination_parents(),
+    )?;
+    if args.dry_run
+        || !plan.blockers.is_empty()
+        || plan.actions.is_empty() && plan.acceptance_identities.is_empty()
+    {
+        return Ok(CommandOutcome::mutation_plan(
+            &plan,
+            if args.dry_run { "dry_run" } else { "execute" },
+            state.accepted.generation,
+        ));
+    }
+    let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::mutation_applied(&applied))
+}
+
+fn execute_resolve(args: &cli::ResolveArgs) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation("resolve"))?;
+    let state = state::publication::load(&home)?;
+    let selector_path = std::path::Path::new(&args.path);
+    let selected = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        Some(selector_path),
+        observation::model::PathSpace::Source,
+        "resolve",
+    )?;
+    let selection = exact_resolution_selection(selected, &state.accepted, selector_path)?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("resolve"))?;
+    state::publication::revalidate(&home, &state)
+        .map_err(|error| error.for_operation("resolve"))?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .collect();
+    let scope = classification_scope(
+        &selection,
+        Some(selector_path),
+        observation::model::PathSpace::Source,
+    );
+    let winner = if args.source {
+        mutation::model::ConflictWinner::Source
+    } else {
+        mutation::model::ConflictWinner::Destination
+    };
+    let plan = mutation::plan::build_resolution(scope, records, winner)?;
+    if args.dry_run || !plan.blockers.is_empty() {
+        return Ok(CommandOutcome::mutation_plan(
+            &plan,
+            if args.dry_run { "dry_run" } else { "execute" },
+            state.accepted.generation,
+        ));
+    }
+    let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::mutation_applied(&applied))
+}
+
+fn exact_resolution_selection(
+    selection: observation::model::Selection,
+    accepted: &state::AcceptedState,
+    requested: &std::path::Path,
+) -> Result<observation::model::Selection, GripError> {
+    use observation::model::Selection;
+    match selection {
+        Selection::Entry(identity) => Ok(Selection::Entry(identity)),
+        Selection::Subtree(identity) if accepted.baselines.contains_key(&identity) => {
+            Ok(Selection::Entry(identity))
+        }
+        Selection::Mapping(mapping) => {
+            let identity = observation::model::EntryIdentity::new(mapping, Vec::new())
+                .map_err(|message| GripError::InvalidConfiguration(message.into()))?;
+            if accepted.baselines.contains_key(&identity) {
+                Ok(Selection::Entry(identity))
+            } else {
+                Err(resolution_selector_error(requested))
+            }
+        }
+        Selection::All | Selection::Subtree(_) | Selection::Unmanaged(_) => {
+            Err(resolution_selector_error(requested))
+        }
+    }
+}
+
+fn resolution_selector_error(path: &std::path::Path) -> GripError {
+    GripError::mapping(
+        "resolve",
+        "resolution_requires_exact_entry",
+        vec![crate::discovery::model::SafePath::from_path(path).display],
+        "resolution requires one exact established managed entry in source-path space",
+    )
 }
 
 fn inspection_outcome(operation: &str, args: &cli::InspectionArgs) -> CommandOutcome {

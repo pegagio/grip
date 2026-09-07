@@ -29,13 +29,12 @@ fn measure(mut command: impl FnMut() -> Command) -> Duration {
 
 fn measure_consistent(mut command: impl FnMut() -> Command) -> Duration {
     let expected = command().output().unwrap();
-    assert!(expected.status.success());
     let samples = (0..sample_count())
         .map(|_| {
             let start = Instant::now();
             let output = command().output().unwrap();
             let elapsed = start.elapsed();
-            assert!(output.status.success());
+            assert_eq!(output.status.code(), expected.status.code());
             assert_eq!(output.stdout, expected.stdout);
             assert_eq!(output.stderr, expected.stderr);
             elapsed
@@ -305,8 +304,76 @@ fn warm_release_commands_meet_p95_targets() {
         .collect());
     assert_eq!(expected_pull_plan.counts.selected, 10_000);
     assert_eq!(expected_pull_plan.counts.actionable, 3_300);
+    for directory_index in 0..100 {
+        let source_directory = discovery_source.join(format!("directory-{directory_index:03}"));
+        let destination_directory =
+            discovery_destination.join(format!("directory-{directory_index:03}"));
+        for file_index in 33..50 {
+            std::fs::write(
+                source_directory.join(format!("entry-{file_index:03}.txt")),
+                b"source-only",
+            )
+            .unwrap();
+        }
+        for file_index in 50..66 {
+            let name = format!("entry-{file_index:03}.txt");
+            std::fs::write(source_directory.join(&name), b"converged").unwrap();
+            std::fs::write(destination_directory.join(name), b"converged").unwrap();
+        }
+        for file_index in 66..76 {
+            let name = format!("entry-{file_index:03}.txt");
+            std::fs::write(source_directory.join(&name), b"conflict-source").unwrap();
+            std::fs::write(destination_directory.join(name), b"conflict-destination").unwrap();
+        }
+    }
+    let dry_run_sync = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", &discovery_home)
+            .args(["--output=json", "sync", "--dry-run"]);
+        command
+    });
+    let sync_state = grip::state::publication::load(&home).unwrap();
+    let build_sync_plan = || {
+        let observed =
+            grip::observation::inspect(&home, &registry, &sync_state.accepted, &selection).unwrap();
+        let records = observed
+            .values()
+            .map(|entry| {
+                grip::classification::classify(
+                    entry,
+                    sync_state.accepted.baselines.get(&entry.identity),
+                )
+            })
+            .collect();
+        grip::mutation::plan::build_sync_with_parent_requirements(
+            grip::classification::model::ClassificationScope {
+                kind: "all".into(),
+                path_space: grip::observation::model::PathSpace::Source,
+                selector: None,
+                mapping_source: None,
+            },
+            records,
+            registry.missing_destination_parents(),
+        )
+        .unwrap()
+    };
+    let expected_sync_plan = build_sync_plan();
+    let sync_execute_plan = p95((0..sample_count())
+        .map(|_| {
+            let start = Instant::now();
+            assert_eq!(build_sync_plan(), expected_sync_plan);
+            start.elapsed()
+        })
+        .collect());
+    assert_eq!(expected_sync_plan.counts.selected, 10_000);
+    assert!(expected_sync_plan.counts.actionable > 0);
+    assert!(expected_sync_plan.counts.converged > 0);
+    assert!(expected_sync_plan.counts.blockers > 0);
     eprintln!(
-        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?}"
+        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?} sync_dry_run_mixed_10000={dry_run_sync:?} sync_execute_plan_mixed_10000={sync_execute_plan:?}"
     );
     assert!(help <= Duration::from_millis(100));
     assert!(version <= Duration::from_millis(100));
@@ -317,4 +384,6 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(dry_run_push <= Duration::from_secs(2));
     assert!(dry_run_pull <= Duration::from_secs(2));
     assert!(pull_execute_plan <= Duration::from_secs(2));
+    assert!(dry_run_sync <= Duration::from_secs(2));
+    assert!(sync_execute_plan <= Duration::from_secs(2));
 }

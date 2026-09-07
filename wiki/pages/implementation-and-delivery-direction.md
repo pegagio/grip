@@ -23,7 +23,7 @@ Common inspection and planning workflows must remain responsive on representativ
 
 The durable roadmap refines the product's six delivery milestones into nine planned specifications. It separates CLI and state foundations, mapping ownership, and discovery before baseline classification, then introduces push, pull, bidirectional conflict handling, authorized deletion, and final metadata and filesystem completion in dependency order. (S003)
 
-Features 001 through 006 are verified. Feature 006 extends the proven mutation boundary in the reverse direction for established managed entries, while Feature 007 is now the next dependency-eligible slice for bidirectional planning and explicit conflict winners. (S003)
+Features 001 through 007 are verified. Feature 007 combines both mutation directions in one preflighted sync plan, blocks complete selected scopes containing conflicts, and resolves one exact conflict only through an explicit complete source or destination winner. Feature 008 is now the next dependency-eligible slice. (S003)
 
 Feature 005 adds the first payload-mutating vertical slice through a pure plan, one outer writer lock, descriptor-relative staging, private recovery, partitioned operation evidence, final verification, and one accepted-state publication; it adds no dependency, cache, background service, automatic rollback, broad payload lock, or new state schema. (S003) (S008)
 

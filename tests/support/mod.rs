@@ -212,6 +212,22 @@ pub fn supported_file_state(path: &Path) -> grip::observation::model::SupportedS
         .0
 }
 
+pub fn accepted_file_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let grip_home = minimal_home(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "accepted").unwrap();
+    write_registry(&grip_home, &[("file", &source, &destination)]);
+    let output = command_with_grip_home(root.path(), &grip_home, &["push"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (root, grip_home, source, destination)
+}
+
 pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
     use grip::classification::model::ClassificationScope;
     use grip::discovery::model::SafePath;
@@ -220,6 +236,7 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
     let actions = (0..action_count)
         .map(|index| PushAction {
             index,
+            direction: grip::mutation::model::MutationDirection::Push,
             kind: ActionKind::AddFile,
             identity: None,
             dependent_identities: Vec::new(),
@@ -235,7 +252,9 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
         })
         .collect::<Vec<_>>();
     grip::push::model::PushPlan {
-        direction: grip::mutation::model::MutationDirection::Push,
+        operation: grip::mutation::model::MutationOperation::Push,
+        direction: Some(grip::mutation::model::MutationDirection::Push),
+        winner: None,
         plan_id: "a".repeat(64),
         scope: ClassificationScope {
             kind: "all".into(),
@@ -244,6 +263,7 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
             mapping_source: None,
         },
         entries: Vec::new(),
+        acceptance_identities: Vec::new(),
         blockers: Vec::new(),
         counts: PushCounts {
             actionable: action_count,
@@ -256,8 +276,10 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
 
 pub fn test_pull_plan(action_count: usize) -> grip::mutation::model::MutationPlan {
     let mut plan = test_push_plan(action_count);
-    plan.direction = grip::mutation::model::MutationDirection::Pull;
+    plan.operation = grip::mutation::model::MutationOperation::Pull;
+    plan.direction = Some(grip::mutation::model::MutationDirection::Pull);
     for action in &mut plan.actions {
+        action.direction = grip::mutation::model::MutationDirection::Pull;
         action.kind = grip::mutation::model::ActionKind::ReplaceFile;
     }
     plan
@@ -304,6 +326,138 @@ pub fn pull_execution_fixture() -> (
             mapping_source: None,
         },
         records,
+    )
+    .unwrap();
+    (root, home, registry, state, selection, plan)
+}
+
+pub fn sync_execution_fixture() -> (
+    tempfile::TempDir,
+    grip::home::GripHome,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    grip::observation::model::Selection,
+    grip::mutation::model::MutationPlan,
+) {
+    let (root, grip_home, source, _) = accepted_file_fixture();
+    fs::write(&source, "source change").unwrap();
+    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let selection = grip::observation::model::Selection::All;
+    let observed =
+        grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
+    let records = observed
+        .values()
+        .map(|entry| {
+            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
+        })
+        .collect();
+    let plan = grip::mutation::plan::build_sync_with_parent_requirements(
+        grip::classification::model::ClassificationScope {
+            kind: "all".into(),
+            path_space: grip::observation::model::PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+        registry.missing_destination_parents(),
+    )
+    .unwrap();
+    (root, home, registry, state, selection, plan)
+}
+
+pub fn resolution_execution_fixture(
+    winner: grip::mutation::model::ConflictWinner,
+) -> (
+    tempfile::TempDir,
+    grip::home::GripHome,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    grip::observation::model::Selection,
+    grip::mutation::model::MutationPlan,
+) {
+    let (root, grip_home, source, destination) = accepted_file_fixture();
+    fs::write(&source, "source change").unwrap();
+    fs::write(&destination, "destination change").unwrap();
+    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let identity = state.accepted.baselines.keys().next().unwrap().clone();
+    let selection = grip::observation::model::Selection::Entry(identity);
+    let observed =
+        grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
+    let records = observed
+        .values()
+        .map(|entry| {
+            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
+        })
+        .collect();
+    let plan = grip::mutation::plan::build_resolution(
+        grip::classification::model::ClassificationScope {
+            kind: "entry".into(),
+            path_space: grip::observation::model::PathSpace::Source,
+            selector: Some(grip::discovery::model::SafePath::from_path(&source)),
+            mapping_source: Some(source.display().to_string()),
+        },
+        records,
+        winner,
+    )
+    .unwrap();
+    (root, home, registry, state, selection, plan)
+}
+
+pub fn mixed_sync_execution_fixture() -> (
+    tempfile::TempDir,
+    grip::home::GripHome,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    grip::observation::model::Selection,
+    grip::mutation::model::MutationPlan,
+) {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let grip_home = minimal_home(root.path());
+    let source_a = root.path().join("source-a");
+    let destination_a = root.path().join("destination-a");
+    let source_b = root.path().join("source-b");
+    let destination_b = root.path().join("destination-b");
+    fs::write(&source_a, "accepted-a").unwrap();
+    fs::write(&source_b, "accepted-b").unwrap();
+    write_registry(
+        &grip_home,
+        &[
+            ("file", &source_a, &destination_a),
+            ("file", &source_b, &destination_b),
+        ],
+    );
+    assert!(
+        command_with_grip_home(root.path(), &grip_home, &["push"])
+            .status
+            .success()
+    );
+    fs::write(&source_a, "source change").unwrap();
+    fs::write(&destination_b, "destination change").unwrap();
+    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let selection = grip::observation::model::Selection::All;
+    let observed =
+        grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
+    let records = observed
+        .values()
+        .map(|entry| {
+            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
+        })
+        .collect();
+    let plan = grip::mutation::plan::build_sync_with_parent_requirements(
+        grip::classification::model::ClassificationScope {
+            kind: "all".into(),
+            path_space: grip::observation::model::PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+        registry.missing_destination_parents(),
     )
     .unwrap();
     (root, home, registry, state, selection, plan)

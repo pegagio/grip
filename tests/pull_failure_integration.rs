@@ -21,7 +21,7 @@ fn pull_staging_failure_is_terminal_and_preserves_authority() {
     };
     assert_eq!(
         failure.plan.direction,
-        grip::mutation::model::MutationDirection::Pull
+        Some(grip::mutation::model::MutationDirection::Pull)
     );
     assert_eq!(failure.plan.counts.failed, 1);
     assert_eq!(failure.baseline.outcome, "not_published");
@@ -204,7 +204,7 @@ fn pull_prebaseline_fault_matrix_keeps_partial_work_unaccepted() {
         };
         assert_eq!(
             failure.plan.direction,
-            grip::mutation::model::MutationDirection::Pull
+            Some(grip::mutation::model::MutationDirection::Pull)
         );
         assert_eq!(failure.baseline.outcome, "not_published");
         assert_eq!(

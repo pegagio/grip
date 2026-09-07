@@ -1,7 +1,7 @@
 ---
 title: Configuration and state
 type: component
-sources: [S001, S004, S005, S007, S008, S009]
+sources: [S001, S004, S005, S007, S008, S009, S010]
 updated: 2026-09-07
 ---
 
@@ -24,6 +24,8 @@ Feature 004 publishes integrity-checked State Envelope V2 generations atomically
 Feature 005 adds partitioned Operation Record V1 under `state/operations/<operation-id>/`: immutable plan intent, a bounded operation summary, one bounded checkpoint per started action, and private recovery payloads. These records are evidence rather than accepted synchronization state. A later push may proceed from a fresh complete plan after an interrupted record, but it never silently resumes, repairs, rolls back, or deletes that retained history. (S008)
 
 Feature 006 extends the closed Operation Record V1 operation identity from `push` to `push | pull` without adding a second history tree or a new state schema. Direction-prefixed opaque operation IDs and direction-bound plans distinguish otherwise symmetric transfers, while interrupted and failed pull records remain immutable evidence and do not alone block a later independently planned operation. (S009)
+
+Feature 007 preserves that V1 layout while admitting `sync` and `resolve` operations, per-action direction, and an optional resolution winner. Historical push and pull plans remain valid and immutable; strict validation rejects unknown or inconsistent operation, direction, winner, action-index, recovery-reference, and plan-identity evidence. (S010)
 
 ## Related pages
 

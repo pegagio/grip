@@ -3,7 +3,43 @@
 use crate::classification::model::{Classification, ClassificationScope};
 use crate::discovery::model::SafePath;
 use crate::observation::model::{EntryIdentity, SupportedState};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// Public identity of the mutation workflow that produced a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationOperation {
+    Push,
+    Pull,
+    Sync,
+    Resolve,
+}
+
+impl MutationOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Push => "push",
+            Self::Pull => "pull",
+            Self::Sync => "sync",
+            Self::Resolve => "resolve",
+        }
+    }
+
+    pub const fn directional(direction: MutationDirection) -> Self {
+        match direction {
+            MutationDirection::Push => Self::Push,
+            MutationDirection::Pull => Self::Pull,
+        }
+    }
+}
+
+/// Complete-state winner explicitly selected for conflict resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictWinner {
+    Source,
+    Destination,
+}
 
 /// Direction in which a mutation transfers complete supported state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -38,11 +74,22 @@ pub struct MutationRequest {
     pub selector: Option<std::path::PathBuf>,
 }
 
+/// Fully resolved request for sync or exact conflict resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationRequest {
+    pub operation: MutationOperation,
+    pub mode: MutationMode,
+    pub destination_space: bool,
+    pub selector: Option<std::path::PathBuf>,
+    pub winner: Option<ConflictWinner>,
+}
+
 /// The planner's outcome for one selected managed entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Disposition {
     Action,
+    AcceptOnly,
     NoAction,
     Blocked,
 }
@@ -111,6 +158,7 @@ impl Default for ActionEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MutationAction {
     pub index: usize,
+    pub direction: MutationDirection,
     pub kind: ActionKind,
     #[serde(skip)]
     pub identity: Option<EntryIdentity>,
@@ -145,6 +193,7 @@ pub struct MutationCounts {
     #[serde(rename = "actions")]
     pub actionable: usize,
     pub no_action: usize,
+    pub converged: usize,
     pub blockers: usize,
     pub completed: usize,
     pub failed: usize,
@@ -154,10 +203,15 @@ pub struct MutationCounts {
 /// A complete, deterministic, mode-neutral directional mutation plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MutationPlan {
-    pub direction: MutationDirection,
+    pub operation: MutationOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<MutationDirection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub winner: Option<ConflictWinner>,
     pub plan_id: String,
     pub scope: ClassificationScope,
     pub entries: Vec<EntryDisposition>,
+    pub acceptance_identities: Vec<SafePath>,
     pub actions: Vec<MutationAction>,
     pub blockers: Vec<PlanBlocker>,
     pub counts: MutationCounts,
@@ -178,7 +232,10 @@ pub struct BaselineOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MutationResult {
     pub operation: &'static str,
-    pub direction: MutationDirection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<MutationDirection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub winner: Option<ConflictWinner>,
     pub mode: MutationMode,
     pub completion: String,
     pub result: String,

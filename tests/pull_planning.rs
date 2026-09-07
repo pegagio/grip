@@ -70,7 +70,7 @@ fn pull_plan_is_direction_bound_and_deterministic() {
         grip::mutation::plan::build_for(MutationDirection::Pull, first.scope.clone(), reversed)
             .unwrap();
     assert_eq!(first, second);
-    assert_eq!(first.direction, MutationDirection::Pull);
+    assert_eq!(first.direction, Some(MutationDirection::Pull));
     assert_eq!(first.actions.len(), 1);
     assert_eq!(
         first.actions[0].destination,

@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.11 -> 1.0.12
-Bump rationale: Record verified completion of Feature 006.
+Version change: 1.0.13 -> 1.0.14
+Bump rationale: Record completed Feature 007 verification and its specification binding.
 
 Changes this revision:
-  - Transitioned Feature 006 from in-progress to verified
-  - Recorded the clean post-implementation debrief as verification evidence
+  - Transitioned Feature 007 from in-progress to verified
+  - Added Feature 007 specification directory and verification evidence
 
-Specs affected: 006
+Specs affected: 007
 Open questions added/resolved: none
 
-Notes: Feature 006 is verified; Feature 007 now has verified dependencies 005 and 006.
+Notes: Feature 007 met its roadmap outcome with no Must-Address debrief findings.
 -->
 
 # Grip — Spec Roadmap
@@ -123,8 +123,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Direction, Incremental Delivery Milestone 4
 - **Notes:** Reverse synchronization applies only after an entry has entered the managed namespace and has accepted baseline evidence. Verification evidence: `specs/006-reverse-synchronization/roadmap-reviews/debrief-20260907T131934Z.md` (`PROCEED`, no findings).
 
-### 007 — Bidirectional Synchronization and Conflict Resolution  [status: planned]
+### 007 — Bidirectional Synchronization and Conflict Resolution  [status: verified]
 
+- **Spec dir:** `specs/007-bidirectional-sync-conflicts`
 - **Description:** Combine both mutation directions into one preflighted `sync` plan and implement explicit whole-entry conflict resolution.
 - **Outcome:** `sync` propagates all unambiguous one-sided changes in scope, blocks the entire action before mutation when conflicts exist, and lets the user select the complete source or destination state as the winner after fresh inspection and recovery preservation.
 - **Scope (in):** Unified bidirectional planning; complete-scope conflict preflight; converged two-sided edits; source-wins and destination-wins resolution; losing-side backup; post-resolution verification and baseline publication; drift detection between report and resolution.
@@ -132,7 +133,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 005, 006
 - **Governed by:** C-03, C-04, C-05, C-06, C-07, C-10
 - **Addresses:** `docs/product-definition.md` — Conflicts, Direction, Incremental Delivery Milestone 5
-- **Notes:** The complete supported entry state wins; content and metadata differences are not combined from opposing sides.
+- **Notes:** The complete supported entry state wins; content and metadata differences are not combined from opposing sides. Verification evidence: `specs/007-bidirectional-sync-conflicts/roadmap-reviews/debrief-20260907T144944Z.md` (`PROCEED WITH UPDATES`, no Must-Address findings).
 
 ### 008 — Authorized Deletion and Retirement  [status: planned]
 
@@ -188,4 +189,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.12 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-07
+**Version**: 1.0.14 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-07

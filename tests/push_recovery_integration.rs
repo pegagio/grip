@@ -20,6 +20,7 @@ fn plan(action_count: usize) -> PushPlan {
     let actions = (0..action_count)
         .map(|index| PushAction {
             index,
+            direction: grip::mutation::model::MutationDirection::Push,
             kind: ActionKind::AddFile,
             identity: None,
             dependent_identities: Vec::new(),
@@ -35,7 +36,9 @@ fn plan(action_count: usize) -> PushPlan {
         })
         .collect::<Vec<_>>();
     PushPlan {
-        direction: grip::mutation::model::MutationDirection::Push,
+        operation: grip::mutation::model::MutationOperation::Push,
+        direction: Some(grip::mutation::model::MutationDirection::Push),
+        winner: None,
         plan_id: "a".repeat(64),
         scope: ClassificationScope {
             kind: "all".into(),
@@ -44,6 +47,7 @@ fn plan(action_count: usize) -> PushPlan {
             mapping_source: None,
         },
         entries: Vec::new(),
+        acceptance_identities: Vec::new(),
         blockers: Vec::new(),
         counts: PushCounts {
             actionable: action_count,
