@@ -4,8 +4,9 @@ use crate::classification::model::{Classification, ClassificationRecord, Classif
 use crate::discovery::model::NodeKind;
 use crate::error::GripError;
 use crate::mutation::model::{
-    ActionEvidence, ActionKind, ActionStatus, Disposition, EntryDisposition, MutationAction,
-    MutationCounts, MutationDirection, MutationPlan, PlanBlocker,
+    ActionEvidence, ActionKind, ActionStatus, ConflictWinner, Disposition, EntryDisposition,
+    MutationAction, MutationCounts, MutationDirection, MutationOperation, MutationPlan,
+    PlanBlocker,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -22,6 +23,24 @@ pub struct ParentRequirement {
 
 /// Build a plan using only classified records and previously validated parent evidence.
 pub fn build_with_parent_requirements(
+    scope: ClassificationScope,
+    records: Vec<ClassificationRecord>,
+    requirements: Vec<ParentRequirement>,
+) -> Result<MutationPlan, GripError> {
+    build_with_parent_requirements_for(MutationOperation::Push, scope, records, requirements)
+}
+
+/// Build one bidirectional sync plan while preserving push parent requirements.
+pub fn build_sync_with_parent_requirements(
+    scope: ClassificationScope,
+    records: Vec<ClassificationRecord>,
+    requirements: Vec<ParentRequirement>,
+) -> Result<MutationPlan, GripError> {
+    build_with_parent_requirements_for(MutationOperation::Sync, scope, records, requirements)
+}
+
+fn build_with_parent_requirements_for(
+    operation: MutationOperation,
     scope: ClassificationScope,
     records: Vec<ClassificationRecord>,
     requirements: Vec<ParentRequirement>,
@@ -44,11 +63,10 @@ pub fn build_with_parent_requirements(
             continue;
         }
         for record in &records {
-            if disposition_for_direction(
-                MutationDirection::Push,
-                record.classification,
-                record.blocking,
-            ) == Disposition::Action
+            if disposition_for_operation(operation, None, record.classification, record.blocking)
+                == Disposition::Action
+                && action_direction(operation, None, record.classification)
+                    == MutationDirection::Push
                 && record.identity.mapping == requirement.mapping
                 && record
                     .identity
@@ -62,7 +80,7 @@ pub fn build_with_parent_requirements(
             }
         }
     }
-    build_with_parents(MutationDirection::Push, scope, records, parents)
+    build_with_parents(operation, None, scope, records, parents)
 }
 
 /// Build a complete plan from already validated and classified evidence.
@@ -70,7 +88,13 @@ pub fn build(
     scope: ClassificationScope,
     records: Vec<ClassificationRecord>,
 ) -> Result<MutationPlan, GripError> {
-    build_with_parents(MutationDirection::Push, scope, records, BTreeMap::new())
+    build_with_parents(
+        MutationOperation::Push,
+        None,
+        scope,
+        records,
+        BTreeMap::new(),
+    )
 }
 
 /// Build a complete plan for one mutation direction.
@@ -79,11 +103,33 @@ pub fn build_for(
     scope: ClassificationScope,
     records: Vec<ClassificationRecord>,
 ) -> Result<MutationPlan, GripError> {
-    build_with_parents(direction, scope, records, BTreeMap::new())
+    build_with_parents(
+        MutationOperation::directional(direction),
+        None,
+        scope,
+        records,
+        BTreeMap::new(),
+    )
+}
+
+/// Build one exact-entry conflict resolution plan for an explicit winner.
+pub fn build_resolution(
+    scope: ClassificationScope,
+    records: Vec<ClassificationRecord>,
+    winner: ConflictWinner,
+) -> Result<MutationPlan, GripError> {
+    build_with_parents(
+        MutationOperation::Resolve,
+        Some(winner),
+        scope,
+        records,
+        BTreeMap::new(),
+    )
 }
 
 fn build_with_parents(
-    direction: MutationDirection,
+    operation: MutationOperation,
+    winner: Option<ConflictWinner>,
     scope: ClassificationScope,
     mut records: Vec<ClassificationRecord>,
     parents: BTreeMap<PathBuf, BTreeSet<crate::observation::model::EntryIdentity>>,
@@ -108,6 +154,7 @@ fn build_with_parents(
         .enumerate()
         .map(|(index, (path, identities))| MutationAction {
             index,
+            direction: MutationDirection::Push,
             kind: ActionKind::CreateParentDirectory,
             identity: None,
             dependent_identities: identities
@@ -130,8 +177,23 @@ fn build_with_parents(
     let mut blockers = Vec::new();
 
     for mut record in records {
+        let direction = action_direction(operation, winner, record.classification);
         let mut disposition =
-            disposition_for_direction(direction, record.classification, record.blocking);
+            disposition_for_operation(operation, winner, record.classification, record.blocking);
+        if operation == MutationOperation::Resolve
+            && disposition == Disposition::Action
+            && (!record
+                .source
+                .as_ref()
+                .is_some_and(|state| state.node_kind == NodeKind::File)
+                || !record
+                    .destination
+                    .as_ref()
+                    .is_some_and(|state| state.node_kind == NodeKind::File))
+        {
+            disposition = Disposition::Blocked;
+            record.reasons = vec!["unsupported_resolution_transition".into()];
+        }
         if direction == MutationDirection::Pull
             && disposition == Disposition::Action
             && record
@@ -155,6 +217,11 @@ fn build_with_parents(
                         }
                         (Classification::SourceAddition, NodeKind::File) => ActionKind::AddFile,
                         (Classification::SourceOnlyChange, NodeKind::File) => {
+                            ActionKind::ReplaceFile
+                        }
+                        (Classification::DivergentConflict, NodeKind::File)
+                            if operation == MutationOperation::Resolve =>
+                        {
                             ActionKind::ReplaceFile
                         }
                         _ => {
@@ -181,6 +248,7 @@ fn build_with_parents(
             action_indexes.push(index);
             actions.push(MutationAction {
                 index,
+                direction,
                 kind,
                 identity: Some(record.identity.clone()),
                 dependent_identities: Vec::new(),
@@ -223,15 +291,35 @@ fn build_with_parents(
             .iter()
             .filter(|entry| entry.disposition == Disposition::NoAction)
             .count(),
+        converged: entries
+            .iter()
+            .filter(|entry| entry.disposition == Disposition::AcceptOnly)
+            .count(),
         blockers: blockers.len(),
         completed: 0,
         failed: 0,
         unattempted: actions.len(),
     };
     let mut plan = MutationPlan {
-        direction,
+        operation,
+        direction: match operation {
+            MutationOperation::Push => Some(MutationDirection::Push),
+            MutationOperation::Pull => Some(MutationDirection::Pull),
+            MutationOperation::Sync | MutationOperation::Resolve => None,
+        },
+        winner,
         plan_id: String::new(),
         scope,
+        acceptance_identities: entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.disposition,
+                    Disposition::Action | Disposition::AcceptOnly
+                )
+            })
+            .map(|entry| entry.source_path.clone())
+            .collect(),
         entries,
         actions,
         blockers,
@@ -269,6 +357,66 @@ pub fn disposition_for_direction(
     }
 }
 
+/// Map an inherited classification to one operation-specific behavior.
+pub fn disposition_for_operation(
+    operation: MutationOperation,
+    winner: Option<ConflictWinner>,
+    classification: Classification,
+    blocking: bool,
+) -> Disposition {
+    match operation {
+        MutationOperation::Push => {
+            disposition_for_direction(MutationDirection::Push, classification, blocking)
+        }
+        MutationOperation::Pull => {
+            disposition_for_direction(MutationDirection::Pull, classification, blocking)
+        }
+        MutationOperation::Sync => {
+            if blocking {
+                return Disposition::Blocked;
+            }
+            match classification {
+                Classification::SourceAddition | Classification::SourceOnlyChange => {
+                    Disposition::Action
+                }
+                Classification::DestinationOnlyChange => Disposition::Action,
+                Classification::ConvergedTwoSidedChange => Disposition::AcceptOnly,
+                _ => Disposition::NoAction,
+            }
+        }
+        MutationOperation::Resolve => {
+            if winner.is_some() && classification == Classification::DivergentConflict {
+                Disposition::Action
+            } else {
+                Disposition::Blocked
+            }
+        }
+    }
+}
+
+fn action_direction(
+    operation: MutationOperation,
+    winner: Option<ConflictWinner>,
+    classification: Classification,
+) -> MutationDirection {
+    match operation {
+        MutationOperation::Push => MutationDirection::Push,
+        MutationOperation::Pull => MutationDirection::Pull,
+        MutationOperation::Sync => {
+            if classification == Classification::DestinationOnlyChange {
+                MutationDirection::Pull
+            } else {
+                MutationDirection::Push
+            }
+        }
+        MutationOperation::Resolve => match winner {
+            Some(ConflictWinner::Source) => MutationDirection::Push,
+            Some(ConflictWinner::Destination) => MutationDirection::Pull,
+            None => MutationDirection::Push,
+        },
+    }
+}
+
 fn attach_directory_dependencies(actions: &mut [MutationAction]) {
     let directories = actions
         .iter()
@@ -294,9 +442,12 @@ fn attach_directory_dependencies(actions: &mut [MutationAction]) {
 
 #[derive(Serialize)]
 struct PlanIdentity<'a> {
-    direction: MutationDirection,
+    operation: MutationOperation,
+    direction: Option<MutationDirection>,
+    winner: Option<ConflictWinner>,
     scope: &'a ClassificationScope,
     entries: &'a [EntryDisposition],
+    acceptance_identities: &'a [crate::discovery::model::SafePath],
     actions: &'a [MutationAction],
     blockers: &'a [PlanBlocker],
     counts: &'a MutationCounts,
@@ -304,9 +455,12 @@ struct PlanIdentity<'a> {
 
 fn plan_digest(plan: &MutationPlan) -> Result<String, GripError> {
     let bytes = serde_json::to_vec(&PlanIdentity {
+        operation: plan.operation,
         direction: plan.direction,
+        winner: plan.winner,
         scope: &plan.scope,
         entries: &plan.entries,
+        acceptance_identities: &plan.acceptance_identities,
         actions: &plan.actions,
         blockers: &plan.blockers,
         counts: &plan.counts,
@@ -350,6 +504,59 @@ mod tests {
             };
             assert_eq!(disposition_for(classification, false), expected);
             assert_eq!(disposition_for(classification, true), Disposition::Blocked);
+        }
+    }
+
+    #[test]
+    fn sync_and_resolution_policies_cover_all_inherited_classifications() {
+        use Classification::*;
+        let classifications = [
+            SourceAddition,
+            InitialMatch,
+            InitialCollision,
+            DestinationOnlyUnmanaged,
+            Synchronized,
+            SourceOnlyChange,
+            DestinationOnlyChange,
+            ConvergedTwoSidedChange,
+            DivergentConflict,
+            SourceSideDeletion,
+            DestinationSideDeletion,
+            DeleteChangeConflict,
+            ChangeDeleteConflict,
+            ConvergedDeletion,
+            NewlyIgnoredPendingRetirement,
+            UntrackedPendingRetirement,
+            UnsupportedManaged,
+            UnsafeCollision,
+        ];
+        for classification in classifications {
+            let expected = match classification {
+                SourceAddition | SourceOnlyChange | DestinationOnlyChange => Disposition::Action,
+                ConvergedTwoSidedChange => Disposition::AcceptOnly,
+                _ => Disposition::NoAction,
+            };
+            assert_eq!(
+                disposition_for_operation(MutationOperation::Sync, None, classification, false),
+                expected
+            );
+            assert_eq!(
+                disposition_for_operation(MutationOperation::Sync, None, classification, true),
+                Disposition::Blocked
+            );
+            assert_eq!(
+                disposition_for_operation(
+                    MutationOperation::Resolve,
+                    Some(ConflictWinner::Source),
+                    classification,
+                    true,
+                ),
+                if classification == DivergentConflict {
+                    Disposition::Action
+                } else {
+                    Disposition::Blocked
+                }
+            );
         }
     }
 }

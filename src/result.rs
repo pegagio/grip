@@ -132,15 +132,22 @@ impl CommandOutcome {
         }
         if let GripError::PushFailed(failure) | GripError::MutationFailed(failure) = error {
             let plan = &failure.plan;
-            let operation = plan.direction.operation();
+            let operation = plan.operation.as_str();
             outcome.message = format!(
                 "{} failed after {} of {} actions",
-                if operation == "push" { "Push" } else { "Pull" },
+                operation_title(operation),
                 plan.counts.completed,
                 plan.counts.actionable
             );
             outcome.details.insert("operation".into(), operation.into());
-            outcome.details.insert("direction".into(), operation.into());
+            if let Some(direction) = plan.direction {
+                outcome
+                    .details
+                    .insert("direction".into(), direction.operation().into());
+            }
+            if let Some(winner) = plan.winner {
+                outcome.details.insert("winner".into(), json(&winner));
+            }
             outcome.details.insert("mode".into(), "execute".into());
             outcome
                 .details
@@ -310,8 +317,8 @@ impl CommandOutcome {
         mode: &str,
         generation: Option<u64>,
     ) -> Self {
-        let operation = plan.direction.operation();
-        let title = if operation == "push" { "Push" } else { "Pull" };
+        let operation = plan.operation.as_str();
+        let title = operation_title(operation);
         let (category, completion, result, message) = if !plan.blockers.is_empty() {
             (
                 ResultCategory::InvalidConfiguration,
@@ -322,7 +329,7 @@ impl CommandOutcome {
                     plan.counts.selected, plan.counts.actionable, plan.counts.blockers
                 ),
             )
-        } else if plan.actions.is_empty() {
+        } else if plan.actions.is_empty() && plan.acceptance_identities.is_empty() {
             (
                 ResultCategory::Success,
                 "complete",
@@ -345,7 +352,12 @@ impl CommandOutcome {
         };
         let mut details = Map::new();
         details.insert("operation".into(), operation.into());
-        details.insert("direction".into(), operation.into());
+        if let Some(direction) = plan.direction {
+            details.insert("direction".into(), direction.operation().into());
+        }
+        if let Some(winner) = plan.winner {
+            details.insert("winner".into(), json(&winner));
+        }
         details.insert("mode".into(), mode.into());
         details.insert("completion".into(), completion.into());
         details.insert("result".into(), result.into());
@@ -382,11 +394,16 @@ impl CommandOutcome {
     /// Build the stable successful result for an accepted mutation execution.
     pub fn mutation_applied(success: &crate::mutation::execution::ExecutionSuccess) -> Self {
         let plan = &success.plan;
-        let operation = plan.direction.operation();
-        let title = if operation == "push" { "Push" } else { "Pull" };
+        let operation = plan.operation.as_str();
+        let title = operation_title(operation);
         let mut details = Map::new();
         details.insert("operation".into(), operation.into());
-        details.insert("direction".into(), operation.into());
+        if let Some(direction) = plan.direction {
+            details.insert("direction".into(), direction.operation().into());
+        }
+        if let Some(winner) = plan.winner {
+            details.insert("winner".into(), json(&winner));
+        }
         details.insert("mode".into(), "execute".into());
         details.insert("completion".into(), "complete".into());
         details.insert("result".into(), "applied".into());
@@ -436,6 +453,16 @@ fn title(operation: &str) -> &str {
         "check" => "Check",
         "diff" => "Diff",
         _ => "Inspection",
+    }
+}
+
+fn operation_title(operation: &str) -> &str {
+    match operation {
+        "push" => "Push",
+        "pull" => "Pull",
+        "sync" => "Sync",
+        "resolve" => "Resolution",
+        _ => "Mutation",
     }
 }
 
@@ -514,8 +541,11 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
             }
             if matches!(
                 outcome.details.get("operation").and_then(Value::as_str),
-                Some("push" | "pull")
+                Some("push" | "pull" | "sync" | "resolve")
             ) {
+                if let Some(winner) = outcome.details.get("winner").and_then(Value::as_str) {
+                    writeln!(writer, "Winner {winner}")?;
+                }
                 if let Some(actions) = outcome.details.get("actions").and_then(Value::as_array) {
                     for action in actions {
                         let status = action
@@ -576,8 +606,7 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                         } else {
                             String::new()
                         };
-                        let pull = outcome.details.get("direction").and_then(Value::as_str)
-                            == Some("pull");
+                        let pull = action.get("direction").and_then(Value::as_str) == Some("pull");
                         let (origin, target) = if pull {
                             (Some(destination), source.unwrap_or(destination))
                         } else {

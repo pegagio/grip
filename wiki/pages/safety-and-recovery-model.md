@@ -1,7 +1,7 @@
 ---
 title: Safety and recovery model
 type: decision
-sources: [S001, S002, S004, S005, S007, S008, S009]
+sources: [S001, S002, S004, S005, S007, S008, S009, S010]
 updated: 2026-09-07
 ---
 
@@ -21,11 +21,11 @@ Concurrent external edits are handled through evidence capture, pre-action reval
 
 Feature 002 applies this boundary to registry replacement. A writer locks a stable owner-only file, rereads the accepted bytes, revalidates the exact submitted-path evidence and complete candidate, publishes and verifies a content-addressed recovery copy of the prior document, and verifies a same-directory staged candidate before rename. Failure before rename leaves the prior registry authoritative; a directory-sync failure after rename reports that visibility changed but durability was not confirmed. (S005)
 
-Feature 005 applies the full boundary to source-to-destination payload mutation. An actionful push acquires the per-user mutation lock only after complete preflight, rebuilds and compares the plan under that lock, initializes a durable operation record immediately before mutation, and checkpoints revalidation, recovery, staging, publication, verification, and terminal baseline evidence. It stops on the first failure without rollback and leaves every later action unattempted. (S008)
+Feature 005 applies the full boundary to push: after complete preflight, an actionful command locks, rebuilds the plan, initializes durable operation evidence, and checkpoints revalidation through terminal baseline state. Replacements preserve the prior destination privately; the first failure stops without rollback, retains completed effects and recovery, leaves later actions unattempted, and does not falsely publish acceptance. (S004) (S008)
 
-Replacement actions preserve and verify the prior destination as a private operation-local payload before publishing the staged source. A partial failure retains visible changes and recovery evidence but leaves the prior baseline authoritative; a successful run publishes exactly one accepted generation after every action and a final complete observation verify. Result-delivery failure cannot revoke an already published baseline. (S004) (S008)
+Feature 006 applies the same boundary to pull with destination as origin and source as target. It preserves the prior source, never creates a missing source or parent, and accepts only a fully verified result. (S004) (S009)
 
-Feature 006 applies the same boundary with destination as transfer origin and source as transfer target. It stages destination bytes beside the source, preserves and verifies the prior source, never creates a missing source or source parent, and publishes one accepted generation only after every replacement and a final complete observation verify. A failed pull keeps completed effects and recovery evidence while leaving later actions unattempted and the prior baseline authoritative unless state publication explicitly became visible. (S004) (S009)
+Feature 007 reuses that direction-neutral pipeline for mixed sync actions and exact resolution. One outer mutation lock covers lock-held plan equality, per-action direction, operation-local recovery, final observation, and one baseline publication. Conflicts block sync completely; resolution requires an explicit whole-state winner. A result-delivery failure cannot revoke already accepted payload or baseline authority. (S004) (S010)
 
 ## Related pages
 

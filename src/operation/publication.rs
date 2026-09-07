@@ -103,7 +103,7 @@ pub fn initialize(home: &GripHome, plan: &MutationPlan) -> Result<OperationRecei
     let state = crate::state::publication::prepare_directory(home)?;
     let operations = state.join("operations");
     ensure_private_directory(&operations)?;
-    let operation = plan.direction.operation();
+    let operation = plan.operation.as_str();
     let (operation_id, directory) = allocate_directory(&operations, operation)?;
     ensure_private_directory(&directory.join("actions"))?;
     ensure_private_directory(&directory.join("recovery"))?;

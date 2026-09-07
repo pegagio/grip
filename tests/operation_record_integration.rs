@@ -5,14 +5,19 @@ use grip::operation::model::{
 };
 
 #[test]
-fn operation_record_v1_accepts_push_and_pull_but_rejects_unknown_operations() {
+fn operation_record_v1_accepts_all_mutation_operations_but_rejects_unknown_operations() {
     for operation in ["push", "pull"] {
         let mut plan = support::test_push_plan(0);
-        plan.direction = if operation == "push" {
+        plan.operation = if operation == "push" {
+            grip::mutation::model::MutationOperation::Push
+        } else {
+            grip::mutation::model::MutationOperation::Pull
+        };
+        plan.direction = Some(if operation == "push" {
             grip::mutation::model::MutationDirection::Push
         } else {
             grip::mutation::model::MutationDirection::Pull
-        };
+        });
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
         let grip_home = support::minimal_home(root.path());
         let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
@@ -26,7 +31,7 @@ fn operation_record_v1_accepts_push_and_pull_but_rejects_unknown_operations() {
 
     let payload = OperationSummaryPayloadV1 {
         operation_id: "unknown-1".into(),
-        operation: "sync".into(),
+        operation: "unknown".into(),
         state: "executing".into(),
         plan_id: "a".repeat(64),
         plan_ref: "plan.json".into(),
@@ -47,6 +52,23 @@ fn operation_record_v1_accepts_push_and_pull_but_rejects_unknown_operations() {
         }),
     };
     assert!(grip::operation::model::OperationPlanEnvelopeV1::new(mismatch).is_err());
+}
+
+#[test]
+fn sync_operation_record_carries_operation_and_action_direction() {
+    let (_root, home, registry, state, selection, plan) = support::sync_execution_fixture();
+    let success =
+        grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
+    let stored = support::read_operation_component::<OperationPlanPayloadV1>(
+        &home
+            .path()
+            .join("state/operations")
+            .join(&success.operation_id)
+            .join("plan.json"),
+    );
+    assert_eq!(stored.payload.operation, "sync");
+    assert_eq!(stored.payload.plan["operation"], "sync");
+    assert_eq!(stored.payload.plan["actions"][0]["direction"], "push");
 }
 
 #[test]
@@ -145,4 +167,116 @@ fn failed_pull_record_is_immutable_and_does_not_block_a_fresh_pull() {
         grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
     assert_ne!(success.operation_id, failure.operation_id);
     assert_eq!(support::snapshot(&failed_directory), before);
+}
+
+#[test]
+fn interrupted_and_failed_sync_records_remain_immutable_during_fresh_retries() {
+    let (_root, home, registry, state, selection, plan) = support::sync_execution_fixture();
+    let interrupted = grip::operation::publication::initialize(&home, &plan).unwrap();
+    let interrupted_directory = interrupted.directory().to_path_buf();
+    let interrupted_before = support::snapshot(&interrupted_directory);
+    drop(interrupted);
+
+    let failure = grip::mutation::execution::execute_with_fault_hook(
+        &home,
+        &registry,
+        &state,
+        &selection,
+        &plan,
+        support::fail_mutation_at(grip::mutation::FaultPhase::AfterRecovery(0)),
+    )
+    .unwrap_err();
+    let grip::GripError::MutationFailed(failure) = failure else {
+        panic!("expected sync failure");
+    };
+    let failed_directory = home
+        .path()
+        .join("state/operations")
+        .join(&failure.operation_id);
+    let failed_before = support::snapshot(&failed_directory);
+
+    let success =
+        grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
+    assert_ne!(success.operation_id, failure.operation_id);
+    assert_eq!(
+        support::snapshot(&interrupted_directory),
+        interrupted_before
+    );
+    assert_eq!(support::snapshot(&failed_directory), failed_before);
+}
+
+#[test]
+fn interrupted_resolution_record_does_not_block_a_fresh_resolution() {
+    let (_root, home, registry, state, selection, plan) =
+        support::resolution_execution_fixture(grip::mutation::model::ConflictWinner::Destination);
+    let interrupted = grip::operation::publication::initialize(&home, &plan).unwrap();
+    let interrupted_directory = interrupted.directory().to_path_buf();
+    let before = support::snapshot(&interrupted_directory);
+    drop(interrupted);
+    let success =
+        grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
+    assert!(success.operation_id.starts_with("resolve-"));
+    assert_eq!(support::snapshot(&interrupted_directory), before);
+}
+
+#[test]
+fn mixed_sync_checkpoints_each_direction_and_terminal_baseline_once() {
+    let (_root, home, registry, state, selection, plan) = support::mixed_sync_execution_fixture();
+    let success =
+        grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
+    let directory = home
+        .path()
+        .join("state/operations")
+        .join(&success.operation_id);
+    let stored_plan =
+        support::read_operation_component::<OperationPlanPayloadV1>(&directory.join("plan.json"));
+    assert_eq!(stored_plan.payload.plan["actions"][0]["direction"], "push");
+    assert_eq!(stored_plan.payload.plan["actions"][1]["direction"], "pull");
+    for index in 0..2 {
+        let action = support::read_operation_component::<ActionCheckpointPayloadV1>(
+            &directory.join(format!("actions/{index:08}.json")),
+        );
+        assert_eq!(action.payload.status, "completed");
+        assert_eq!(action.payload.milestones.revalidation, "passed");
+        assert_eq!(action.payload.milestones.recovery, "preserved");
+        assert_eq!(action.payload.milestones.publication, "visible");
+        assert_eq!(action.payload.milestones.verification, "verified");
+        assert!(action.payload.milestones.durability_confirmed);
+    }
+    let summary = support::read_operation_component::<OperationSummaryPayloadV1>(
+        &directory.join("operation.json"),
+    );
+    assert_eq!(summary.payload.state, "completed");
+    assert_eq!(summary.payload.baseline["outcome"], "published");
+    assert_eq!(
+        summary.payload.baseline["published_generation"],
+        success.generation
+    );
+}
+
+#[test]
+fn failed_resolution_record_is_immutable_and_does_not_block_fresh_resolution() {
+    let (_root, home, registry, state, selection, plan) =
+        support::resolution_execution_fixture(grip::mutation::model::ConflictWinner::Source);
+    let result = grip::mutation::execution::execute_with_fault_hook(
+        &home,
+        &registry,
+        &state,
+        &selection,
+        &plan,
+        support::fail_mutation_at(grip::mutation::FaultPhase::AfterRecovery(0)),
+    );
+    let grip::GripError::MutationFailed(failure) = result.unwrap_err() else {
+        panic!("expected resolution failure");
+    };
+    let failed_directory = home
+        .path()
+        .join("state/operations")
+        .join(&failure.operation_id);
+    let failed_before = support::snapshot(&failed_directory);
+    let success =
+        grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
+    assert!(success.operation_id.starts_with("resolve-"));
+    assert_ne!(success.operation_id, failure.operation_id);
+    assert_eq!(support::snapshot(&failed_directory), failed_before);
 }

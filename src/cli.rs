@@ -39,6 +39,10 @@ pub enum Command {
     Push(PushArgs),
     /// Copy eligible managed destination state back to sources.
     Pull(PullArgs),
+    /// Synchronize all unambiguous changes in both directions.
+    Sync(SyncArgs),
+    /// Resolve one exact conflict using an explicit complete-state winner.
+    Resolve(ResolveArgs),
     Baseline(BaselineArgs),
 }
 
@@ -68,6 +72,43 @@ pub struct PullArgs {
     /// Select one mapping, entry, or component-boundary subtree.
     #[arg(value_name = "PATH")]
     pub path: Option<OsString>,
+}
+
+/// Arguments shared by bidirectional sync preview and execution.
+#[derive(Debug, clap::Args)]
+pub struct SyncArgs {
+    /// Preview the complete mixed-direction plan without locking or mutation.
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    /// Interpret PATH in destination space without changing action directions.
+    #[arg(long)]
+    pub destination: bool,
+    /// Select one mapping, entry, or component-boundary subtree.
+    #[arg(value_name = "PATH")]
+    pub path: Option<OsString>,
+}
+
+/// Arguments for resolving one exact divergent managed entry.
+#[derive(Debug, clap::Args)]
+#[command(group(
+    clap::ArgGroup::new("winner")
+        .required(true)
+        .multiple(false)
+        .args(["source", "destination"])
+))]
+pub struct ResolveArgs {
+    /// Preview the resolution plan without locking or mutation.
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    /// Choose the complete source state as the winner.
+    #[arg(long)]
+    pub source: bool,
+    /// Choose the complete destination state as the winner.
+    #[arg(long)]
+    pub destination: bool,
+    /// Identify one exact managed entry in source-path space.
+    #[arg(value_name = "PATH")]
+    pub path: OsString,
 }
 
 #[derive(Debug, clap::Args)]

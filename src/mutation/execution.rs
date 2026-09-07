@@ -3,7 +3,9 @@
 use crate::classification;
 use crate::error::GripError;
 use crate::home::GripHome;
-use crate::mutation::model::{ActionKind, MutationDirection, MutationPlan};
+use crate::mutation::model::{
+    ActionKind, Disposition, MutationDirection, MutationOperation, MutationPlan,
+};
 use crate::observation::model::Selection;
 use crate::operation::model::ActionCheckpointEvidenceV1;
 use crate::registry::publication::RegistrySnapshot;
@@ -75,12 +77,12 @@ pub fn execute_with_faults<F>(
 where
     F: FnMut(crate::mutation::FaultPhase) -> Result<(), GripError>,
 {
-    let direction = initial_plan.direction;
-    let operation = direction.operation();
-    let _mutation_guard = crate::state::mutation_lock::MutationLock::acquire(home, operation)?;
+    let operation = initial_plan.operation;
+    let operation_name = operation.as_str();
+    let _mutation_guard = crate::state::mutation_lock::MutationLock::acquire(home, operation_name)?;
     fault(crate::mutation::FaultPhase::AfterMutationLock)?;
     let locked_registry = crate::registry::publication::load(home, false)
-        .map_err(|error| error.for_mapping_operation(operation))?;
+        .map_err(|error| error.for_mapping_operation(operation_name))?;
     let locked_state = crate::state::publication::load(home)?;
     if locked_registry.bytes != expected_registry.bytes
         || locked_registry.registry != expected_registry.registry
@@ -88,7 +90,7 @@ where
         || locked_state.accepted != expected_state.accepted
     {
         return Err(stale(
-            direction,
+            operation,
             "registry or accepted state changed after mutation planning",
         ));
     }
@@ -101,13 +103,18 @@ where
     )?;
     if &locked_plan != initial_plan {
         return Err(stale(
-            direction,
+            operation,
             "mutation plan changed after lock acquisition",
         ));
     }
     let mut receipt = crate::operation::publication::initialize(home, &locked_plan)?;
     let mut plan = locked_plan;
-    let mut actioned = BTreeSet::new();
+    let mut actioned = plan
+        .entries
+        .iter()
+        .filter(|entry| entry.disposition == Disposition::AcceptOnly)
+        .map(|entry| entry.identity.clone())
+        .collect::<BTreeSet<_>>();
 
     for index in 0..plan.actions.len() {
         let action = &mut plan.actions[index];
@@ -117,7 +124,7 @@ where
             receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
             failure_reason = "revalidation_failure";
             fault(crate::mutation::FaultPhase::BeforeActionRevalidation(index))?;
-            revalidate_action(home, &locked_registry, &locked_state, action, direction)?;
+            revalidate_action(home, &locked_registry, &locked_state, action, operation)?;
             action.milestones.revalidation = "passed".into();
             failure_reason = "journal_failure";
             receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
@@ -134,6 +141,7 @@ where
                     let identity = action.identity.as_ref().ok_or_else(|| {
                         GripError::Internal("managed file action has no identity".into())
                     })?;
+                    let direction = action.direction;
                     let (origin, expected_origin, expected_target) = match direction {
                         MutationDirection::Push => (
                             identity.source_path(),
@@ -174,7 +182,7 @@ where
                     failure_reason = "staging_failure";
                     fault(crate::mutation::FaultPhase::BeforeStaging(index))?;
                     let mut staged = crate::mutation::filesystem::stage_file_for(
-                        initial_plan.direction,
+                        direction,
                         &origin,
                         &destination,
                         expected_origin,
@@ -194,7 +202,7 @@ where
                             &locked_registry,
                             &locked_state,
                             action,
-                            direction,
+                            operation,
                         )?;
                         crate::mutation::filesystem::publish_replacement(
                             &mut staged,
@@ -269,7 +277,9 @@ where
                     && action.milestones.staging != "verified"
                 {
                     action.milestones.staging = "failed".into();
-                } else if failure_reason == "verification_failure" {
+                } else if failure_reason == "verification_failure"
+                    && action.milestones.verification != "verified"
+                {
                     action.milestones.verification = "failed".into();
                 }
                 action.status = crate::mutation::model::ActionStatus::Failed;
@@ -319,7 +329,7 @@ where
                     &plan.actions[index],
                 );
                 return Err(mutation_failure(
-                    direction,
+                    operation,
                     crate::error::MutationFailure {
                         operation_id: receipt.operation_id().to_owned(),
                         plan,
@@ -364,7 +374,7 @@ where
     );
     let final_registry = finish_or_fail!(
         crate::registry::publication::load(home, false)
-            .map_err(|error| error.for_mapping_operation(operation)),
+            .map_err(|error| error.for_mapping_operation(operation_name)),
         "coordination_failure"
     );
     if final_registry.bytes != locked_registry.bytes
@@ -375,7 +385,7 @@ where
             plan,
             &locked_state,
             stale(
-                direction,
+                operation,
                 "accepted registry changed during mutation execution",
             ),
             "revalidation_failure",
@@ -383,7 +393,7 @@ where
     }
     let final_observed = finish_or_fail!(
         crate::observation::inspect(home, &final_registry, &locked_state.accepted, selection)
-            .map_err(|error| error.for_operation(operation)),
+            .map_err(|error| error.for_operation(operation_name)),
         "verification_failure"
     );
     let final_records = final_observed
@@ -401,7 +411,7 @@ where
         "coordination_failure"
     );
     let _registry_guard = finish_or_fail!(
-        crate::registry::publication::acquire_guard(home, operation),
+        crate::registry::publication::acquire_guard(home, operation_name),
         "coordination_failure"
     );
     let state_directory = finish_or_fail!(
@@ -413,7 +423,7 @@ where
         "coordination_failure"
     );
     finish_or_fail!(
-        revalidate_registry_bytes(home, &final_registry, direction),
+        revalidate_registry_bytes(home, &final_registry, operation),
         "revalidation_failure"
     );
     finish_or_fail!(
@@ -481,7 +491,7 @@ where
                 Some(reason.clone()),
             );
             return Err(mutation_failure(
-                direction,
+                operation,
                 crate::error::MutationFailure {
                     operation_id: receipt.operation_id().to_owned(),
                     plan,
@@ -566,23 +576,37 @@ fn rebuild_plan(
     selection: &Selection,
     expected: &MutationPlan,
 ) -> Result<MutationPlan, GripError> {
-    let direction = expected.direction;
-    let operation = direction.operation();
+    let operation = expected.operation;
+    let operation_name = operation.as_str();
     let observed = crate::observation::inspect(home, registry, &state.accepted, selection)
-        .map_err(|error| error.for_operation(operation))?;
+        .map_err(|error| error.for_operation(operation_name))?;
     let records = observed
         .values()
         .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
         .collect();
-    match direction {
-        MutationDirection::Push => crate::mutation::plan::build_with_parent_requirements(
+    match operation {
+        MutationOperation::Push => crate::mutation::plan::build_with_parent_requirements(
             expected.scope.clone(),
             records,
             registry.missing_destination_parents(),
         ),
-        MutationDirection::Pull => {
-            crate::mutation::plan::build_for(direction, expected.scope.clone(), records)
-        }
+        MutationOperation::Pull => crate::mutation::plan::build_for(
+            MutationDirection::Pull,
+            expected.scope.clone(),
+            records,
+        ),
+        MutationOperation::Sync => crate::mutation::plan::build_sync_with_parent_requirements(
+            expected.scope.clone(),
+            records,
+            registry.missing_destination_parents(),
+        ),
+        MutationOperation::Resolve => crate::mutation::plan::build_resolution(
+            expected.scope.clone(),
+            records,
+            expected.winner.ok_or_else(|| {
+                GripError::Internal("resolution plan has no explicit winner".into())
+            })?,
+        ),
     }
 }
 
@@ -591,14 +615,14 @@ fn revalidate_action(
     registry: &RegistrySnapshot,
     state: &StateSnapshot,
     action: &crate::mutation::model::MutationAction,
-    direction: MutationDirection,
+    operation: MutationOperation,
 ) -> Result<(), GripError> {
-    let operation = direction.operation();
+    let operation_name = operation.as_str();
     let current_registry = crate::registry::publication::load(home, false)
-        .map_err(|error| error.for_mapping_operation(operation))?;
+        .map_err(|error| error.for_mapping_operation(operation_name))?;
     if current_registry.bytes != registry.bytes || current_registry.registry != registry.registry {
         return Err(stale(
-            direction,
+            operation,
             "accepted registry changed during mutation execution",
         ));
     }
@@ -608,19 +632,25 @@ fn revalidate_action(
     };
     let selected = Selection::Entry(identity.clone());
     let observed = crate::observation::inspect(home, &current_registry, &state.accepted, &selected)
-        .map_err(|error| error.for_operation(operation))?;
+        .map_err(|error| error.for_operation(operation_name))?;
     let entry = observed.get(identity).ok_or_else(|| {
         stale(
-            direction,
+            operation,
             "managed entry disappeared during action revalidation",
         )
     })?;
     let record = classification::classify(entry, state.accepted.baselines.get(identity));
     let source_matches = record.source == action.expected_source;
     let destination_matches = record.destination == action.expected_destination;
-    if record.blocking || !source_matches || !destination_matches {
+    let classification_matches = operation != MutationOperation::Resolve
+        || record.classification == crate::classification::model::Classification::DivergentConflict;
+    if record.blocking && operation != MutationOperation::Resolve
+        || !classification_matches
+        || !source_matches
+        || !destination_matches
+    {
         return Err(stale(
-            direction,
+            operation,
             "managed entry changed before mutation action",
         ));
     }
@@ -639,12 +669,14 @@ fn evidence(action: &crate::mutation::model::MutationAction) -> ActionCheckpoint
     }
 }
 
-fn stale(direction: MutationDirection, message: &str) -> GripError {
+fn stale(operation: MutationOperation, message: &str) -> GripError {
     GripError::discovery_operational(
-        direction.operation(),
-        match direction {
-            MutationDirection::Push => "stale_push_evidence",
-            MutationDirection::Pull => "stale_pull_evidence",
+        operation.as_str(),
+        match operation {
+            MutationOperation::Push => "stale_push_evidence",
+            MutationOperation::Pull => "stale_pull_evidence",
+            MutationOperation::Sync => "stale_sync_evidence",
+            MutationOperation::Resolve => "stale_resolution_evidence",
         },
         Vec::new(),
         message,
@@ -667,13 +699,13 @@ fn stable_reason(error: &GripError, fallback: &str) -> String {
 fn revalidate_registry_bytes(
     home: &GripHome,
     expected: &RegistrySnapshot,
-    direction: MutationDirection,
+    operation: MutationOperation,
 ) -> Result<(), GripError> {
     let current = crate::registry::publication::load(home, false)
-        .map_err(|error| error.for_mapping_operation(direction.operation()))?;
+        .map_err(|error| error.for_mapping_operation(operation.as_str()))?;
     if current.bytes != expected.bytes || current.registry != expected.registry {
         return Err(stale(
-            direction,
+            operation,
             "accepted registry changed during mutation execution",
         ));
     }
@@ -688,7 +720,7 @@ fn terminal_baseline_failure(
     publication_visible: bool,
     candidate_generation: Option<u64>,
 ) -> Result<ExecutionSuccess, GripError> {
-    let direction = plan.direction;
+    let operation = plan.operation;
     let baseline = crate::mutation::model::BaselineOutcome {
         outcome: if publication_visible {
             "publication_failed".into()
@@ -705,7 +737,7 @@ fn terminal_baseline_failure(
             state.accepted.generation
         },
         publication_visible,
-        durability_confirmed: !publication_visible,
+        durability_confirmed: true,
     };
     let reason = "baseline_publication_failure".to_owned();
     let category = error.category();
@@ -719,7 +751,7 @@ fn terminal_baseline_failure(
         Some(reason.clone()),
     );
     Err(mutation_failure(
-        direction,
+        operation,
         crate::error::MutationFailure {
             operation_id: receipt.operation_id().to_owned(),
             plan,
@@ -751,7 +783,7 @@ fn terminal_prebaseline_failure(
     error: GripError,
     reason: &str,
 ) -> Result<ExecutionSuccess, GripError> {
-    let direction = plan.direction;
+    let operation = plan.operation;
     let baseline = crate::mutation::model::BaselineOutcome {
         outcome: "not_published".into(),
         prior_generation: state.accepted.generation,
@@ -771,7 +803,7 @@ fn terminal_prebaseline_failure(
         Some(reason.into()),
     );
     Err(mutation_failure(
-        direction,
+        operation,
         crate::error::MutationFailure {
             operation_id: receipt.operation_id().to_owned(),
             plan,
@@ -792,12 +824,14 @@ fn terminal_prebaseline_failure(
 }
 
 fn mutation_failure(
-    direction: MutationDirection,
+    operation: MutationOperation,
     failure: crate::error::MutationFailure,
 ) -> GripError {
-    match direction {
-        MutationDirection::Push => GripError::PushFailed(Box::new(failure)),
-        MutationDirection::Pull => GripError::MutationFailed(Box::new(failure)),
+    match operation {
+        MutationOperation::Push => GripError::PushFailed(Box::new(failure)),
+        MutationOperation::Pull | MutationOperation::Sync | MutationOperation::Resolve => {
+            GripError::MutationFailed(Box::new(failure))
+        }
     }
 }
 

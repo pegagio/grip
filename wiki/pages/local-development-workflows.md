@@ -1,7 +1,7 @@
 ---
 title: Local development workflows
 type: howto
-sources: [S004, S008, S009]
+sources: [S004, S008, S009, S010]
 updated: 2026-09-07
 ---
 
@@ -16,6 +16,8 @@ Use `mise run validate` for the complete verification sequence: formatting, Clip
 Feature 005's representative harness constructs 10,000 eligible mixed entries and compares 100 JSON dry-run plans with 100 internal execute-mode plans stopped before mutation. The accepted run kept both p95 planning distributions below the two-second requirement without adding a cache, persistent index, parallel traversal, service, or new dependency. (S008)
 
 Feature 006 extends that harness with 6,700 synchronized and 3,300 destination-only changed accepted entries. On the documented macOS/aarch64 release run, pull dry-run p95 was 997.840917 ms and execution-planning p95 was 834.299833 ms across 100 warm runs, satisfying the two-second requirement without new caching, indexing, parallelism, or coordination machinery. (S009)
+
+Feature 007's 10,000-entry mixed fixture covers synchronized, source-only, destination-only, converged, and conflicting classifications. Across 100 warm macOS ARM64 release runs, sync preview p95 was 1.146991333 seconds and pure planning p95 was 0.942500750 seconds; both passed the two-second threshold without new caching, services, broad payload locks, or unmeasured parallelism. (S010)
 
 ## Related pages
 

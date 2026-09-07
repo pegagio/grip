@@ -91,13 +91,33 @@ After all actions verify, Grip performs a final complete observation and publish
 
 Pull does not propagate source changes, resolve conflicts, delete or retire entries, import unmanaged destination content, inspect or clean recovery data, repair corrupt state, resume interrupted operations, or roll back automatically.
 
+## Synchronize and resolve conflicts
+
+`sync` plans both eligible directions together and mutates by default. Its optional selector follows the same source-space, `--destination`, and `--` rules as push and pull. Use `-n` or `--dry-run` for a lock-free preview.
+
+```text
+grip sync [-n|--dry-run] [--destination] [--] [PATH]
+```
+
+Source additions and source-only changes produce push actions; established destination-only changes produce pull actions. Converged identical changes require no payload replacement but are accepted only after the complete selected sync succeeds. A synchronized-only selection is a true no-op and creates no operation record or baseline generation. Any conflict, deletion, retirement, unsupported node, unsafe path, or incomplete observation blocks the entire selected plan before mutation.
+
+Resolve one exact divergent entry by naming its source path and choosing the complete winning side explicitly:
+
+```text
+grip resolve [-n|--dry-run] (--source|--destination) [--] PATH
+```
+
+`PATH` is always interpreted in source-path space; `--destination` chooses the destination state as winner and does not change path interpretation. Resolution never infers a winner, accepts a subtree, combines attributes, or changes adjacent entries. It freshly verifies the conflict, preserves the complete losing state in operation-local recovery, applies the winner through the corresponding push or pull pipeline, verifies equality, and publishes one accepted generation. Both preview aliases produce the equivalent plan without changing payloads or Grip-owned state.
+
+Sync and resolution reuse the global mutation lock, descriptor-safe staging, verified recovery, stop-after-first-failure behavior, and versioned result envelope. Machine output identifies `operation: sync|resolve`; every payload action carries `direction: push|pull`; resolution also carries `winner: source|destination`. Partial results retain completed effects and recovery evidence while leaving the prior baseline authoritative.
+
 ## Registry publication safety
 
 `<GRIP_HOME>/config.toml` is the accepted v1 registry. It must be a current-user-owned, non-symlink regular file with group and other write bits unset; add and remove also require owner write permission. Deterministic rewrites preserve its exact permission mode, though presentation-only TOML whitespace, comments, and ordering may be normalized.
 
 Writers coordinate through the stable owner-only `<GRIP_HOME>/.registry.lock`. Before replacement, Grip verifies that the accepted bytes and mapping paths have not changed, then retains the exact prior registry under `<GRIP_HOME>/state/recovery/registry/sha256-<digest>/config.toml`. Recovery generations are immutable and content-addressed. Grip stages and verifies the complete candidate beside `config.toml`, atomically renames it, and syncs the containing directory. Lock, staging, and recovery artifacts never contain accepted synchronization state, and no mapping command mutates `<GRIP_HOME>/state/state.json`.
 
-Grip is offline and does not delete files, invoke Git, elevate privileges, or contact remote services. Synchronization remains limited to explicit mapping ownership and the supported `push` and `pull` direction contracts.
+Grip is offline and does not delete files, invoke Git, elevate privileges, or contact remote services. Synchronization remains limited to explicit mapping ownership and the supported push, pull, sync, and exact conflict-resolution contracts.
 
 ## Install and build
 
@@ -156,4 +176,4 @@ grip --output json version
 | 13 | `state_contention` | Another Grip writer holds the global mutation lock |
 | 20 | `operational_failure` | I/O, output, or another runtime failure |
 
-Registry-publication contention is reported as an operational failure. `push`, `pull`, and explicit `baseline accept` can publish synchronization state; status, check, diff, and dry-run push or pull are read-only.
+Registry-publication contention is reported as an operational failure. `push`, `pull`, `sync`, `resolve`, and explicit `baseline accept` can publish synchronization state; status, check, diff, and every dry-run mutation are read-only.
