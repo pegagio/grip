@@ -57,6 +57,7 @@ impl MutationLock {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
                 return Err(GripError::MutationContention {
+                    requested_operation: operation.into(),
                     owner: read_owner(&mut file),
                 });
             }
@@ -126,7 +127,9 @@ mod tests {
         let _first = MutationLock::acquire(&home, "push").unwrap();
         let error = MutationLock::acquire(&home, "mapping_add").unwrap_err();
         match error {
-            GripError::MutationContention { owner: Some(owner) } => {
+            GripError::MutationContention {
+                owner: Some(owner), ..
+            } => {
                 assert_eq!(owner.operation, "push");
                 assert_eq!(owner.schema_version, 1);
             }

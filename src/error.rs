@@ -2,17 +2,27 @@ use crate::mapping::OwnershipConflict;
 use std::io;
 use thiserror::Error;
 
+/// Structured terminal evidence for either mutation direction.
 #[derive(Debug)]
-pub struct PushFailure {
+pub struct MutationFailure {
     pub operation_id: String,
-    pub plan: crate::push::model::PushPlan,
-    pub baseline: crate::push::model::BaselineOutcome,
+    pub plan: crate::mutation::model::MutationPlan,
+    pub baseline: crate::mutation::model::BaselineOutcome,
     pub reason: String,
+    pub phase: String,
     pub paths: Vec<crate::discovery::model::SafePath>,
+    pub failed_action_index: Option<usize>,
+    pub expected_source: Option<crate::observation::model::SupportedState>,
+    pub expected_destination: Option<crate::observation::model::SupportedState>,
+    pub observed_source: Option<crate::observation::model::SupportedState>,
+    pub observed_destination: Option<crate::observation::model::SupportedState>,
     pub completion: String,
     pub category: ResultCategory,
     pub message: String,
 }
+
+/// Compatibility name retained for Feature 005 callers.
+pub type PushFailure = MutationFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCategory {
@@ -74,6 +84,7 @@ pub enum GripError {
     StateContention,
     #[error("another Grip writer holds the mutation lock")]
     MutationContention {
+        requested_operation: String,
         owner: Option<crate::state::mutation_lock::MutationLockOwner>,
     },
     #[error("selected baseline evidence is not complete and equivalent")]
@@ -82,8 +93,18 @@ pub enum GripError {
     },
     #[error("{}", .0.message)]
     PushFailed(Box<PushFailure>),
+    #[error("{}", .0.message)]
+    MutationFailed(Box<MutationFailure>),
     #[error("{message}")]
     PushSideEffect {
+        reason: String,
+        publication_visible: bool,
+        verification: String,
+        durability_confirmed: bool,
+        message: String,
+    },
+    #[error("{message}")]
+    MutationSideEffect {
         reason: String,
         publication_visible: bool,
         verification: String,
@@ -117,8 +138,10 @@ impl GripError {
                 ResultCategory::StateContention
             }
             Self::BaselineNotAcceptable { .. } => ResultCategory::InvalidConfiguration,
-            Self::PushFailed(failure) => failure.category,
-            Self::PushSideEffect { .. } => ResultCategory::InternalError,
+            Self::PushFailed(failure) | Self::MutationFailed(failure) => failure.category,
+            Self::PushSideEffect { .. } | Self::MutationSideEffect { .. } => {
+                ResultCategory::InternalError
+            }
             Self::Internal(_) => ResultCategory::InternalError,
         }
     }
@@ -131,6 +154,22 @@ impl GripError {
         message: impl Into<String>,
     ) -> Self {
         Self::PushSideEffect {
+            reason: reason.into(),
+            publication_visible,
+            verification: verification.into(),
+            durability_confirmed,
+            message: message.into(),
+        }
+    }
+
+    pub fn mutation_side_effect(
+        reason: &str,
+        publication_visible: bool,
+        verification: &str,
+        durability_confirmed: bool,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::MutationSideEffect {
             reason: reason.into(),
             publication_visible,
             verification: verification.into(),

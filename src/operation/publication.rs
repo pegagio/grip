@@ -2,12 +2,12 @@
 
 use crate::error::GripError;
 use crate::home::GripHome;
+use crate::mutation::model::MutationPlan;
 use crate::operation::model::{
     ActionCheckpointEnvelopeV1, ActionCheckpointEvidenceV1, ActionCheckpointPayloadV1,
     OperationPlanEnvelopeV1, OperationPlanPayloadV1, OperationSummaryEnvelopeV1,
     OperationSummaryPayloadV1, encode,
 };
-use crate::push::model::PushPlan;
 use rustix::fs::{AtFlags, Mode, OFlags, RenameFlags, fsync, openat, renameat_with, unlinkat};
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -99,26 +99,28 @@ impl OperationReceipt {
 }
 
 /// Allocate and initialize a new partitioned record immediately before mutation.
-pub fn initialize(home: &GripHome, plan: &PushPlan) -> Result<OperationReceipt, GripError> {
+pub fn initialize(home: &GripHome, plan: &MutationPlan) -> Result<OperationReceipt, GripError> {
     let state = crate::state::publication::prepare_directory(home)?;
     let operations = state.join("operations");
     ensure_private_directory(&operations)?;
-    let (operation_id, directory) = allocate_directory(&operations)?;
+    let operation = plan.direction.operation();
+    let (operation_id, directory) = allocate_directory(&operations, operation)?;
     ensure_private_directory(&directory.join("actions"))?;
     ensure_private_directory(&directory.join("recovery"))?;
 
     let plan_payload = OperationPlanPayloadV1 {
         operation_id: operation_id.clone(),
-        operation: "push".into(),
+        operation: operation.into(),
         plan_id: plan.plan_id.clone(),
-        plan: serde_json::to_value(plan)
-            .map_err(|error| GripError::Internal(format!("could not encode push plan: {error}")))?,
+        plan: serde_json::to_value(plan).map_err(|error| {
+            GripError::Internal(format!("could not encode mutation plan: {error}"))
+        })?,
     };
     let plan_envelope = OperationPlanEnvelopeV1::new(plan_payload)?;
     publish_new(&directory, "plan.json", &encode(&plan_envelope)?)?;
     let summary = OperationSummaryPayloadV1 {
         operation_id: operation_id.clone(),
-        operation: "push".into(),
+        operation: operation.into(),
         state: "executing".into(),
         plan_id: plan.plan_id.clone(),
         plan_ref: "plan.json".into(),
@@ -175,14 +177,14 @@ pub fn finalize_result_delivery(
     )
 }
 
-fn allocate_directory(parent: &Path) -> Result<(String, PathBuf), GripError> {
+fn allocate_directory(parent: &Path, operation: &str) -> Result<(String, PathBuf), GripError> {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
     for _ in 0..128 {
         let counter = OPERATION_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let id = format!("push-{seconds}-{}-{counter}", std::process::id());
+        let id = format!("{operation}-{seconds}-{}-{counter}", std::process::id());
         let path = parent.join(&id);
         let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);

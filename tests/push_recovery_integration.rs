@@ -35,6 +35,7 @@ fn plan(action_count: usize) -> PushPlan {
         })
         .collect::<Vec<_>>();
     PushPlan {
+        direction: grip::mutation::model::MutationDirection::Push,
         plan_id: "a".repeat(64),
         scope: ClassificationScope {
             kind: "all".into(),

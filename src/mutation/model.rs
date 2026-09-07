@@ -1,22 +1,39 @@
-//! Typed push requests, plans, actions, and results.
+//! Typed direction-neutral mutation requests, plans, actions, and results.
 
 use crate::classification::model::{Classification, ClassificationScope};
 use crate::discovery::model::SafePath;
 use crate::observation::model::{EntryIdentity, SupportedState};
 use serde::Serialize;
 
-/// Whether a push is a preview or an execution request.
+/// Direction in which a mutation transfers complete supported state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PushMode {
+pub enum MutationDirection {
+    Push,
+    Pull,
+}
+
+impl MutationDirection {
+    pub fn operation(self) -> &'static str {
+        match self {
+            Self::Push => "push",
+            Self::Pull => "pull",
+        }
+    }
+}
+
+/// Whether a mutation is a preview or an execution request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationMode {
     DryRun,
     Execute,
 }
 
-/// The fully resolved public request for one push.
+/// The fully resolved public request for one directional mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PushRequest {
-    pub mode: PushMode,
+pub struct MutationRequest {
+    pub mode: MutationMode,
     pub destination_space: bool,
     pub selector: Option<std::path::PathBuf>,
 }
@@ -43,7 +60,7 @@ pub struct EntryDisposition {
     pub reasons: Vec<String>,
 }
 
-/// A supported push side effect.
+/// A supported filesystem mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionKind {
@@ -90,9 +107,9 @@ impl Default for ActionEvidence {
     }
 }
 
-/// One dependency-ordered operation in a push plan.
+/// One dependency-ordered operation in a directional mutation plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct PushAction {
+pub struct MutationAction {
     pub index: usize,
     pub kind: ActionKind,
     #[serde(skip)]
@@ -123,7 +140,7 @@ pub struct PlanBlocker {
 
 /// Counts projected into human and machine-readable results.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct PushCounts {
+pub struct MutationCounts {
     pub selected: usize,
     #[serde(rename = "actions")]
     pub actionable: usize,
@@ -134,18 +151,19 @@ pub struct PushCounts {
     pub unattempted: usize,
 }
 
-/// A complete, deterministic, mode-neutral push plan.
+/// A complete, deterministic, mode-neutral directional mutation plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct PushPlan {
+pub struct MutationPlan {
+    pub direction: MutationDirection,
     pub plan_id: String,
     pub scope: ClassificationScope,
     pub entries: Vec<EntryDisposition>,
-    pub actions: Vec<PushAction>,
+    pub actions: Vec<MutationAction>,
     pub blockers: Vec<PlanBlocker>,
-    pub counts: PushCounts,
+    pub counts: MutationCounts,
 }
 
-/// Accepted-state publication outcome for a push.
+/// Accepted-state publication outcome for a directional mutation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BaselineOutcome {
     pub outcome: String,
@@ -156,19 +174,33 @@ pub struct BaselineOutcome {
     pub durability_confirmed: bool,
 }
 
-/// Complete typed result from push planning or execution.
+/// Complete typed result from directional mutation planning or execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct PushResult {
+pub struct MutationResult {
     pub operation: &'static str,
-    pub mode: PushMode,
+    pub direction: MutationDirection,
+    pub mode: MutationMode,
     pub completion: String,
     pub result: String,
     pub scope: ClassificationScope,
     pub plan_id: String,
-    pub counts: PushCounts,
+    pub counts: MutationCounts,
     pub entries: Vec<EntryDisposition>,
-    pub actions: Vec<PushAction>,
+    pub actions: Vec<MutationAction>,
     pub blockers: Vec<PlanBlocker>,
     pub operation_record: Option<String>,
     pub baseline: BaselineOutcome,
 }
+
+/// Compatibility alias for the Feature 005 push API.
+pub type PushMode = MutationMode;
+/// Compatibility alias for the Feature 005 push API.
+pub type PushRequest = MutationRequest;
+/// Compatibility alias for the Feature 005 push API.
+pub type PushAction = MutationAction;
+/// Compatibility alias for the Feature 005 push API.
+pub type PushCounts = MutationCounts;
+/// Compatibility alias for the Feature 005 push API.
+pub type PushPlan = MutationPlan;
+/// Compatibility alias for the Feature 005 push API.
+pub type PushResult = MutationResult;

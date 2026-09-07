@@ -1,13 +1,11 @@
 ---
 title: Command-line and path selection
 type: component
-sources: [S001, S004, S006, S007, S008]
-updated: 2026-09-06
+sources: [S001, S004, S006, S007, S008, S009]
+updated: 2026-09-07
 ---
 
 # Command-line and path selection
-
-The product definition selected the prospective executable name `grip` while leaving exact mapping syntax for later specification. Human-readable output and stable machine-readable output are separate interfaces, and automation needs a defined exit-code contract. (S001)
 
 Feature 001 implements `grip version` and the read-only `grip validate`. Both application commands support human output by default and JSON through `--output json`; repeated `-v` or `--verbose` flags enable redacted diagnostics on stderr. Conventional `--help` and `--version` displays do not access the Grip home. (S004)
 
@@ -29,7 +27,7 @@ The initial command contract permits one optional path selector. Selectors use t
 
 Feature 005 implements `grip push [-n|--dry-run] [--destination] [--] [PATH]`. Execute mode mutates from source to destination; `--destination` changes only selector interpretation. Dry run emits the same complete ordered plan without taking the mutation lock or creating payload, operation, recovery, or baseline state. JSON and human results distinguish planned, blocked, no-op, applied, partial, and failed outcomes while keeping diagnostics separate. (S004) (S008)
 
-Multiple path selectors, interactive two-way text reconciliation, and metadata-only remapping are potential future expansions rather than initial command commitments. A future remap would update registry and state only after separately performed filesystem movement and verified baseline continuity. (S001)
+Feature 006 implements the symmetric selector surface as `grip pull [-n|--dry-run] [--destination] [--] [PATH]`. Pull always transfers eligible destination state to an established managed source; `--destination` still changes only selector interpretation. Human and JSON results describe the same ordered plan, and shared mutation output identifies `operation: pull` and `direction: pull` while preserving mapping-role source and destination fields. (S004) (S009)
 
 ## Related pages
 

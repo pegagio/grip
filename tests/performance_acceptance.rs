@@ -4,11 +4,19 @@ use std::time::{Duration, Instant};
 
 fn p95(mut samples: Vec<Duration>) -> Duration {
     samples.sort_unstable();
-    samples[94]
+    let index = (samples.len() * 95).div_ceil(100).saturating_sub(1);
+    samples[index]
+}
+fn sample_count() -> usize {
+    std::env::var("GRIP_PERFORMANCE_SAMPLE_COUNT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(100)
 }
 fn measure(mut command: impl FnMut() -> Command) -> Duration {
     let _ = command().output().unwrap();
-    let samples = (0..100)
+    let samples = (0..sample_count())
         .map(|_| {
             let start = Instant::now();
             let output = command().output().unwrap();
@@ -22,7 +30,7 @@ fn measure(mut command: impl FnMut() -> Command) -> Duration {
 fn measure_consistent(mut command: impl FnMut() -> Command) -> Duration {
     let expected = command().output().unwrap();
     assert!(expected.status.success());
-    let samples = (0..100)
+    let samples = (0..sample_count())
         .map(|_| {
             let start = Instant::now();
             let output = command().output().unwrap();
@@ -41,7 +49,7 @@ fn measure_consistent(mut command: impl FnMut() -> Command) -> Duration {
 fn warm_release_commands_meet_p95_targets() {
     let binary = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/grip");
     assert!(binary.is_file(), "build release binary first");
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let grip_home = support::minimal_home(root.path());
     let source_root = root.path().join("sources");
     let destination_root = root.path().join("destinations");
@@ -64,10 +72,11 @@ fn warm_release_commands_meet_p95_targets() {
         .collect::<Vec<_>>();
     support::write_registry(&grip_home, &borrowed);
     eprintln!(
-        "os={} arch={} rust={} profile=release runs=100",
+        "os={} arch={} rust={} profile=release runs={}",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        env!("CARGO_PKG_RUST_VERSION")
+        env!("CARGO_PKG_RUST_VERSION"),
+        sample_count()
     );
     let help = measure(|| {
         let mut c = Command::new(&binary);
@@ -201,7 +210,7 @@ fn warm_release_commands_meet_p95_targets() {
         .unwrap()
     };
     let expected_plan = build_plan();
-    let execute_mode_plan = p95((0..100)
+    let execute_mode_plan = p95((0..sample_count())
         .map(|_| {
             let start = Instant::now();
             assert_eq!(build_plan(), expected_plan);
@@ -220,8 +229,84 @@ fn warm_release_commands_meet_p95_targets() {
         expected_plan.plan_id
     );
     assert_eq!(expected_plan.counts.actionable, 6_600);
+
+    for directory_index in 0..100 {
+        let source_directory = discovery_source.join(format!("directory-{directory_index:03}"));
+        let destination_directory =
+            discovery_destination.join(format!("directory-{directory_index:03}"));
+        for file_index in 0..66 {
+            std::fs::copy(
+                source_directory.join(format!("entry-{file_index:03}.txt")),
+                destination_directory.join(format!("entry-{file_index:03}.txt")),
+            )
+            .unwrap();
+        }
+    }
+    let pull_accepted = Command::new(&binary)
+        .env_clear()
+        .env("HOME", root.path())
+        .env("GRIP_HOME", &discovery_home)
+        .args(["baseline", "accept"])
+        .output()
+        .unwrap();
+    assert!(pull_accepted.status.success());
+    for directory_index in 0..100 {
+        let destination_directory =
+            discovery_destination.join(format!("directory-{directory_index:03}"));
+        for file_index in 0..33 {
+            std::fs::write(
+                destination_directory.join(format!("entry-{file_index:03}.txt")),
+                b"destination replacement",
+            )
+            .unwrap();
+        }
+    }
+    let dry_run_pull = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", &discovery_home)
+            .args(["--output=json", "pull", "--dry-run"]);
+        command
+    });
+    let pull_state = grip::state::publication::load(&home).unwrap();
+    let build_pull_plan = || {
+        let observed =
+            grip::observation::inspect(&home, &registry, &pull_state.accepted, &selection).unwrap();
+        let records = observed
+            .values()
+            .map(|entry| {
+                grip::classification::classify(
+                    entry,
+                    pull_state.accepted.baselines.get(&entry.identity),
+                )
+            })
+            .collect();
+        grip::mutation::plan::build_for(
+            grip::mutation::model::MutationDirection::Pull,
+            grip::classification::model::ClassificationScope {
+                kind: "all".into(),
+                path_space: grip::observation::model::PathSpace::Source,
+                selector: None,
+                mapping_source: None,
+            },
+            records,
+        )
+        .unwrap()
+    };
+    let expected_pull_plan = build_pull_plan();
+    let pull_execute_plan = p95((0..sample_count())
+        .map(|_| {
+            let start = Instant::now();
+            assert_eq!(build_pull_plan(), expected_pull_plan);
+            start.elapsed()
+        })
+        .collect());
+    assert_eq!(expected_pull_plan.counts.selected, 10_000);
+    assert_eq!(expected_pull_plan.counts.actionable, 3_300);
     eprintln!(
-        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?}"
+        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?}"
     );
     assert!(help <= Duration::from_millis(100));
     assert!(version <= Duration::from_millis(100));
@@ -230,4 +315,6 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(discovery <= Duration::from_secs(2));
     assert!(status <= Duration::from_secs(2));
     assert!(dry_run_push <= Duration::from_secs(2));
+    assert!(dry_run_pull <= Duration::from_secs(2));
+    assert!(pull_execute_plan <= Duration::from_secs(2));
 }

@@ -235,6 +235,7 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
         })
         .collect::<Vec<_>>();
     grip::push::model::PushPlan {
+        direction: grip::mutation::model::MutationDirection::Push,
         plan_id: "a".repeat(64),
         scope: ClassificationScope {
             kind: "all".into(),
@@ -251,6 +252,61 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
         },
         actions,
     }
+}
+
+pub fn test_pull_plan(action_count: usize) -> grip::mutation::model::MutationPlan {
+    let mut plan = test_push_plan(action_count);
+    plan.direction = grip::mutation::model::MutationDirection::Pull;
+    for action in &mut plan.actions {
+        action.kind = grip::mutation::model::ActionKind::ReplaceFile;
+    }
+    plan
+}
+
+pub fn pull_execution_fixture() -> (
+    tempfile::TempDir,
+    grip::home::GripHome,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    grip::observation::model::Selection,
+    grip::mutation::model::MutationPlan,
+) {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let grip_home = minimal_home(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "accepted").unwrap();
+    write_registry(&grip_home, &[("file", &source, &destination)]);
+    assert!(
+        command_with_grip_home(root.path(), &grip_home, &["push"])
+            .status
+            .success()
+    );
+    fs::write(&destination, "destination change").unwrap();
+    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let selection = grip::observation::model::Selection::All;
+    let observed =
+        grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
+    let records = observed
+        .values()
+        .map(|entry| {
+            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
+        })
+        .collect();
+    let plan = grip::mutation::plan::build_for(
+        grip::mutation::model::MutationDirection::Pull,
+        grip::classification::model::ClassificationScope {
+            kind: "all".into(),
+            path_space: grip::observation::model::PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+    )
+    .unwrap();
+    (root, home, registry, state, selection, plan)
 }
 
 pub fn read_operation_component<T>(path: &Path) -> grip::operation::model::EnvelopeV1<T>
@@ -270,6 +326,20 @@ pub fn fail_push_at(
         if actual == expected {
             Err(grip::GripError::Internal(format!(
                 "injected push failure at {actual:?}"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+pub fn fail_mutation_at(
+    expected: grip::mutation::FaultPhase,
+) -> impl FnMut(grip::mutation::FaultPhase) -> Result<(), grip::GripError> {
+    move |actual| {
+        if actual == expected {
+            Err(grip::GripError::Internal(format!(
+                "injected mutation failure at {actual:?}"
             )))
         } else {
             Ok(())

@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.8 -> 1.0.9
-Bump rationale: Verify completed Feature 005 implementation.
+Version change: 1.0.11 -> 1.0.12
+Bump rationale: Record verified completion of Feature 006.
 
 Changes this revision:
-  - Transitioned Feature 005 from in-progress to verified
-  - Added the Feature 005 post-implementation debrief as verification evidence
+  - Transitioned Feature 006 from in-progress to verified
+  - Recorded the clean post-implementation debrief as verification evidence
 
-Specs affected: 005
+Specs affected: 006
 Open questions added/resolved: none
 
-Notes: Feature 005 met its roadmap outcome with no debrief findings; its sole dependency, Feature 004, remains verified.
+Notes: Feature 006 is verified; Feature 007 now has verified dependencies 005 and 006.
 -->
 
 # Grip — Spec Roadmap
@@ -111,8 +111,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Safety Model, Dry Runs, Incremental Delivery Milestone 3
 - **Notes:** The specification settles Q-10 with stop-after-first-operational-failure behavior and the creation, preservation, binding, and reporting portion of Q-11; later backup inspection, cleanup, rollback, and broader state recovery remain Feature 008 work. Verification evidence: `specs/005-safe-push-recovery/roadmap-reviews/debrief-20260906T185539Z.md` (`PROCEED`, no findings).
 
-### 006 — Reverse Synchronization  [status: planned]
+### 006 — Reverse Synchronization  [status: verified]
 
+- **Spec dir:** `specs/006-reverse-synchronization`
 - **Description:** Extend the proven mutation pipeline to propagate eligible destination-side changes back to the source for established managed entries.
 - **Outcome:** `pull` safely applies unambiguous destination-to-source changes with the same preview, revalidation, recovery, verification, and baseline guarantees as `push`.
 - **Scope (in):** Reverse action planning and execution; destination-path selection; source-parent handling; scoped conflict behavior; reverse backups and verification; symmetric human and machine reporting.
@@ -120,7 +121,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 005
 - **Governed by:** C-02, C-03, C-05, C-06, C-07, C-10, C-11
 - **Addresses:** `docs/product-definition.md` — Direction, Incremental Delivery Milestone 4
-- **Notes:** Reverse synchronization applies only after an entry has entered the managed namespace and has accepted baseline evidence.
+- **Notes:** Reverse synchronization applies only after an entry has entered the managed namespace and has accepted baseline evidence. Verification evidence: `specs/006-reverse-synchronization/roadmap-reviews/debrief-20260907T131934Z.md` (`PROCEED`, no findings).
 
 ### 007 — Bidirectional Synchronization and Conflict Resolution  [status: planned]
 
@@ -187,4 +188,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.9 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-06
+**Version**: 1.0.12 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-07

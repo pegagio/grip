@@ -1,4 +1,4 @@
-//! Verified private preservation of replacement destinations.
+//! Verified private preservation of replacement targets.
 
 use crate::error::GripError;
 use crate::observation::model::{EntryIdentity, MappingSnapshot, SupportedState};
@@ -34,27 +34,29 @@ pub struct RecoveryEntry {
     pub relative_ref: String,
 }
 
-/// Preserve and verify the current destination before replacement.
+/// Preserve and verify the current mutation target before replacement.
 pub fn preserve(
     receipt: &OperationReceipt,
     action_index: usize,
     identity: &EntryIdentity,
-    destination: &Path,
+    target: &Path,
     expected: &SupportedState,
 ) -> Result<RecoveryEntry, GripError> {
     let directory = receipt
         .directory()
         .join("recovery")
         .join(format!("{action_index:08}"));
-    crate::push::filesystem::create_recovery_directory(&directory).map_err(recovery_failure)?;
+    crate::mutation::filesystem::create_recovery_directory(&directory)
+        .map_err(|error| recovery_failure_at("create recovery directory", error))?;
     let payload = directory.join("payload");
-    let mut staged = crate::push::filesystem::stage_private_file(destination, &payload, expected)
-        .map_err(recovery_failure)?;
-    crate::push::filesystem::publish_addition(&mut staged, &payload).map_err(recovery_failure)?;
+    let mut staged = crate::mutation::filesystem::stage_private_file(target, &payload, expected)
+        .map_err(|error| recovery_failure_at("stage recovery payload", error))?;
+    crate::mutation::filesystem::publish_addition(&mut staged, &payload)
+        .map_err(|error| recovery_failure_at("publish recovery payload", error))?;
     let mut private_expected = expected.clone();
     private_expected.permission_mode = Some("0600".into());
-    crate::push::filesystem::verify_destination(&payload, &private_expected)
-        .map_err(recovery_failure)?;
+    crate::mutation::filesystem::verify_target(&payload, &private_expected)
+        .map_err(|error| recovery_failure_at("verify recovery payload", error))?;
     let relative_ref = format!("recovery/{action_index:08}/payload");
     let metadata = RecoveryMetadataV1 {
         schema_version: 1,
@@ -77,9 +79,9 @@ pub fn preserve(
         GripError::Internal(format!("could not encode recovery metadata: {error}"))
     })?;
     crate::operation::publication::publish_new_component(&directory, "metadata.json", &bytes)
-        .map_err(recovery_failure)?;
-    let reread = crate::push::filesystem::read_private_file(&directory.join("metadata.json"))
-        .map_err(recovery_failure)?;
+        .map_err(|error| recovery_failure_at("publish recovery metadata", error))?;
+    let reread = crate::mutation::filesystem::read_private_file(&directory.join("metadata.json"))
+        .map_err(|error| recovery_failure_at("read recovery metadata", error))?;
     let decoded: RecoveryMetadataV1 = serde_json::from_slice(&reread)
         .map_err(|error| GripError::CorruptState(format!("invalid recovery metadata: {error}")))?;
     if decoded != metadata {
@@ -90,16 +92,16 @@ pub fn preserve(
     Ok(RecoveryEntry { relative_ref })
 }
 
-fn recovery_failure(error: GripError) -> GripError {
+fn recovery_failure_at(phase: &str, error: GripError) -> GripError {
     if matches!(error, GripError::CorruptState(_)) {
         error
     } else {
-        GripError::push_side_effect(
+        GripError::mutation_side_effect(
             "recovery_failure",
             false,
             "not_attempted",
             false,
-            error.to_string(),
+            format!("{phase}: {error}"),
         )
     }
 }
