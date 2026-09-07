@@ -145,9 +145,14 @@ impl ValidatePayload for OperationPlanPayloadV1 {
         }
         if self.plan.get("plan_id").and_then(serde_json::Value::as_str)
             != Some(self.plan_id.as_str())
+            || self
+                .plan
+                .get("direction")
+                .and_then(serde_json::Value::as_str)
+                != Some(self.operation.as_str())
         {
             return Err(corrupt(
-                "operation plan identity does not match its payload",
+                "operation plan identity or direction does not match its payload",
             ));
         }
         let actions = self
@@ -278,7 +283,7 @@ fn validate_common(
         || !operation_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        || operation.is_some_and(|value| value != "push")
+        || operation.is_some_and(|value| !matches!(value, "push" | "pull"))
         || !is_digest(plan_id)
     {
         return Err(corrupt("operation record identity is invalid"));
@@ -414,7 +419,7 @@ mod tests {
             operation_id: "operation-1".into(),
             operation: "push".into(),
             plan_id: plan_id.clone(),
-            plan: serde_json::json!({"plan_id":plan_id,"actions":[{"index":1}]}),
+            plan: serde_json::json!({"direction":"push","plan_id":plan_id,"actions":[{"index":1}]}),
         };
         assert!(OperationPlanEnvelopeV1::new(payload).is_err());
     }
@@ -442,7 +447,7 @@ mod tests {
             operation_id: "operation-1".into(),
             operation: "push".into(),
             plan_id: plan_id.clone(),
-            plan: serde_json::json!({"plan_id":plan_id,"actions":[{"index":0}]}),
+            plan: serde_json::json!({"direction":"push","plan_id":plan_id,"actions":[{"index":0}]}),
         })
         .unwrap();
         let action = ActionCheckpointEnvelopeV1::new(ActionCheckpointPayloadV1 {

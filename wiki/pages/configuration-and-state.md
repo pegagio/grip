@@ -1,8 +1,8 @@
 ---
 title: Configuration and state
 type: component
-sources: [S001, S004, S005, S007, S008]
-updated: 2026-09-06
+sources: [S001, S004, S005, S007, S008, S009]
+updated: 2026-09-07
 ---
 
 # Configuration and state
@@ -22,6 +22,8 @@ Baseline records contain fingerprints and accepted supported metadata, not histo
 Feature 004 publishes integrity-checked State Envelope V2 generations atomically at `<GRIP_HOME>/state/state.json` and retains exact prior bytes as immutable recovery evidence. The state directory must be a current-user-owned, non-symlink directory with exact owner-only mode. State V1 remains readable as an empty-baseline predecessor, while corrupt, unsupported, or stale evidence produces stable non-success results rather than guessed recovery. (S004)
 
 Feature 005 adds partitioned Operation Record V1 under `state/operations/<operation-id>/`: immutable plan intent, a bounded operation summary, one bounded checkpoint per started action, and private recovery payloads. These records are evidence rather than accepted synchronization state. A later push may proceed from a fresh complete plan after an interrupted record, but it never silently resumes, repairs, rolls back, or deletes that retained history. (S008)
+
+Feature 006 extends the closed Operation Record V1 operation identity from `push` to `push | pull` without adding a second history tree or a new state schema. Direction-prefixed opaque operation IDs and direction-bound plans distinguish otherwise symmetric transfers, while interrupted and failed pull records remain immutable evidence and do not alone block a later independently planned operation. (S009)
 
 ## Related pages
 

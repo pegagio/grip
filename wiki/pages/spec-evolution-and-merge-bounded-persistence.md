@@ -1,8 +1,8 @@
 ---
 title: Spec evolution and merge-bounded persistence
 type: decision
-sources: [S002, S005, S006, S008]
-updated: 2026-09-05
+sources: [S002, S005, S006, S008, S009]
+updated: 2026-09-07
 ---
 
 # Spec evolution and merge-bounded persistence
@@ -20,6 +20,8 @@ Feature 002 demonstrates the pre-merge feedback loop: successive convergence pas
 Feature 003 likewise kept specification, plan, tasks, contracts, implementation, tests, and performance evidence in one reviewable pre-merge boundary. Its complete-delta debrief returned `PROCEED` with no findings, after which the roadmap transitioned the feature from `in-progress` to `verified`. (S006)
 
 Feature 005 required a convergence phase after its first implementation pass. The appended work removed planner filesystem reads, made operation and recovery access descriptor-relative, preserved phase-specific side-effect truth, routed post-journal failures through terminal evidence, completed result parity, and expanded adversarial tests before the complete-delta debrief returned `PROCEED` with no findings. (S008)
+
+Feature 006 likewise flowed implementation discoveries back before merge: direction-neutral failure and lifecycle evidence, source-side stale-evidence checks, operation-record retry behavior, renderer parity, and representative performance results were reconciled across specification artifacts, code, tests, and documentation. Its complete-delta debrief returned `PROCEED` with no findings and recommended roadmap verification. (S009)
 
 ## Related pages
 

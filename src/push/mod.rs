@@ -1,27 +1,8 @@
-//! Safe source-to-destination push planning and execution.
+//! Safe source-to-destination adapter over the shared mutation pipeline.
 
-pub mod execution;
-pub mod filesystem;
-pub mod model;
-pub mod plan;
-pub mod recovery;
-
-/// Test-only fault boundaries in the mutating push pipeline.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FaultPhase {
-    AfterMutationLock,
-    BeforeActionRevalidation(usize),
-    BeforeRecovery(usize),
-    AfterRecovery(usize),
-    BeforeStaging(usize),
-    AfterStaging(usize),
-    BeforePayloadPublication(usize),
-    AfterPayloadPublication(usize),
-    BeforeDestinationVerification(usize),
-    BeforeFinalObservation,
-    BeforeFinalCoordination,
-    BeforeBaselinePublication,
-    AfterBaselinePublication,
-    BeforeTerminalSummary,
-}
+pub use crate::mutation::FaultPhase;
+pub use crate::mutation::execution;
+pub use crate::mutation::filesystem;
+pub use crate::mutation::model;
+pub use crate::mutation::plan;
+pub use crate::mutation::recovery;

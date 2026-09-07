@@ -5,9 +5,11 @@ pub mod discovery;
 pub mod error;
 pub mod home;
 pub mod mapping;
+pub mod mutation;
 pub mod observation;
 pub mod operation;
 pub mod path_policy;
+pub mod pull;
 pub mod push;
 pub mod registry;
 pub mod result;
@@ -130,6 +132,10 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
             Ok(outcome) => outcome,
             Err(error) => CommandOutcome::failure(&error),
         },
+        cli::Command::Pull(args) => match execute_pull(args) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
         cli::Command::Baseline(args) => match &args.command {
             cli::BaselineCommand::Accept(arguments) => match execute_baseline_accept(arguments) {
                 Ok(outcome) => outcome,
@@ -179,6 +185,44 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     }
     let applied = push::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::push_applied(&applied))
+}
+
+fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation("pull"))?;
+    let state = state::publication::load(&home)?;
+    let path_space = if args.destination {
+        observation::model::PathSpace::Destination
+    } else {
+        observation::model::PathSpace::Source
+    };
+    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        selector,
+        path_space,
+        "pull",
+    )?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("pull"))?;
+    state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("pull"))?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .collect();
+    let scope = classification_scope(&selection, selector, path_space);
+    let plan = mutation::plan::build_for(mutation::model::MutationDirection::Pull, scope, records)?;
+    if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
+        return Ok(CommandOutcome::mutation_plan(
+            &plan,
+            if args.dry_run { "dry_run" } else { "execute" },
+            state.accepted.generation,
+        ));
+    }
+    let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::mutation_applied(&applied))
 }
 
 fn inspection_outcome(operation: &str, args: &cli::InspectionArgs) -> CommandOutcome {

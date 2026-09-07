@@ -1,8 +1,8 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001, S004, S007, S008]
-updated: 2026-09-06
+sources: [S001, S004, S007, S008, S009]
+updated: 2026-09-07
 ---
 
 # Synchronization and conflicts
@@ -13,7 +13,9 @@ Feature 004 implements this model as deterministic typed records shared by `stat
 
 `push` propagates eligible source-side changes, `pull` propagates eligible destination-side changes, and `sync` plans all unambiguous one-sided changes in both directions. An accepted operation updates the baseline only after its changes have been applied and verified. (S001)
 
-Feature 005 implements only the `push` portion: source additions and source-only changes become actions, synchronized and other non-action classifications remain reported, and any blocker prevents all mutation. Pull, bidirectional planning, conflict winners, deletion, retirement, and automatic recovery remain later-feature work. (S008)
+Feature 005 established only the `push` portion: source additions and source-only changes become actions, synchronized and other non-action classifications remain reported, and any blocker prevents all mutation. It deliberately deferred pull, bidirectional planning, conflict winners, deletion, retirement, and automatic recovery to their owning features. (S008)
+
+Feature 006 implements `pull` for established accepted entries classified as destination-only changes. It reports unmanaged destination-only content without importing it, blocks conflicts and unsafe or incomplete evidence before mutation, and leaves source-side changes, bidirectional planning, conflict winners, deletion, and retirement to their owning workflows. (S004) (S009)
 
 A divergent change on both sides is a whole-entry conflict, including cases where content changed on one side and supported metadata changed on the other. The plan of record requires an explicit source-wins or destination-wins decision; it does not combine the two current states. Grip must re-inspect if either side changes between conflict reporting and resolution. (S001)
 

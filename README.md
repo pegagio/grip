@@ -73,13 +73,31 @@ Machine-readable results include the complete selected entries, dependency-order
 
 Removed mappings and newly ignored accepted entries remain visible as pending retirement; acceptance cannot silently discard them. Payload copying, conflict resolution, deletion, and retirement are outside these commands.
 
+## Pull safely to sources
+
+`pull` copies an eligible complete destination file state back to its established managed source. Like `push`, it mutates by default; use `-n` or `--dry-run` for a lock-free, side-effect-free preview.
+
+```text
+grip pull [-n|--dry-run] [--destination] [--] [PATH]
+```
+
+Selection follows the same contract as inspection and push: source space by default, destination space with `--destination`, and `--` before a dash-prefixed path. The option changes selection only; pull direction always remains destination to source. Human and JSON results describe the same ordered plan, and shared mutation JSON includes `operation: pull` and `direction: pull`.
+
+Only an established accepted entry classified as a destination-only change is actionable. Synchronized entries are no-ops. Conflicts, incomplete inspection, unsafe ancestry, unsupported nodes, stale evidence, and missing source content block mutation. Destination-only content outside accepted managed membership is reported item by item as unmanaged and non-actionable; it is never imported, although an unsafe collision at a managed path remains a blocker.
+
+An actionful pull acquires the same short-lived per-user mutation lock as push, revalidates the complete plan after locking, and revalidates each action immediately before publication. Destination bytes and supported mode are staged beside the source, the prior source is preserved and verified in the operation-local recovery area, and replacement uses the strongest supported atomic rename. Pull never creates a missing source or source parent.
+
+After all actions verify, Grip performs a final complete observation and publishes one accepted generation containing only the verified actioned identities while preserving no-action, out-of-scope, and pending-retirement records. A no-op publishes nothing. On failure, completed replacements remain in place, later actions remain unattempted, recovery evidence is retained, and the prior baseline remains authoritative unless a state-publication result explicitly reports that a new generation became visible.
+
+Pull does not propagate source changes, resolve conflicts, delete or retire entries, import unmanaged destination content, inspect or clean recovery data, repair corrupt state, resume interrupted operations, or roll back automatically.
+
 ## Registry publication safety
 
 `<GRIP_HOME>/config.toml` is the accepted v1 registry. It must be a current-user-owned, non-symlink regular file with group and other write bits unset; add and remove also require owner write permission. Deterministic rewrites preserve its exact permission mode, though presentation-only TOML whitespace, comments, and ordering may be normalized.
 
 Writers coordinate through the stable owner-only `<GRIP_HOME>/.registry.lock`. Before replacement, Grip verifies that the accepted bytes and mapping paths have not changed, then retains the exact prior registry under `<GRIP_HOME>/state/recovery/registry/sha256-<digest>/config.toml`. Recovery generations are immutable and content-addressed. Grip stages and verifies the complete candidate beside `config.toml`, atomically renames it, and syncs the containing directory. Lock, staging, and recovery artifacts never contain accepted synchronization state, and no mapping command mutates `<GRIP_HOME>/state/state.json`.
 
-Grip is offline and does not synchronize files, delete files, use Git, or contact remote services. Mapping declarations establish intent for later synchronization features.
+Grip is offline and does not delete files, invoke Git, elevate privileges, or contact remote services. Synchronization remains limited to explicit mapping ownership and the supported `push` and `pull` direction contracts.
 
 ## Install and build
 
@@ -138,4 +156,4 @@ grip --output json version
 | 13 | `state_contention` | Another Grip writer holds the global mutation lock |
 | 20 | `operational_failure` | I/O, output, or another runtime failure |
 
-Registry-publication contention is reported as an operational failure. `push` and explicit `baseline accept` can publish synchronization state; status, check, diff, and dry-run push are read-only.
+Registry-publication contention is reported as an operational failure. `push`, `pull`, and explicit `baseline accept` can publish synchronization state; status, check, diff, and dry-run push or pull are read-only.

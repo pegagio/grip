@@ -1,6 +1,7 @@
-//! Narrow filesystem mutation primitives for push execution.
+//! Narrow direction-neutral filesystem mutation primitives.
 
 use crate::error::GripError;
+use crate::mutation::model::MutationDirection;
 use crate::observation::model::SupportedState;
 use rustix::fs::{
     AtFlags, Mode, OFlags, RenameFlags, fsync, mkdirat, openat, renameat_with, unlinkat,
@@ -69,7 +70,7 @@ fn create_directory_with_collision(
         return Err(if collision_is_corrupt {
             GripError::CorruptState("recovery action directory already exists".into())
         } else {
-            stale("destination appeared before directory creation")
+            stale("mutation target appeared before directory creation")
         });
     }
     mkdirat(
@@ -81,29 +82,29 @@ fn create_directory_with_collision(
         if collision_is_corrupt && error == rustix::io::Errno::EXIST {
             GripError::CorruptState("recovery action directory collision".into())
         } else {
-            GripError::from_io("could not create destination directory", error.into())
+            GripError::from_io("could not create mutation target directory", error.into())
         }
     })?;
     let created = parent.open_child_directory(&name).map_err(|error| {
-        GripError::push_side_effect(
+        GripError::mutation_side_effect(
             "verification_failure",
             true,
             "failed",
             false,
-            format!("could not verify destination directory: {error}"),
+            format!("could not verify mutation target directory: {error}"),
         )
     })?;
     if created.root_metadata().st_mode & 0o777 != 0o700 {
-        return Err(GripError::push_side_effect(
+        return Err(GripError::mutation_side_effect(
             "verification_failure",
             true,
             "failed",
             false,
-            "created destination directory is not private",
+            "created mutation target directory is not private",
         ));
     }
     sync_open_directory(&parent).map_err(|error| {
-        GripError::push_side_effect(
+        GripError::mutation_side_effect(
             "publication_failure",
             true,
             "verified",
@@ -148,7 +149,17 @@ pub fn stage_file(
     destination: &Path,
     expected: &SupportedState,
 ) -> Result<StagedFile, GripError> {
-    stage_file_with_mode(source, destination, expected, None)
+    stage_file_for(MutationDirection::Push, source, destination, expected)
+}
+
+/// Stream an operation origin into an exclusive verified target sibling.
+pub fn stage_file_for(
+    direction: MutationDirection,
+    origin: &Path,
+    target: &Path,
+    expected: &SupportedState,
+) -> Result<StagedFile, GripError> {
+    stage_file_with_mode(direction, origin, target, expected, None)
 }
 
 /// Stage a private recovery copy while validating the source against its captured evidence.
@@ -157,10 +168,17 @@ pub(crate) fn stage_private_file(
     destination: &Path,
     expected: &SupportedState,
 ) -> Result<StagedFile, GripError> {
-    stage_file_with_mode(source, destination, expected, Some(0o600))
+    stage_file_with_mode(
+        MutationDirection::Push,
+        source,
+        destination,
+        expected,
+        Some(0o600),
+    )
 }
 
 fn stage_file_with_mode(
+    direction: MutationDirection,
     source: &Path,
     destination: &Path,
     expected: &SupportedState,
@@ -174,11 +192,11 @@ fn stage_file_with_mode(
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
         Mode::empty(),
     )
-    .map_err(|error| GripError::from_io("could not open push source safely", error.into()))?;
+    .map_err(|error| GripError::from_io("could not open mutation origin safely", error.into()))?;
     let mut source_file = File::from(source_fd);
     let source_before = source_file
         .metadata()
-        .map_err(|error| GripError::from_io("could not inspect push source", error))?;
+        .map_err(|error| GripError::from_io("could not inspect mutation origin", error))?;
     validate_regular(&source_before)?;
     let name = format!(
         ".grip-stage-{}-{}",
@@ -196,13 +214,11 @@ fn stage_file_with_mode(
         OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::CREATE | OFlags::EXCL,
         Mode::from_raw_mode(0o600),
     )
-    .map_err(|error| {
-        GripError::from_io("could not create destination staging file", error.into())
-    })?;
+    .map_err(|error| GripError::from_io("could not create target staging file", error.into()))?;
     let file = File::from(descriptor);
     let metadata = file
         .metadata()
-        .map_err(|error| GripError::from_io("could not inspect destination staging file", error))?;
+        .map_err(|error| GripError::from_io("could not inspect target staging file", error))?;
     let mut staged = StagedFile {
         path,
         parent,
@@ -220,19 +236,20 @@ fn stage_file_with_mode(
         loop {
             let read = source_file
                 .read(&mut buffer)
-                .map_err(|error| GripError::from_io("could not read push source", error))?;
+                .map_err(|error| GripError::from_io("could not read mutation origin", error))?;
             if read == 0 {
                 break;
             }
-            staged.file.write_all(&buffer[..read]).map_err(|error| {
-                GripError::from_io("could not write destination staging", error)
-            })?;
+            staged
+                .file
+                .write_all(&buffer[..read])
+                .map_err(|error| GripError::from_io("could not write target staging", error))?;
             digest.update(&buffer[..read]);
             length += read as u64;
         }
         let source_after = source_file
             .metadata()
-            .map_err(|error| GripError::from_io("could not revalidate push source", error))?;
+            .map_err(|error| GripError::from_io("could not revalidate mutation origin", error))?;
         if source_before.dev() != source_after.dev()
             || source_before.ino() != source_after.ino()
             || source_before.mode() != source_after.mode()
@@ -240,14 +257,20 @@ fn stage_file_with_mode(
             || source_before.mtime() != source_after.mtime()
             || source_before.mtime_nsec() != source_after.mtime_nsec()
         {
-            return Err(stale("source changed while staging push content"));
+            return Err(stale_for(
+                direction,
+                "origin changed while staging mutation content",
+            ));
         }
         let actual_digest = format!("{:x}", digest.finalize());
         let expected_content = expected.content.as_ref().ok_or_else(|| {
             GripError::Internal("planned file action has no content evidence".into())
         })?;
         if length != expected_content.length || actual_digest != expected_content.digest {
-            return Err(stale("source content differs from the planned evidence"));
+            return Err(stale_for(
+                direction,
+                "origin content differs from the planned evidence",
+            ));
         }
         let mode = target_mode.unwrap_or(
             u32::from_str_radix(
@@ -262,20 +285,20 @@ fn stage_file_with_mode(
             .file
             .set_permissions(fs::Permissions::from_mode(mode))
             .and_then(|_| staged.file.sync_all())
-            .map_err(|error| GripError::from_io("could not prepare destination staging", error))?;
+            .map_err(|error| GripError::from_io("could not prepare target staging", error))?;
         staged
             .file
             .seek(SeekFrom::Start(0))
-            .map_err(|error| GripError::from_io("could not rewind destination staging", error))?;
+            .map_err(|error| GripError::from_io("could not rewind target staging", error))?;
         let mut staged_digest = Sha256::new();
         let copied = std::io::copy(
             &mut staged.file,
             &mut staged_digest_writer(&mut staged_digest),
         )
-        .map_err(|error| GripError::from_io("could not verify destination staging", error))?;
+        .map_err(|error| GripError::from_io("could not verify target staging", error))?;
         if copied != length || format!("{:x}", staged_digest.finalize()) != actual_digest {
             return Err(GripError::CorruptState(
-                "destination staging verification failed".into(),
+                "target staging verification failed".into(),
             ));
         }
         verify_staged_identity(&staged)
@@ -309,7 +332,7 @@ pub fn publish_addition(staged: &mut StagedFile, destination: &Path) -> Result<(
         RenameFlags::NOREPLACE,
     )
     .map_err(|error| {
-        GripError::push_side_effect(
+        GripError::mutation_side_effect(
             "publication_failure",
             false,
             "not_attempted",
@@ -319,7 +342,7 @@ pub fn publish_addition(staged: &mut StagedFile, destination: &Path) -> Result<(
     })?;
     staged.published = true;
     sync_open_directory(&staged.parent).map_err(|error| {
-        GripError::push_side_effect(
+        GripError::mutation_side_effect(
             "publication_failure",
             true,
             "not_attempted",
@@ -329,7 +352,7 @@ pub fn publish_addition(staged: &mut StagedFile, destination: &Path) -> Result<(
     })
 }
 
-/// Atomically publish a verified staging file over an expected destination.
+/// Atomically publish a verified staging file over an expected mutation target.
 pub fn publish_replacement(staged: &mut StagedFile, destination: &Path) -> Result<(), GripError> {
     ensure_destination_binding(staged, destination)?;
     verify_staged_identity(staged)?;
@@ -341,17 +364,17 @@ pub fn publish_replacement(staged: &mut StagedFile, destination: &Path) -> Resul
         RenameFlags::empty(),
     )
     .map_err(|error| {
-        GripError::push_side_effect(
+        GripError::mutation_side_effect(
             "publication_failure",
             false,
             "not_attempted",
             false,
-            format!("could not publish destination replacement: {error}"),
+            format!("could not publish target replacement: {error}"),
         )
     })?;
     staged.published = true;
     sync_open_directory(&staged.parent).map_err(|error| {
-        GripError::push_side_effect(
+        GripError::mutation_side_effect(
             "publication_failure",
             true,
             "not_attempted",
@@ -361,32 +384,37 @@ pub fn publish_replacement(staged: &mut StagedFile, destination: &Path) -> Resul
     })
 }
 
-/// Verify the final supported destination state.
-pub fn verify_destination(destination: &Path, expected: &SupportedState) -> Result<(), GripError> {
-    let (parent, name) = open_parent(destination)?;
+/// Verify the final supported mutation target state.
+pub fn verify_target(target: &Path, expected: &SupportedState) -> Result<(), GripError> {
+    let (parent, name) = open_parent(target)?;
     let (actual, _) =
         crate::observation::fingerprint::inspect_open_child(&parent, &name, expected.node_kind)?;
     if &actual != expected {
-        return Err(GripError::push_side_effect(
+        return Err(GripError::mutation_side_effect(
             "verification_failure",
             true,
             "failed",
             true,
-            "published destination failed supported-state verification",
+            "published mutation target failed supported-state verification",
         ));
     }
     Ok(())
+}
+
+/// Compatibility wrapper for the Feature 005 push API.
+pub fn verify_destination(destination: &Path, expected: &SupportedState) -> Result<(), GripError> {
+    verify_target(destination, expected)
 }
 
 fn verify_staged_identity(staged: &StagedFile) -> Result<(), GripError> {
     let descriptor = staged
         .file
         .metadata()
-        .map_err(|error| GripError::from_io("could not inspect destination staging", error))?;
+        .map_err(|error| GripError::from_io("could not inspect target staging", error))?;
     let path = staged
         .parent
         .metadata(&staged.name)
-        .map_err(|error| GripError::from_io("could not inspect destination staging path", error))?;
+        .map_err(|error| GripError::from_io("could not inspect target staging path", error))?;
     if descriptor.dev() != staged.device
         || descriptor.ino() != staged.inode
         || path.stat.st_dev as u64 != staged.device
@@ -394,7 +422,7 @@ fn verify_staged_identity(staged: &StagedFile) -> Result<(), GripError> {
         || path.file_type() != rustix::fs::FileType::RegularFile
     {
         return Err(GripError::CorruptState(
-            "destination staging path no longer identifies the attempt-owned file".into(),
+            "target staging path no longer identifies the attempt-owned file".into(),
         ));
     }
     Ok(())
@@ -407,7 +435,7 @@ fn validate_regular(metadata: &fs::Metadata) -> Result<(), GripError> {
         || (metadata.len() > 0 && metadata.blocks().saturating_mul(512) < metadata.len())
     {
         return Err(GripError::Internal(
-            "push source is no longer an ordinary supported file".into(),
+            "mutation origin is no longer an ordinary supported file".into(),
         ));
     }
     Ok(())
@@ -416,8 +444,9 @@ fn validate_regular(metadata: &fs::Metadata) -> Result<(), GripError> {
 fn sync_open_directory(
     directory: &crate::discovery::filesystem::Directory,
 ) -> Result<(), GripError> {
-    fsync(directory.as_fd())
-        .map_err(|error| GripError::from_io("could not sync destination directory", error.into()))
+    fsync(directory.as_fd()).map_err(|error| {
+        GripError::from_io("could not sync mutation target directory", error.into())
+    })
 }
 
 fn ensure_destination_binding(staged: &StagedFile, destination: &Path) -> Result<(), GripError> {
@@ -438,13 +467,13 @@ fn open_parent(
 ) -> Result<(crate::discovery::filesystem::Directory, Vec<u8>), GripError> {
     if !path.is_absolute() {
         return Err(GripError::Internal(
-            "push filesystem path must be absolute".into(),
+            "mutation filesystem path must be absolute".into(),
         ));
     }
     let mut components = path.components().peekable();
     if components.next() != Some(Component::RootDir) {
         return Err(GripError::Internal(
-            "push filesystem path must start at root".into(),
+            "mutation filesystem path must start at root".into(),
         ));
     }
     let mut directory = crate::discovery::filesystem::Directory::open(Path::new("/"))
@@ -453,7 +482,7 @@ fn open_parent(
     while let Some(component) = components.next() {
         let Component::Normal(name) = component else {
             return Err(GripError::Internal(
-                "push filesystem path contains unsafe components".into(),
+                "mutation filesystem path contains unsafe components".into(),
             ));
         };
         if components.peek().is_none() {
@@ -462,15 +491,24 @@ fn open_parent(
             directory = directory
                 .open_child_directory(name.as_bytes())
                 .map_err(|error| {
-                    GripError::from_io("could not open destination ancestry safely", error)
+                    GripError::from_io("could not open mutation path ancestry safely", error)
                 })?;
         }
     }
-    let name = final_name
-        .ok_or_else(|| GripError::Internal("push filesystem path has no final component".into()))?;
+    let name = final_name.ok_or_else(|| {
+        GripError::Internal("mutation filesystem path has no final component".into())
+    })?;
     Ok((directory, name))
 }
 
 fn stale(message: &str) -> GripError {
-    GripError::discovery_operational("push", "stale_push_evidence", Vec::new(), message)
+    stale_for(MutationDirection::Push, message)
+}
+
+fn stale_for(direction: MutationDirection, message: &str) -> GripError {
+    let reason = match direction {
+        MutationDirection::Push => "stale_push_evidence",
+        MutationDirection::Pull => "stale_pull_evidence",
+    };
+    GripError::discovery_operational(direction.operation(), reason, Vec::new(), message)
 }

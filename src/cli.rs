@@ -37,6 +37,8 @@ pub enum Command {
     Diff(InspectionArgs),
     /// Copy eligible source state to mapped destinations.
     Push(PushArgs),
+    /// Copy eligible managed destination state back to sources.
+    Pull(PullArgs),
     Baseline(BaselineArgs),
 }
 
@@ -47,6 +49,20 @@ pub struct PushArgs {
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
     /// Interpret PATH in destination space without reversing push direction.
+    #[arg(long)]
+    pub destination: bool,
+    /// Select one mapping, entry, or component-boundary subtree.
+    #[arg(value_name = "PATH")]
+    pub path: Option<OsString>,
+}
+
+/// Arguments shared by pull preview and execution.
+#[derive(Debug, clap::Args)]
+pub struct PullArgs {
+    /// Preview the complete plan without locking or mutation.
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    /// Interpret PATH in destination space without changing pull direction.
     #[arg(long)]
     pub destination: bool,
     /// Select one mapping, entry, or component-boundary subtree.

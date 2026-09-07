@@ -98,7 +98,11 @@ impl CommandOutcome {
                 .details
                 .insert("reason".into(), "state_contention".into());
         }
-        if let GripError::MutationContention { owner } = error {
+        if let GripError::MutationContention {
+            requested_operation,
+            owner,
+        } = error
+        {
             outcome.details.insert(
                 "operation".into(),
                 owner
@@ -110,6 +114,15 @@ impl CommandOutcome {
             outcome
                 .details
                 .insert("reason".into(), "state_contention".into());
+            outcome.details.insert(
+                "requested_operation".into(),
+                requested_operation.clone().into(),
+            );
+            if matches!(requested_operation.as_str(), "push" | "pull") {
+                outcome
+                    .details
+                    .insert("direction".into(), requested_operation.clone().into());
+            }
             if let Some(owner) = owner {
                 outcome.details.insert(
                     "owner".into(),
@@ -117,13 +130,17 @@ impl CommandOutcome {
                 );
             }
         }
-        if let GripError::PushFailed(failure) = error {
+        if let GripError::PushFailed(failure) | GripError::MutationFailed(failure) = error {
             let plan = &failure.plan;
+            let operation = plan.direction.operation();
             outcome.message = format!(
-                "Push failed after {} of {} actions",
-                plan.counts.completed, plan.counts.actionable
+                "{} failed after {} of {} actions",
+                if operation == "push" { "Push" } else { "Pull" },
+                plan.counts.completed,
+                plan.counts.actionable
             );
-            outcome.details.insert("operation".into(), "push".into());
+            outcome.details.insert("operation".into(), operation.into());
+            outcome.details.insert("direction".into(), operation.into());
             outcome.details.insert("mode".into(), "execute".into());
             outcome
                 .details
@@ -145,7 +162,18 @@ impl CommandOutcome {
                 .insert("blockers".into(), json(&plan.blockers));
             outcome.details.insert(
                 "failure".into(),
-                serde_json::json!({"reason":failure.reason,"paths":failure.paths}),
+                serde_json::json!({
+                    "reason": failure.reason,
+                    "phase": failure.phase,
+                    "category": failure.category.code(),
+                    "paths": failure.paths,
+                    "action_index": failure.failed_action_index,
+                    "expected_source": failure.expected_source,
+                    "expected_destination": failure.expected_destination,
+                    "observed_source": failure.observed_source,
+                    "observed_destination": failure.observed_destination,
+                    "guidance": "inspect status and operation recovery evidence before retrying"
+                }),
             );
             outcome.details.insert(
                 "operation_record".into(),
@@ -273,13 +301,24 @@ impl CommandOutcome {
         mode: &str,
         generation: Option<u64>,
     ) -> Self {
+        Self::mutation_plan(plan, mode, generation)
+    }
+
+    /// Build the stable result for a complete mutation plan.
+    pub fn mutation_plan(
+        plan: &crate::mutation::model::MutationPlan,
+        mode: &str,
+        generation: Option<u64>,
+    ) -> Self {
+        let operation = plan.direction.operation();
+        let title = if operation == "push" { "Push" } else { "Pull" };
         let (category, completion, result, message) = if !plan.blockers.is_empty() {
             (
                 ResultCategory::InvalidConfiguration,
                 "blocked",
                 "blocked",
                 format!(
-                    "Push blocked: {} selected; {} action(s); {} blocker(s)",
+                    "{title} blocked: {} selected; {} action(s); {} blocker(s)",
                     plan.counts.selected, plan.counts.actionable, plan.counts.blockers
                 ),
             )
@@ -289,7 +328,7 @@ impl CommandOutcome {
                 "complete",
                 "no_op",
                 format!(
-                    "Push complete: {} selected; no actions",
+                    "{title} complete: {} selected; no actions",
                     plan.counts.selected
                 ),
             )
@@ -299,13 +338,14 @@ impl CommandOutcome {
                 "complete",
                 "planned",
                 format!(
-                    "Push preview complete: {} selected; {} action(s); 0 blockers",
+                    "{title} preview complete: {} selected; {} action(s); 0 blockers",
                     plan.counts.selected, plan.counts.actionable
                 ),
             )
         };
         let mut details = Map::new();
-        details.insert("operation".into(), "push".into());
+        details.insert("operation".into(), operation.into());
+        details.insert("direction".into(), operation.into());
         details.insert("mode".into(), mode.into());
         details.insert("completion".into(), completion.into());
         details.insert("result".into(), result.into());
@@ -336,9 +376,17 @@ impl CommandOutcome {
 
     /// Build the stable successful result for an accepted push execution.
     pub fn push_applied(success: &crate::push::execution::ExecutionSuccess) -> Self {
+        Self::mutation_applied(success)
+    }
+
+    /// Build the stable successful result for an accepted mutation execution.
+    pub fn mutation_applied(success: &crate::mutation::execution::ExecutionSuccess) -> Self {
         let plan = &success.plan;
+        let operation = plan.direction.operation();
+        let title = if operation == "push" { "Push" } else { "Pull" };
         let mut details = Map::new();
-        details.insert("operation".into(), "push".into());
+        details.insert("operation".into(), operation.into());
+        details.insert("direction".into(), operation.into());
         details.insert("mode".into(), "execute".into());
         details.insert("completion".into(), "complete".into());
         details.insert("result".into(), "applied".into());
@@ -366,7 +414,7 @@ impl CommandOutcome {
         Self {
             category: ResultCategory::Success,
             message: format!(
-                "Push applied: {} action(s); accepted generation {}",
+                "{title} applied: {} action(s); accepted generation {}",
                 plan.counts.completed, success.generation
             ),
             details,
@@ -464,7 +512,10 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                     render_human_classification_record(record, writer)?;
                 }
             }
-            if outcome.details.get("operation").and_then(Value::as_str) == Some("push") {
+            if matches!(
+                outcome.details.get("operation").and_then(Value::as_str),
+                Some("push" | "pull")
+            ) {
                 if let Some(actions) = outcome.details.get("actions").and_then(Value::as_array) {
                     for action in actions {
                         let status = action
@@ -525,6 +576,13 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                         } else {
                             String::new()
                         };
+                        let pull = outcome.details.get("direction").and_then(Value::as_str)
+                            == Some("pull");
+                        let (origin, target) = if pull {
+                            (Some(destination), source.unwrap_or(destination))
+                        } else {
+                            (source, destination)
+                        };
                         writeln!(
                             writer,
                             "{} {} {}{}{}{}{} recovery={}",
@@ -533,9 +591,9 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                                 .get("kind")
                                 .and_then(Value::as_str)
                                 .unwrap_or("action"),
-                            source.unwrap_or(destination),
-                            if source.is_some() { " -> " } else { "" },
-                            if source.is_some() { destination } else { "" },
+                            origin.unwrap_or(target),
+                            if origin.is_some() { " -> " } else { "" },
+                            if origin.is_some() { target } else { "" },
                             failure,
                             evidence,
                             milestones
