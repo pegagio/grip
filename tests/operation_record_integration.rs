@@ -55,6 +55,30 @@ fn operation_record_v1_accepts_all_mutation_operations_but_rejects_unknown_opera
 }
 
 #[test]
+fn feature_eight_nonterminal_records_are_immutable_and_do_not_block_fresh_operations() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let grip_home = support::minimal_home(root.path());
+    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    for operation in ["delete", "retire", "recovery_restore", "recovery_remove"] {
+        let plan_id = "a".repeat(64);
+        let plan = serde_json::json!({
+            "operation": operation,
+            "plan_id": plan_id,
+            "actions": [{"index":0}]
+        });
+        let first =
+            grip::operation::publication::initialize_typed(&home, operation, &plan_id, &plan, 1)
+                .unwrap();
+        let before = support::snapshot(first.directory());
+        let second =
+            grip::operation::publication::initialize_typed(&home, operation, &plan_id, &plan, 1)
+                .unwrap();
+        assert_ne!(first.operation_id(), second.operation_id());
+        assert_eq!(support::snapshot(first.directory()), before);
+    }
+}
+
+#[test]
 fn sync_operation_record_carries_operation_and_action_direction() {
     let (_root, home, registry, state, selection, plan) = support::sync_execution_fixture();
     let success =

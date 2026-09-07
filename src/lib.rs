@@ -1,6 +1,7 @@
 pub mod baseline;
 pub mod classification;
 pub mod cli;
+pub mod delete;
 pub mod discovery;
 pub mod error;
 pub mod home;
@@ -11,9 +12,11 @@ pub mod operation;
 pub mod path_policy;
 pub mod pull;
 pub mod push;
+pub mod recovery;
 pub mod registry;
 pub mod resolve;
 pub mod result;
+pub mod retire;
 pub mod state;
 pub mod sync;
 
@@ -146,12 +149,138 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
             Ok(outcome) => outcome,
             Err(error) => CommandOutcome::failure(&error),
         },
+        cli::Command::Delete(args) => match execute_delete(args) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
+        cli::Command::Retire(args) => match execute_retire(args) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
+        cli::Command::Recovery(args) => match execute_recovery(&args.command) {
+            Ok(outcome) => outcome,
+            Err(error) => CommandOutcome::failure(&error),
+        },
         cli::Command::Baseline(args) => match &args.command {
             cli::BaselineCommand::Accept(arguments) => match execute_baseline_accept(arguments) {
                 Ok(outcome) => outcome,
                 Err(error) => CommandOutcome::failure(&error),
             },
         },
+    }
+}
+
+fn execute_delete(args: &cli::DeleteArgs) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation("delete"))?;
+    let state = state::publication::load(&home)?;
+    let selector = std::path::Path::new(&args.path);
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        Some(selector),
+        observation::model::PathSpace::Source,
+        "delete",
+    )?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("delete"))?;
+    state::publication::revalidate(&home, &state)?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .collect();
+    let authority = if args.source {
+        delete::model::DeletionAuthority::Source
+    } else {
+        delete::model::DeletionAuthority::Destination
+    };
+    let plan = delete::plan::build(
+        authority,
+        classification_scope(
+            &selection,
+            Some(selector),
+            observation::model::PathSpace::Source,
+        ),
+        records,
+    )?;
+    if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
+        return Ok(CommandOutcome::deletion(
+            &plan,
+            if args.dry_run { "dry_run" } else { "execute" },
+            None,
+            unattempted_baseline(state.accepted.generation),
+        ));
+    }
+    let result = delete::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::deletion(
+        &result.plan,
+        &result.mode,
+        result.operation_record.as_deref(),
+        result.baseline,
+    ))
+}
+
+fn execute_retire(args: &cli::RetireArgs) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation("retire"))?;
+    let state = state::publication::load(&home)?;
+    let path_space = if args.destination {
+        observation::model::PathSpace::Destination
+    } else {
+        observation::model::PathSpace::Source
+    };
+    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        selector,
+        path_space,
+        "retire",
+    )?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("retire"))?;
+    state::publication::revalidate(&home, &state)?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .collect();
+    let plan = retire::plan::build(
+        classification_scope(&selection, selector, path_space),
+        args.force,
+        records,
+    )?;
+    if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
+        return Ok(CommandOutcome::retirement(
+            &plan,
+            if args.dry_run { "dry_run" } else { "execute" },
+            None,
+            unattempted_baseline(state.accepted.generation),
+        ));
+    }
+    let result = retire::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::retirement(
+        &result.plan,
+        &result.mode,
+        result.operation_record.as_deref(),
+        result.baseline,
+    ))
+}
+
+fn execute_recovery(command: &cli::RecoveryCommand) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    recovery::dispatch(&home, command)
+}
+
+fn unattempted_baseline(generation: Option<u64>) -> mutation::model::BaselineOutcome {
+    mutation::model::BaselineOutcome {
+        outcome: "not_attempted".into(),
+        prior_generation: generation,
+        published_generation: None,
+        authoritative_generation: generation,
+        publication_visible: false,
+        durability_confirmed: true,
     }
 }
 

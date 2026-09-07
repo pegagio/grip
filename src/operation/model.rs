@@ -166,6 +166,10 @@ impl ValidatePayload for OperationPlanPayloadV1 {
         if matches!(self.operation.as_str(), "push" | "pull")
             && direction != Some(self.operation.as_str())
             || matches!(self.operation.as_str(), "sync" | "resolve") && direction.is_some()
+            || matches!(
+                self.operation.as_str(),
+                "delete" | "retire" | "recovery_restore" | "recovery_remove"
+            ) && direction.is_some()
         {
             return Err(corrupt("operation plan direction is invalid"));
         }
@@ -186,7 +190,12 @@ impl ValidatePayload for OperationPlanPayloadV1 {
                     "operation plan actions must be dense and canonically ordered",
                 ));
             }
-            if embedded_operation.is_some() {
+            if embedded_operation.is_some()
+                && matches!(
+                    self.operation.as_str(),
+                    "push" | "pull" | "sync" | "resolve"
+                )
+            {
                 let action_direction = action.get("direction").and_then(serde_json::Value::as_str);
                 let direction_valid = match self.operation.as_str() {
                     "push" => action_direction == Some("push"),
@@ -317,7 +326,19 @@ fn validate_common(
         || !operation_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        || operation.is_some_and(|value| !matches!(value, "push" | "pull" | "sync" | "resolve"))
+        || operation.is_some_and(|value| {
+            !matches!(
+                value,
+                "push"
+                    | "pull"
+                    | "sync"
+                    | "resolve"
+                    | "delete"
+                    | "retire"
+                    | "recovery_restore"
+                    | "recovery_remove"
+            )
+        })
         || !is_digest(plan_id)
     {
         return Err(corrupt("operation record identity is invalid"));
@@ -473,6 +494,24 @@ mod tests {
             }),
         };
         assert!(OperationPlanEnvelopeV1::new(payload).is_err());
+    }
+
+    #[test]
+    fn validate_plan_accepts_each_feature_eight_operation() {
+        for operation in ["delete", "retire", "recovery_restore", "recovery_remove"] {
+            let plan_id = "a".repeat(64);
+            let payload = OperationPlanPayloadV1 {
+                operation_id: format!("{operation}-1"),
+                operation: operation.into(),
+                plan_id: plan_id.clone(),
+                plan: serde_json::json!({
+                    "operation": operation,
+                    "plan_id": plan_id,
+                    "actions": [{"index": 0}]
+                }),
+            };
+            assert!(OperationPlanEnvelopeV1::new(payload).is_ok(), "{operation}");
+        }
     }
 
     #[test]

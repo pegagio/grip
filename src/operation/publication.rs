@@ -100,10 +100,26 @@ impl OperationReceipt {
 
 /// Allocate and initialize a new partitioned record immediately before mutation.
 pub fn initialize(home: &GripHome, plan: &MutationPlan) -> Result<OperationReceipt, GripError> {
+    initialize_typed(
+        home,
+        plan.operation.as_str(),
+        &plan.plan_id,
+        plan,
+        plan.actions.len(),
+    )
+}
+
+/// Allocate and initialize a partitioned record for any validated typed plan.
+pub fn initialize_typed<T: serde::Serialize>(
+    home: &GripHome,
+    operation: &str,
+    plan_id: &str,
+    plan: &T,
+    action_count: usize,
+) -> Result<OperationReceipt, GripError> {
     let state = crate::state::publication::prepare_directory(home)?;
     let operations = state.join("operations");
     ensure_private_directory(&operations)?;
-    let operation = plan.operation.as_str();
     let (operation_id, directory) = allocate_directory(&operations, operation)?;
     ensure_private_directory(&directory.join("actions"))?;
     ensure_private_directory(&directory.join("recovery"))?;
@@ -111,9 +127,9 @@ pub fn initialize(home: &GripHome, plan: &MutationPlan) -> Result<OperationRecei
     let plan_payload = OperationPlanPayloadV1 {
         operation_id: operation_id.clone(),
         operation: operation.into(),
-        plan_id: plan.plan_id.clone(),
+        plan_id: plan_id.into(),
         plan: serde_json::to_value(plan).map_err(|error| {
-            GripError::Internal(format!("could not encode mutation plan: {error}"))
+            GripError::Internal(format!("could not encode operation plan: {error}"))
         })?,
     };
     let plan_envelope = OperationPlanEnvelopeV1::new(plan_payload)?;
@@ -122,7 +138,7 @@ pub fn initialize(home: &GripHome, plan: &MutationPlan) -> Result<OperationRecei
         operation_id: operation_id.clone(),
         operation: operation.into(),
         state: "executing".into(),
-        plan_id: plan.plan_id.clone(),
+        plan_id: plan_id.into(),
         plan_ref: "plan.json".into(),
         baseline: serde_json::json!({"outcome":"not_attempted"}),
         result_delivery: "not_attempted".into(),
@@ -134,7 +150,7 @@ pub fn initialize(home: &GripHome, plan: &MutationPlan) -> Result<OperationRecei
         operation_id,
         directory,
         summary,
-        action_count: plan.actions.len(),
+        action_count,
     })
 }
 
@@ -147,7 +163,7 @@ pub fn finalize_result_delivery(
     if operation_id.is_empty()
         || !operation_id
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     {
         return Err(GripError::CorruptState(
             "operation identifier is not an opaque safe component".into(),

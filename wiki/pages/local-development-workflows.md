@@ -1,7 +1,7 @@
 ---
 title: Local development workflows
 type: howto
-sources: [S004, S008, S009, S010]
+sources: [S004, S008, S009, S010, S011]
 updated: 2026-09-07
 ---
 
@@ -18,6 +18,8 @@ Feature 005's representative harness constructs 10,000 eligible mixed entries an
 Feature 006 extends that harness with 6,700 synchronized and 3,300 destination-only changed accepted entries. On the documented macOS/aarch64 release run, pull dry-run p95 was 997.840917 ms and execution-planning p95 was 834.299833 ms across 100 warm runs, satisfying the two-second requirement without new caching, indexing, parallelism, or coordination machinery. (S009)
 
 Feature 007's 10,000-entry mixed fixture covers synchronized, source-only, destination-only, converged, and conflicting classifications. Across 100 warm macOS ARM64 release runs, sync preview p95 was 1.146991333 seconds and pure planning p95 was 0.942500750 seconds; both passed the two-second threshold without new caching, services, broad payload locks, or unmeasured parallelism. (S010)
+
+Feature 008 adds documented 10,000-entry deletion-preview and recovery-inventory workloads. Across 100 warm release runs on the representative workstation, deletion preview p95 was 1.054690542 seconds and recovery inventory p95 was 1.412352292 seconds, satisfying the two-second threshold without a persistent cache, background service, broad payload lock, or automatic cleanup policy. (S011)
 
 ## Related pages
 

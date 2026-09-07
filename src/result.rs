@@ -24,6 +24,70 @@ impl CommandOutcome {
             details: Map::new(),
         }
     }
+
+    /// Build a stable result for deletion planning or execution.
+    pub fn deletion(
+        plan: &crate::delete::model::DeletionPlan,
+        mode: &str,
+        operation_record: Option<&str>,
+        baseline: crate::mutation::model::BaselineOutcome,
+    ) -> Self {
+        let (category, completion, result) = if !plan.blockers.is_empty() {
+            (ResultCategory::InvalidConfiguration, "blocked", "blocked")
+        } else if plan.actions.is_empty() {
+            (ResultCategory::Success, "complete", "no_op")
+        } else if mode == "dry_run" {
+            (ResultCategory::Success, "complete", "planned")
+        } else {
+            (ResultCategory::Success, "complete", "applied")
+        };
+        operation_outcome(
+            category,
+            format!(
+                "Delete {result}: {} action(s), {} blocker(s)",
+                plan.actions.len(),
+                plan.blockers.len()
+            ),
+            plan,
+            mode,
+            completion,
+            result,
+            operation_record,
+            &baseline,
+        )
+    }
+
+    /// Build a stable result for retirement planning or execution.
+    pub fn retirement(
+        plan: &crate::retire::model::RetirementPlan,
+        mode: &str,
+        operation_record: Option<&str>,
+        baseline: crate::mutation::model::BaselineOutcome,
+    ) -> Self {
+        let (category, completion, result) = if !plan.blockers.is_empty() {
+            (ResultCategory::InvalidConfiguration, "blocked", "blocked")
+        } else if plan.actions.is_empty() {
+            (ResultCategory::Success, "complete", "no_op")
+        } else if mode == "dry_run" {
+            (ResultCategory::Success, "complete", "planned")
+        } else {
+            (ResultCategory::Success, "complete", "applied")
+        };
+        operation_outcome(
+            category,
+            format!(
+                "Retire {result}: {} record(s), {} blocker(s)",
+                plan.actions.len(),
+                plan.blockers.len()
+            ),
+            plan,
+            mode,
+            completion,
+            result,
+            operation_record,
+            &baseline,
+        )
+    }
     pub fn failure(error: &GripError) -> Self {
         let mut outcome = Self {
             category: error.category(),
@@ -77,6 +141,65 @@ impl CommandOutcome {
                     serde_json::to_value(conflicts).expect("ownership conflicts serialize"),
                 );
             }
+        }
+        if let GripError::Lifecycle {
+            operation,
+            reason,
+            publication_visible,
+            verification,
+            durability_confirmed,
+            ..
+        } = error
+        {
+            outcome
+                .details
+                .insert("operation".into(), operation.clone().into());
+            outcome
+                .details
+                .insert("reason".into(), reason.clone().into());
+            outcome
+                .details
+                .insert("publication_visible".into(), (*publication_visible).into());
+            outcome
+                .details
+                .insert("verification".into(), verification.clone().into());
+            outcome.details.insert(
+                "durability_confirmed".into(),
+                (*durability_confirmed).into(),
+            );
+        }
+        if let GripError::OperationLifecycle {
+            operation,
+            reason,
+            operation_id,
+            details,
+            publication_visible,
+            verification,
+            durability_confirmed,
+            ..
+        } = error
+        {
+            outcome.details.extend(details.as_ref().clone());
+            outcome
+                .details
+                .insert("operation".into(), operation.clone().into());
+            outcome
+                .details
+                .insert("reason".into(), reason.clone().into());
+            outcome.details.insert(
+                "operation_record".into(),
+                serde_json::json!({"available":true,"id":operation_id}),
+            );
+            outcome
+                .details
+                .insert("publication_visible".into(), (*publication_visible).into());
+            outcome
+                .details
+                .insert("verification".into(), verification.clone().into());
+            outcome.details.insert(
+                "durability_confirmed".into(),
+                (*durability_confirmed).into(),
+            );
         }
         if let GripError::BaselineNotAcceptable { records } = error {
             outcome
@@ -487,6 +610,40 @@ impl From<CommandOutcome> for ResultEnvelopeV1 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn operation_outcome<T: Serialize, B: Serialize>(
+    category: ResultCategory,
+    message: String,
+    plan: &T,
+    mode: &str,
+    completion: &str,
+    result: &str,
+    operation_record: Option<&str>,
+    baseline: &B,
+) -> CommandOutcome {
+    let mut details = serde_json::to_value(plan)
+        .expect("typed operation plan serializes")
+        .as_object()
+        .expect("typed operation plan is an object")
+        .clone();
+    details.insert("mode".into(), mode.into());
+    details.insert("completion".into(), completion.into());
+    details.insert("result".into(), result.into());
+    details.insert(
+        "operation_record".into(),
+        operation_record.map_or(
+            Value::Null,
+            |value| serde_json::json!({"available":true,"id":value}),
+        ),
+    );
+    details.insert("baseline".into(), json(baseline));
+    CommandOutcome {
+        category,
+        message,
+        details,
+    }
+}
+
 pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write) -> io::Result<()> {
     match mode {
         OutputMode::Human => {
@@ -673,12 +830,185 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                     )?;
                 }
             }
+            if matches!(
+                outcome.details.get("operation").and_then(Value::as_str),
+                Some("delete" | "retire")
+            ) {
+                if let Some(authority) = outcome.details.get("authority").and_then(Value::as_str) {
+                    writeln!(writer, "Authority {authority}")?;
+                }
+                if let Some(force) = outcome.details.get("force").and_then(Value::as_bool) {
+                    writeln!(
+                        writer,
+                        "Force authorized {}",
+                        if force { "yes" } else { "no" }
+                    )?;
+                }
+                if let Some(actions) = outcome.details.get("actions").and_then(Value::as_array) {
+                    for action in actions {
+                        let path = action
+                            .get("target_path")
+                            .or_else(|| action.get("path"))
+                            .and_then(|path| path.get("display"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        writeln!(
+                            writer,
+                            "{} {}",
+                            action
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("planned"),
+                            path
+                        )?;
+                    }
+                }
+            }
+            if matches!(
+                outcome.details.get("operation").and_then(Value::as_str),
+                Some("recovery_list")
+            ) && let Some(entries) = outcome.details.get("entries").and_then(Value::as_array)
+            {
+                for entry in entries {
+                    writeln!(
+                        writer,
+                        "{} {} {}",
+                        entry
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown"),
+                        entry
+                            .get("availability")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown"),
+                        recovery_reference(entry.get("reference").unwrap_or(&Value::Null))
+                    )?;
+                }
+            }
+            if matches!(
+                outcome.details.get("operation").and_then(Value::as_str),
+                Some("recovery_show")
+            ) && let Some(entry) = outcome.details.get("entry")
+            {
+                writeln!(
+                    writer,
+                    "{} {} {}",
+                    entry
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    entry
+                        .get("availability")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    recovery_reference(entry.get("reference").unwrap_or(&Value::Null))
+                )?;
+            }
+            if matches!(
+                outcome.details.get("operation").and_then(Value::as_str),
+                Some("recovery_restore" | "recovery_remove")
+            ) && let Some(plan) = outcome.details.get("plan")
+                && let Some(actions) = plan.get("actions").and_then(Value::as_array)
+            {
+                for action in actions {
+                    writeln!(
+                        writer,
+                        "{} {}",
+                        action
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("planned"),
+                        recovery_reference(action.get("reference").unwrap_or(&Value::Null))
+                    )?;
+                }
+            }
+            if matches!(
+                outcome.details.get("operation").and_then(Value::as_str),
+                Some("delete" | "retire" | "recovery_restore" | "recovery_remove")
+            ) {
+                if let Some(baseline) = outcome.details.get("baseline") {
+                    writeln!(
+                        writer,
+                        "Accepted state {} generation={}",
+                        baseline
+                            .get("outcome")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown"),
+                        baseline
+                            .get("authoritative_generation")
+                            .map(Value::to_string)
+                            .unwrap_or_else(|| "none".into())
+                    )?;
+                }
+                if let Some(visible) = outcome
+                    .details
+                    .get("publication_visible")
+                    .and_then(Value::as_bool)
+                {
+                    writeln!(
+                        writer,
+                        "Visible {} verified={} durable={}",
+                        if visible { "yes" } else { "no" },
+                        outcome
+                            .details
+                            .get("verification")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown"),
+                        if outcome
+                            .details
+                            .get("durability_confirmed")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                        {
+                            "yes"
+                        } else {
+                            "no"
+                        }
+                    )?;
+                }
+                if let Some(record) = outcome.details.get("operation_record")
+                    && record.get("available").and_then(Value::as_bool) == Some(true)
+                {
+                    writeln!(
+                        writer,
+                        "Operation record {} preserved",
+                        record
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                    )?;
+                }
+            }
             Ok(())
         }
         OutputMode::Json => {
             serde_json::to_writer(&mut *writer, &ResultEnvelopeV1::from(outcome))?;
             writeln!(writer)
         }
+    }
+}
+
+fn recovery_reference(reference: &Value) -> String {
+    match reference.get("kind").and_then(Value::as_str) {
+        Some("payload") => format!(
+            "payload:{}:{}",
+            reference["operation_id"].as_str().unwrap_or("unknown"),
+            reference["action_index"].as_u64().unwrap_or(0)
+        ),
+        Some("registry") => format!(
+            "registry:sha256:{}",
+            reference["digest"].as_str().unwrap_or("unknown")
+        ),
+        Some("accepted_state") => format!(
+            "state:generation:{}:sha256:{}",
+            reference["generation"].as_u64().unwrap_or(0),
+            reference["digest"].as_str().unwrap_or("unknown")
+        ),
+        Some("operation") => format!(
+            "operation:{}",
+            reference["operation_id"].as_str().unwrap_or("unknown")
+        ),
+        _ => "unknown".into(),
     }
 }
 
@@ -913,5 +1243,42 @@ mod tests {
         assert_eq!(envelope.details["operation"], "mapping_show");
         assert_eq!(envelope.details["reason"], "invalid_registry");
         assert_eq!(envelope.details["paths"][0], "/grip/config.toml");
+    }
+
+    #[test]
+    fn feature_eight_lifecycle_failure_exposes_independent_evidence_fields() {
+        let error = GripError::Lifecycle {
+            operation: "recovery_restore".into(),
+            reason: "restore_verification_failed".into(),
+            category: ResultCategory::InternalError,
+            publication_visible: true,
+            verification: "failed".into(),
+            durability_confirmed: false,
+            message: "restore failed".into(),
+        };
+        let envelope = ResultEnvelopeV1::from(CommandOutcome::failure(&error));
+        assert_eq!(envelope.code, "operational_failure");
+        assert_eq!(envelope.details["operation"], "recovery_restore");
+        assert_eq!(envelope.details["reason"], "restore_verification_failed");
+        assert_eq!(envelope.details["publication_visible"], true);
+        assert_eq!(envelope.details["verification"], "failed");
+        assert_eq!(envelope.details["durability_confirmed"], false);
+    }
+
+    #[test]
+    fn typed_operation_result_wraps_operation_record_identity() {
+        let outcome = operation_outcome(
+            ResultCategory::Success,
+            "complete".into(),
+            &serde_json::json!({"operation":"delete","plan_id":"a","actions":[],"blockers":[]}),
+            "execute",
+            "complete",
+            "applied",
+            Some("delete-1"),
+            &serde_json::json!({"authoritative_generation":2}),
+        );
+        assert_eq!(outcome.details["operation_record"]["available"], true);
+        assert_eq!(outcome.details["operation_record"]["id"], "delete-1");
+        assert_eq!(outcome.details["baseline"]["authoritative_generation"], 2);
     }
 }

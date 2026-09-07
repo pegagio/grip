@@ -43,7 +43,91 @@ pub enum Command {
     Sync(SyncArgs),
     /// Resolve one exact conflict using an explicit complete-state winner.
     Resolve(ResolveArgs),
+    /// Explicitly accept one side's absence and remove the unchanged peer.
+    Delete(DeleteArgs),
+    /// Explicitly retire accepted records without changing payloads.
+    Retire(RetireArgs),
+    /// Inspect, restore, or explicitly clean retained recovery evidence.
+    Recovery(RecoveryArgs),
     Baseline(BaselineArgs),
+}
+
+/// Arguments for explicitly authorized directional deletion.
+#[derive(Debug, clap::Args)]
+#[command(group(
+    clap::ArgGroup::new("authority")
+        .required(true)
+        .multiple(false)
+        .args(["source", "destination"])
+))]
+pub struct DeleteArgs {
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(long)]
+    pub source: bool,
+    #[arg(long)]
+    pub destination: bool,
+    #[arg(value_name = "PATH")]
+    pub path: OsString,
+}
+
+/// Arguments for explicit state-only retirement.
+#[derive(Debug, clap::Args)]
+#[command(group(
+    clap::ArgGroup::new("retirement_scope")
+        .required(true)
+        .multiple(false)
+        .args(["all", "path"])
+))]
+pub struct RetireArgs {
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(long, conflicts_with = "all")]
+    pub destination: bool,
+    #[arg(long)]
+    pub force: bool,
+    #[arg(long)]
+    pub all: bool,
+    #[arg(value_name = "PATH")]
+    pub path: Option<OsString>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RecoveryArgs {
+    #[command(subcommand)]
+    pub command: RecoveryCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RecoveryCommand {
+    List,
+    Show(RecoveryReferenceArgs),
+    Restore(RecoveryRestoreArgs),
+    Remove(RecoveryRemoveArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RecoveryReferenceArgs {
+    #[arg(value_name = "RECOVERY_REF")]
+    pub reference: crate::recovery::model::RecoveryRef,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RecoveryRestoreArgs {
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(value_name = "RECOVERY_REF")]
+    pub reference: crate::recovery::model::RecoveryRef,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RecoveryRemoveArgs {
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(long, required = true)]
+    pub confirm: bool,
+    #[arg(value_name = "RECOVERY_REF", required = true, num_args = 1..)]
+    pub references: Vec<crate::recovery::model::RecoveryRef>,
 }
 
 /// Arguments shared by push preview and execution.

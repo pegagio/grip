@@ -122,6 +122,28 @@ pub enum GripError {
         message: String,
         conflicts: Vec<OwnershipConflict>,
     },
+    #[error("{message}")]
+    Lifecycle {
+        operation: String,
+        reason: String,
+        category: ResultCategory,
+        publication_visible: bool,
+        verification: String,
+        durability_confirmed: bool,
+        message: String,
+    },
+    #[error("{message}")]
+    OperationLifecycle {
+        operation: String,
+        reason: String,
+        category: ResultCategory,
+        operation_id: String,
+        details: Box<serde_json::Map<String, serde_json::Value>>,
+        publication_visible: bool,
+        verification: String,
+        durability_confirmed: bool,
+        message: Box<str>,
+    },
     #[error("{0}")]
     Internal(String),
 }
@@ -134,6 +156,9 @@ impl GripError {
             Self::UnsupportedSchema(_) => ResultCategory::UnsupportedSchema,
             Self::CorruptState(_) => ResultCategory::CorruptState,
             Self::Mapping { category, .. } => *category,
+            Self::Lifecycle { category, .. } | Self::OperationLifecycle { category, .. } => {
+                *category
+            }
             Self::StateContention | Self::MutationContention { .. } => {
                 ResultCategory::StateContention
             }
@@ -143,6 +168,48 @@ impl GripError {
                 ResultCategory::InternalError
             }
             Self::Internal(_) => ResultCategory::InternalError,
+        }
+    }
+
+    pub fn lifecycle(
+        operation: &str,
+        reason: &str,
+        category: ResultCategory,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::Lifecycle {
+            operation: operation.into(),
+            reason: reason.into(),
+            category,
+            publication_visible: false,
+            verification: "not_attempted".into(),
+            durability_confirmed: false,
+            message: message.into(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn operation_lifecycle(
+        operation: &str,
+        reason: &str,
+        category: ResultCategory,
+        operation_id: &str,
+        details: serde_json::Map<String, serde_json::Value>,
+        publication_visible: bool,
+        verification: &str,
+        durability_confirmed: bool,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::OperationLifecycle {
+            operation: operation.into(),
+            reason: reason.into(),
+            category,
+            operation_id: operation_id.into(),
+            details: Box::new(details),
+            publication_visible,
+            verification: verification.into(),
+            durability_confirmed,
+            message: message.into().into_boxed_str(),
         }
     }
 

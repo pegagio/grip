@@ -54,6 +54,40 @@ impl RegistrySnapshot {
     }
 }
 
+/// Validate a recovered registry against live endpoints and accepted state without publishing it.
+pub fn validate_recovered_compatibility(
+    home: &GripHome,
+    registry: &Registry,
+    bytes: &[u8],
+    accepted: &crate::state::AcceptedState,
+) -> Result<(), GripError> {
+    let evidence = inspect_mappings(registry.mappings(), "recovery_restore")?;
+    let _ = (home, bytes, evidence);
+    for (identity, baseline) in &accepted.baselines {
+        for path in [identity.source_path(), identity.destination_path()] {
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(GripError::InvalidConfiguration(
+                        "recovered registry resolves an accepted identity through a symbolic link"
+                            .into(),
+                    ));
+                }
+                Ok(_) => {
+                    crate::observation::fingerprint::inspect(&path, baseline.node_kind)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(GripError::from_io(
+                        "could not inspect recovered registry payload compatibility",
+                        error,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Held registry publication guard used to enforce registry-before-state ordering.
 pub struct RegistryGuard {
     _lock: PublicationLock,
@@ -557,6 +591,7 @@ fn read_recovery_file(path: &Path) -> Result<Vec<u8>, GripError> {
 fn retain_recovery(
     home: &GripHome,
     bytes: &[u8],
+    expected_post: &[u8],
     fault: Option<PublicationFault>,
 ) -> Result<PathBuf, GripError> {
     let state = home.path().join("state");
@@ -569,6 +604,7 @@ fn retain_recovery(
     let generation = registry.join(format!("sha256-{digest}"));
     ensure_owned_dir(&generation)?;
     let target = generation.join("config.toml");
+    let created = !target.exists();
     if target.exists() {
         if read_recovery_file(&target)? != bytes {
             return Err(mapping_error(
@@ -586,7 +622,40 @@ fn retain_recovery(
             "registry recovery verification failed",
         ));
     }
+    let manifest_path = generation.join("manifest.json");
+    if created && !manifest_path.exists() {
+        let manifest = crate::recovery::model::RecoveryEnvelopeV1::new(
+            crate::recovery::model::RecoveryManifestPayloadV1 {
+                reference: crate::recovery::model::RecoveryRef::Registry {
+                    digest: digest.clone(),
+                },
+                kind: crate::recovery::model::RecoveryKind::Registry,
+                created_at: recovery_timestamp(),
+                origin_operation: None,
+                origin_transition: "registry_publication".into(),
+                managed_identity: None,
+                bound_side: None,
+                bound_target: None,
+                prior_evidence: serde_json::json!({"sha256": digest}),
+                expected_post_evidence: serde_json::json!({"sha256": format!("{:x}", Sha256::digest(expected_post))}),
+                byte_count: bytes.len() as u64,
+                payload_ref: "config.toml".into(),
+            },
+        )?;
+        crate::operation::publication::publish_new_component(
+            &generation,
+            "manifest.json",
+            &crate::recovery::model::encode(&manifest)?,
+        )?;
+    }
     Ok(target)
+}
+
+fn recovery_timestamp() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| format!("{}Z", duration.as_secs()))
+        .unwrap_or_else(|_| "0Z".into())
 }
 
 fn reject_unexpected_staging(directory: &Path) -> Result<(), GripError> {
@@ -678,6 +747,41 @@ pub fn publish(
     publish_with_fault(home, expected, candidate, None)
 }
 
+/// Restore exact, validated Registry V1 bytes while the caller holds the mutation lock.
+pub(crate) fn restore_exact(
+    home: &GripHome,
+    bytes: &[u8],
+    expected_post_digest: &str,
+) -> Result<(), GripError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| GripError::CorruptState("recovered registry is not UTF-8".into()))?;
+    let candidate = decode(text)?;
+    inspect_mappings(candidate.mappings(), "recovery_restore")?;
+    if let Ok(current) = load(home, false)
+        && format!("{:x}", Sha256::digest(&current.bytes)) != expected_post_digest
+    {
+        return Err(mapping_error(
+            "restore_authority_changed",
+            "current valid registry differs from recorded post-transition authority",
+        ));
+    }
+    let _lock = PublicationLock::acquire(&home.path().join(".registry.lock"))?;
+    let mut staged = stage_bytes(home.path(), "config", bytes)?;
+    verify_staged_bytes(&mut staged, bytes)?;
+    set_staged_mode(&mut staged, 0o600)?;
+    fs::rename(&staged.path, home.path().join("config.toml"))
+        .map_err(|error| GripError::from_io("could not restore registry", error))?;
+    File::open(home.path())
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| GripError::from_io("could not sync restored registry", error))?;
+    if load(home, false)?.bytes != bytes {
+        return Err(GripError::CorruptState(
+            "restored registry verification failed".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Publish a complete candidate using endpoint evidence captured from submitted add paths.
 pub fn publish_with_evidence(
     home: &GripHome,
@@ -726,9 +830,8 @@ fn publish_candidate(
     })?;
     reject_unexpected_staging(home.path())?;
     verify_final_evidence(home, expected, candidate_evidence)?;
-    retain_recovery(home, &expected.bytes, fault)?;
-
     let bytes = encode(candidate)?;
+    retain_recovery(home, &expected.bytes, &bytes, fault)?;
     let mut staged = stage_bytes(home.path(), "config", &bytes)?;
     let result = (|| {
         if fault == Some(PublicationFault::CorruptStagedCandidate) {

@@ -1,7 +1,7 @@
 ---
 title: Mappings and managed membership
 type: concept
-sources: [S001, S004, S005, S006]
+sources: [S001, S004, S005, S006, S011]
 updated: 2026-09-06
 ---
 
@@ -24,6 +24,8 @@ The implemented inspection derives tree membership fresh without creating a mani
 Feature 003 fixes ignore evaluation to source-relative, hierarchical policy: root and nested `.gripignore` files apply in traversal order, later matches override earlier ones, negation can re-include entries, and neither ordinary Git exclusions nor destination-side policy participates. Ignored directories prune their descendants from both discovery and destination-only reporting. (S006)
 
 Accepted entries that later become newly ignored or lose their mapping remain visible as pending-retirement evidence. Scoped baseline acceptance preserves every accepted record outside the selected source or destination subtree and cannot silently retire prior membership. (S004)
+
+Retirement is a state-only transition selected by an exact path or explicit `--all`; it never changes source or destination payloads. Newly ignored, untracked, and converged-deletion records are eligible, active records are rejected, and differing surviving copies require `--force` after their differences are reported. (S011)
 
 ## Related pages
 

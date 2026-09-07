@@ -21,6 +21,7 @@ page files, not here.
 - [Baseline classification and status](./pages/baseline-classification-and-status.md)
 - [Command-line and path selection](./pages/command-line-and-path-selection.md)
 - [Configuration and state](./pages/configuration-and-state.md)
+- [Deletion, retirement, and recovery](./pages/deletion-retirement-and-recovery.md)
 - [Mapping registry publication](./pages/mapping-registry-publication.md)
 - [Synchronization and conflicts](./pages/synchronization-and-conflicts.md)
 
