@@ -1,7 +1,7 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001, S004, S007, S008, S009, S010]
+sources: [S001, S004, S007, S008, S009, S010, S011]
 updated: 2026-09-07
 ---
 
@@ -24,6 +24,8 @@ A divergent change on both sides is a whole-entry conflict, including cases wher
 `resolve` accepts one exact established entry identified in source-path space and exactly one `--source` or `--destination` winner. It preserves the complete losing state, applies the winner through the corresponding directional pipeline, verifies equality, and publishes one accepted generation; preview aliases perform no mutation. (S004) (S010)
 
 Mutating operations perform a complete preflight and block before the first mutation when any conflict or known unsafe condition exists in scope. A plan is deterministic evidence from one validated inspection, and execution revalidates the relevant filesystem evidence before applying it. (S001)
+
+Feature 008 executes a one-sided deletion only through `delete` with an explicit authoritative side. A changed remaining peer creates a delete/change blocker, ordinary push, pull, and sync continue to delete nothing, and successful deletion preserves recovery evidence before removing the peer and retiring the accepted record. Converged deletions and policy-driven membership changes are handled separately by explicit retirement. (S011)
 
 ## Related pages
 

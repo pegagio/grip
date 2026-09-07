@@ -4,7 +4,9 @@ use crate::error::GripError;
 use crate::observation::model::{EntryIdentity, MappingSnapshot, SupportedState};
 use crate::operation::publication::OperationReceipt;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Strict metadata binding one recovery payload to an operation action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +44,18 @@ pub fn preserve(
     target: &Path,
     expected: &SupportedState,
 ) -> Result<RecoveryEntry, GripError> {
+    preserve_with_post(receipt, action_index, identity, target, expected, None)
+}
+
+/// Preserve a target together with the originating operation's expected post-action state.
+pub fn preserve_with_post(
+    receipt: &OperationReceipt,
+    action_index: usize,
+    identity: &EntryIdentity,
+    target: &Path,
+    expected: &SupportedState,
+    expected_post: Option<&SupportedState>,
+) -> Result<RecoveryEntry, GripError> {
     let directory = receipt
         .directory()
         .join("recovery")
@@ -49,15 +63,23 @@ pub fn preserve(
     crate::mutation::filesystem::create_recovery_directory(&directory)
         .map_err(|error| recovery_failure_at("create recovery directory", error))?;
     let payload = directory.join("payload");
-    let mut staged = crate::mutation::filesystem::stage_private_file(target, &payload, expected)
-        .map_err(|error| recovery_failure_at("stage recovery payload", error))?;
-    crate::mutation::filesystem::publish_addition(&mut staged, &payload)
-        .map_err(|error| recovery_failure_at("publish recovery payload", error))?;
-    let mut private_expected = expected.clone();
-    private_expected.permission_mode = Some("0600".into());
-    crate::mutation::filesystem::verify_target(&payload, &private_expected)
-        .map_err(|error| recovery_failure_at("verify recovery payload", error))?;
-    let relative_ref = format!("recovery/{action_index:08}/payload");
+    let payload_present = expected.node_kind == crate::discovery::model::NodeKind::File;
+    if payload_present {
+        let mut staged =
+            crate::mutation::filesystem::stage_private_file(target, &payload, expected)
+                .map_err(|error| recovery_failure_at("stage recovery payload", error))?;
+        crate::mutation::filesystem::publish_addition(&mut staged, &payload)
+            .map_err(|error| recovery_failure_at("publish recovery payload", error))?;
+        let mut private_expected = expected.clone();
+        private_expected.permission_mode = Some("0600".into());
+        crate::mutation::filesystem::verify_target(&payload, &private_expected)
+            .map_err(|error| recovery_failure_at("verify recovery payload", error))?;
+    }
+    let relative_ref = if payload_present {
+        format!("recovery/{action_index:08}/payload")
+    } else {
+        format!("recovery/{action_index:08}/metadata.json")
+    };
     let metadata = RecoveryMetadataV1 {
         schema_version: 1,
         operation_id: receipt.operation_id().into(),
@@ -72,7 +94,7 @@ pub fn preserve(
         },
         prior_state: expected.clone(),
         payload_ref: relative_ref.clone(),
-        payload_present: true,
+        payload_present,
         verified: true,
     };
     let bytes = serde_json::to_vec(&metadata).map_err(|error| {
@@ -89,7 +111,72 @@ pub fn preserve(
             "recovery metadata verification failed".into(),
         ));
     }
+    let bound_side = if target == identity.source_path() {
+        "source"
+    } else if target == identity.destination_path() {
+        "destination"
+    } else {
+        return Err(GripError::CorruptState(
+            "recovery target is not bound to the managed identity".into(),
+        ));
+    };
+    let manifest = crate::recovery::model::RecoveryEnvelopeV1::new(
+        crate::recovery::model::RecoveryManifestPayloadV1 {
+            reference: crate::recovery::model::RecoveryRef::Payload {
+                operation_id: receipt.operation_id().into(),
+                action_index,
+            },
+            kind: crate::recovery::model::RecoveryKind::Payload,
+            created_at: unix_timestamp(),
+            origin_operation: Some(receipt.operation_id().into()),
+            origin_transition: if expected_post.is_some() {
+                "replacement"
+            } else {
+                "deletion"
+            }
+            .into(),
+            managed_identity: format!(
+                "{}:{}",
+                identity.mapping.source.display(),
+                metadata.identity.relative_path_hex
+            )
+            .into(),
+            bound_side: Some(bound_side.into()),
+            bound_target: Some(target.display().to_string()),
+            prior_evidence: serde_json::to_value(expected).map_err(|error| {
+                GripError::Internal(format!("could not encode recovery prior evidence: {error}"))
+            })?,
+            expected_post_evidence: expected_post.map_or(serde_json::Value::Null, |state| {
+                serde_json::to_value(state).expect("supported state serialization cannot fail")
+            }),
+            byte_count: if payload_present {
+                fs::metadata(&payload)
+                    .map_err(|error| GripError::from_io("could not inspect recovery bytes", error))?
+                    .len()
+            } else {
+                0
+            },
+            payload_ref: if payload_present {
+                "payload"
+            } else {
+                "metadata"
+            }
+            .into(),
+        },
+    )?;
+    crate::operation::publication::publish_new_component(
+        &directory,
+        "manifest.json",
+        &crate::recovery::model::encode(&manifest)?,
+    )?;
     Ok(RecoveryEntry { relative_ref })
+}
+
+fn unix_timestamp() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| format!("{}Z", duration.as_secs()))
+        .unwrap_or_else(|_| "0Z".into())
 }
 
 fn recovery_failure_at(phase: &str, error: GripError) -> GripError {

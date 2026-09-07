@@ -1,7 +1,7 @@
 ---
 title: Safety and recovery model
 type: decision
-sources: [S001, S002, S004, S005, S007, S008, S009, S010]
+sources: [S001, S002, S004, S005, S007, S008, S009, S010, S011]
 updated: 2026-09-07
 ---
 
@@ -26,6 +26,8 @@ Feature 005 applies the full boundary to push: after complete preflight, an acti
 Feature 006 applies the same boundary to pull with destination as origin and source as target. It preserves the prior source, never creates a missing source or parent, and accepts only a fully verified result. (S004) (S009)
 
 Feature 007 reuses that direction-neutral pipeline for mixed sync actions and exact resolution. One outer mutation lock covers lock-held plan equality, per-action direction, operation-local recovery, final observation, and one baseline publication. Conflicts block sync completely; resolution requires an explicit whole-state winner. A result-delivery failure cannot revoke already accepted payload or baseline authority. (S004) (S010)
+
+Feature 008 keeps destructive intent separate from ordinary synchronization. Directional deletion requires an explicit source- or destination-authoritative command, revalidates every action, preserves the remaining peer before removal, verifies absence, and retires accepted evidence only after the complete selected operation succeeds. Recovery restoration is exact, compatibility-gated, and non-accepting; cleanup requires exact references plus confirmation and preserves an immutable cleaned tombstone. (S011)
 
 ## Related pages
 

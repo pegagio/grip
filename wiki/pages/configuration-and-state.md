@@ -1,7 +1,7 @@
 ---
 title: Configuration and state
 type: component
-sources: [S001, S004, S005, S007, S008, S009, S010]
+sources: [S001, S004, S005, S007, S008, S009, S010, S011]
 updated: 2026-09-07
 ---
 
@@ -26,6 +26,8 @@ Feature 005 adds partitioned Operation Record V1 under `state/operations/<operat
 Feature 006 extends the closed Operation Record V1 operation identity from `push` to `push | pull` without adding a second history tree or a new state schema. Direction-prefixed opaque operation IDs and direction-bound plans distinguish otherwise symmetric transfers, while interrupted and failed pull records remain immutable evidence and do not alone block a later independently planned operation. (S009)
 
 Feature 007 preserves that V1 layout while admitting `sync` and `resolve` operations, per-action direction, and an optional resolution winner. Historical push and pull plans remain valid and immutable; strict validation rejects unknown or inconsistent operation, direction, winner, action-index, recovery-reference, and plan-identity evidence. (S010)
+
+Feature 008 extends immutable operation evidence to `delete`, `retire`, `recovery-restore`, and `recovery-remove`. Recovery Manifest V1 binds preserved payload or authority documents to their origin, operation, integrity, and exact target; cleanup removes only confirmed recoverable bytes and publishes an immutable Cleanup Tombstone V1 while retaining provenance. Exact verified Registry V1 or State V2 copies may repair missing or corrupt authority only after complete compatibility checks, never by guessing. (S011)
 
 ## Related pages
 

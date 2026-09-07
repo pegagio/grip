@@ -372,8 +372,37 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(expected_sync_plan.counts.actionable > 0);
     assert!(expected_sync_plan.counts.converged > 0);
     assert!(expected_sync_plan.counts.blockers > 0);
+    std::fs::remove_dir_all(&discovery_source).unwrap();
+    std::fs::create_dir(&discovery_source).unwrap();
+    let delete_preview = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", &discovery_home)
+            .args(["--output=json", "delete", "--dry-run", "--source"])
+            .arg(&discovery_source);
+        command
+    });
+    let recovery_home = root.path().join("recovery-home");
+    std::fs::create_dir(&recovery_home).unwrap();
+    support::minimal_home(&recovery_home);
+    let operations = recovery_home.join(".grip/state/operations");
+    std::fs::create_dir_all(&operations).unwrap();
+    for index in 0..10_000 {
+        std::fs::create_dir_all(operations.join(format!("operation-{index:05}/recovery"))).unwrap();
+    }
+    let recovery_inventory = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", root.path())
+            .env("GRIP_HOME", recovery_home.join(".grip"))
+            .args(["--output=json", "recovery", "list"]);
+        command
+    });
     eprintln!(
-        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?} sync_dry_run_mixed_10000={dry_run_sync:?} sync_execute_plan_mixed_10000={sync_execute_plan:?}"
+        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?} sync_dry_run_mixed_10000={dry_run_sync:?} sync_execute_plan_mixed_10000={sync_execute_plan:?} delete_preview_10000={delete_preview:?} recovery_inventory_10000={recovery_inventory:?}"
     );
     assert!(help <= Duration::from_millis(100));
     assert!(version <= Duration::from_millis(100));
@@ -386,4 +415,6 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(pull_execute_plan <= Duration::from_secs(2));
     assert!(dry_run_sync <= Duration::from_secs(2));
     assert!(sync_execute_plan <= Duration::from_secs(2));
+    assert!(delete_preview <= Duration::from_secs(2));
+    assert!(recovery_inventory <= Duration::from_secs(2));
 }

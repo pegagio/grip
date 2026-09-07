@@ -123,7 +123,23 @@ fn inspect_once(
                     entry.destination_diagnostic = Some(diagnostic);
                 }
             }
-            RecordCategory::Ignored => entry.membership = Membership::Ignored,
+            RecordCategory::Ignored => {
+                entry.membership = Membership::Ignored;
+                if accepted.baselines.contains_key(&identity) {
+                    if let Some((state, diagnostic)) =
+                        inspect_identity(&identity, true, &mut relative_inspectors)?
+                    {
+                        entry.source = Some(state);
+                        entry.source_diagnostic = Some(diagnostic);
+                    }
+                    if let Some((state, diagnostic)) =
+                        inspect_identity(&identity, false, &mut relative_inspectors)?
+                    {
+                        entry.destination = Some(state);
+                        entry.destination_diagnostic = Some(diagnostic);
+                    }
+                }
+            }
             RecordCategory::DestinationOnly => {
                 if entry.membership != Membership::Ignored {
                     entry.membership = Membership::DestinationOnly;
@@ -171,6 +187,20 @@ fn inspect_once(
             });
         if !current.contains_key(&identity.mapping) {
             entry.membership = Membership::Untracked;
+            if entry.source.is_none()
+                && let Some((state, diagnostic)) =
+                    inspect_identity(identity, true, &mut relative_inspectors)?
+            {
+                entry.source = Some(state);
+                entry.source_diagnostic = Some(diagnostic);
+            }
+            if entry.destination.is_none()
+                && let Some((state, diagnostic)) =
+                    inspect_identity(identity, false, &mut relative_inspectors)?
+            {
+                entry.destination = Some(state);
+                entry.destination_diagnostic = Some(diagnostic);
+            }
         }
     }
 

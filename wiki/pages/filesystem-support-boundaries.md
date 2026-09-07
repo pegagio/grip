@@ -32,3 +32,4 @@ The initial platform contract may target macOS and Unix explicitly. Cross-platfo
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
+- [Deletion, retirement, and recovery](./deletion-retirement-and-recovery.md)

@@ -7,7 +7,7 @@ updated: 2026-09-07
 
 # Initial delivery roadmap
 
-Roadmap version 1.0.14 defines nine specifications that culminate in the complete initial Grip product. Features 001 through 007 are verified, making Feature 008 the next dependency-eligible entry. The sequence moves from read-only foundations to increasingly capable mutation so namespace, state, and classification contracts are established before user-data risk increases. (S003)
+Roadmap version 1.0.17 defines nine specifications that culminate in the complete initial Grip product. Features 001 through 008 are verified, making Feature 009 the next dependency-eligible entry. The sequence moves from read-only foundations to increasingly capable mutation so namespace, state, and classification contracts are established before user-data risk increases. (S003)
 
 1. **001 — CLI, Configuration, and State Foundation (`verified`):** establish the Rust application, per-user root, versioned configuration and state envelopes, and distinct human, machine, and diagnostic interfaces without payload mutation. (S003)
 2. **002 — Mapping Registry and Ownership Validation (`verified`):** define file and tree mapping intent, canonical source identity, lifecycle commands, and ambiguous or recursive topology rejection. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
@@ -16,10 +16,10 @@ Roadmap version 1.0.14 defines nine specifications that culminate in the complet
 5. **005 — Safe Push and Recovery (`verified`):** add source-to-destination mutation with dry runs, revalidation, staging, recovery, verification, truthful failure reporting, and baseline publication. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 6. **006 — Reverse Synchronization (`verified`):** reuse the proven mutation pipeline for established destination-to-source changes without importing destination-only entries. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 7. **007 — Bidirectional Synchronization and Conflict Resolution (`verified`):** unify both directions, block on complete-scope conflicts, and require an explicit complete-side winner. Its attributable implementation debrief recorded no Must-Address findings. (S003)
-8. **008 — Authorized Deletion and Retirement:** introduce separately authorized deletion, converged deletion, newly ignored retirement, and recovery-material lifecycle. (S003)
+8. **008 — Authorized Deletion and Retirement (`verified`):** introduce separately authorized deletion, converged deletion, newly ignored retirement, and recovery-material lifecycle. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 9. **009 — Metadata and Filesystem Contract Completion:** finalize promised macOS and Unix metadata, filesystem edge cases, integration coverage, and representative performance acceptance. (S003)
 
-Specs 001 through 007 now provide the verified foundation and mutation chain; 008 depends on verified bidirectional conflict handling, and 009 closes the product after baseline classification and deletion are established. Two-way interactive merge, remap, multiple selectors, remote synchronization, daemons, privileged services, and multi-user coordination remain outside this initial roadmap. (S003)
+Specs 001 through 008 now provide the verified foundation, mutation, conflict, deletion, retirement, and recovery chain. Feature 009 closes the product after baseline classification and deletion are established. Two-way interactive merge, remap, multiple selectors, remote synchronization, daemons, privileged services, and multi-user coordination remain outside this initial roadmap. (S003)
 
 ## Related pages
 

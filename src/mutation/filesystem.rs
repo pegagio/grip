@@ -406,6 +406,110 @@ pub fn verify_destination(destination: &Path, expected: &SupportedState) -> Resu
     verify_target(destination, expected)
 }
 
+/// Remove one verified supported entry relative to its opened parent without following links.
+pub fn remove_verified(target: &Path, expected: &SupportedState) -> Result<bool, GripError> {
+    let (parent, name) = revalidate_removal(target, expected)?;
+    unlinkat(
+        parent.as_fd(),
+        OsStr::from_bytes(&name),
+        if expected.node_kind == crate::discovery::model::NodeKind::Directory {
+            AtFlags::REMOVEDIR
+        } else {
+            AtFlags::empty()
+        },
+    )
+    .map_err(|error| GripError::from_io("could not remove verified target", error.into()))?;
+    let durable = fsync(parent.as_fd()).is_ok();
+    match parent.metadata(&name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(durable),
+        Ok(_) => Err(GripError::Internal(
+            "deletion target remains visible after removal".into(),
+        )),
+        Err(error) => Err(GripError::from_io(
+            "could not verify deletion target absence",
+            error,
+        )),
+    }
+}
+
+/// Revalidate a removal target and a fresh empty-directory view without changing it.
+pub fn verify_removal_ready(target: &Path, expected: &SupportedState) -> Result<(), GripError> {
+    revalidate_removal(target, expected).map(|_| ())
+}
+
+fn revalidate_removal(
+    target: &Path,
+    expected: &SupportedState,
+) -> Result<(crate::discovery::filesystem::Directory, Vec<u8>), GripError> {
+    let (parent, name) = open_parent(target)?;
+    let (actual, _) =
+        crate::observation::fingerprint::inspect_open_child(&parent, &name, expected.node_kind)?;
+    if &actual != expected {
+        return Err(GripError::discovery_operational(
+            "delete",
+            "stale_deletion_evidence",
+            vec![target.display().to_string()],
+            "deletion target changed before removal",
+        ));
+    }
+    if expected.node_kind == crate::discovery::model::NodeKind::Directory {
+        let child = parent.open_child_directory(&name).map_err(|error| {
+            GripError::from_io("could not open deletion directory safely", error)
+        })?;
+        if !child
+            .child_names()
+            .map_err(|error| GripError::from_io("could not enumerate deletion directory", error))?
+            .is_empty()
+        {
+            return Err(GripError::InvalidConfiguration(
+                "managed directory contains an unplanned descendant".into(),
+            ));
+        }
+    }
+    Ok((parent, name))
+}
+
+/// Remove one current-user-owned private recovery file after exact byte-count verification.
+pub(crate) fn remove_private_file(path: &Path, expected_len: u64) -> Result<bool, GripError> {
+    let (parent, name) = open_parent(path)?;
+    let metadata = parent
+        .metadata(&name)
+        .map_err(|error| GripError::from_io("could not inspect private recovery bytes", error))?;
+    let descriptor = parent
+        .open_child_file(&name)
+        .map_err(|error| GripError::from_io("could not open private recovery bytes", error))?;
+    let opened = File::from(descriptor);
+    let opened_metadata = opened
+        .metadata()
+        .map_err(|error| GripError::from_io("could not inspect opened recovery bytes", error))?;
+    if !opened_metadata.is_file()
+        || opened_metadata.uid() != rustix::process::geteuid().as_raw()
+        || opened_metadata.permissions().mode() & 0o7777 != 0o600
+        || opened_metadata.dev() != metadata.stat.st_dev as u64
+        || opened_metadata.ino() != metadata.stat.st_ino
+        || opened_metadata.len() != expected_len
+    {
+        return Err(GripError::CorruptState(
+            "private recovery bytes do not match cleanup evidence".into(),
+        ));
+    }
+    unlinkat(parent.as_fd(), OsStr::from_bytes(&name), AtFlags::empty()).map_err(|error| {
+        GripError::from_io("could not remove private recovery bytes", error.into())
+    })?;
+    fsync(parent.as_fd())
+        .map_err(|error| GripError::from_io("could not sync recovery directory", error.into()))?;
+    match parent.metadata(&name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Ok(_) => Err(GripError::CorruptState(
+            "private recovery bytes remain visible after cleanup".into(),
+        )),
+        Err(error) => Err(GripError::from_io(
+            "could not verify recovery-byte absence",
+            error,
+        )),
+    }
+}
+
 fn verify_staged_identity(staged: &StagedFile) -> Result<(), GripError> {
     let descriptor = staged
         .file

@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.13 -> 1.0.14
-Bump rationale: Record completed Feature 007 verification and its specification binding.
+Version change: 1.0.16 -> 1.0.17
+Bump rationale: Record verified completion of Feature 008.
 
 Changes this revision:
-  - Transitioned Feature 007 from in-progress to verified
-  - Added Feature 007 specification directory and verification evidence
+  - Transitioned Feature 008 from in-progress to verified
+  - Added the attributable Feature 008 verification report
 
-Specs affected: 007
+Specs affected: 008
 Open questions added/resolved: none
 
-Notes: Feature 007 met its roadmap outcome with no Must-Address debrief findings.
+Notes: Feature 008 verification is supported by its completed specification, implementation delta, validation evidence, and debrief report.
 -->
 
 # Grip — Spec Roadmap
@@ -135,8 +135,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Conflicts, Direction, Incremental Delivery Milestone 5
 - **Notes:** The complete supported entry state wins; content and metadata differences are not combined from opposing sides. Verification evidence: `specs/007-bidirectional-sync-conflicts/roadmap-reviews/debrief-20260907T144944Z.md` (`PROCEED WITH UPDATES`, no Must-Address findings).
 
-### 008 — Authorized Deletion and Retirement  [status: planned]
+### 008 — Authorized Deletion and Retirement  [status: verified]
 
+- **Spec dir:** `specs/008-authorized-deletion-retirement`
 - **Description:** Add explicitly authorized directional deletion, converged deletion handling, and deliberate retirement of managed entries that become ignored or untracked.
 - **Outcome:** Users can preview and authorize deletion or retirement without Grip inferring destructive intent from absence or ignore changes, and can inspect and deliberately remove retained recovery material under a defined lifecycle.
 - **Scope (in):** Source-side and destination-side deletion classification execution; additional authorization; delete/change blocking; converged deletion; newly ignored pending-retirement state; explicit retirement command and transition; deletion backups; backup inspection and cleanup; baseline retirement; bounded recovery from missing or inconsistent state where evidence permits.
@@ -144,7 +145,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 007
 - **Governed by:** C-02, C-04, C-05, C-06, C-07, C-10
 - **Addresses:** `docs/product-definition.md` — Deletions, Tracking and Untracking, Safety and Recovery, Incremental Delivery Milestone 5
-- **Notes:** The spec must settle the retirement portion of Q-06 and complete Q-11. Recovery actions requiring an authoritative side must remain explicit.
+- **Notes:** The specification settles the retirement portion of Q-06 and completes Q-11. Recovery actions requiring an authoritative side remain explicit. Verification evidence: `specs/008-authorized-deletion-retirement/roadmap-reviews/debrief-20260907T190356Z.md` (`PROCEED`, no findings).
 
 ### 009 — Metadata and Filesystem Contract Completion  [status: planned]
 
@@ -189,4 +190,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.14 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-07
+**Version**: 1.0.16 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-07

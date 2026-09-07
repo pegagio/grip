@@ -228,6 +228,75 @@ pub fn accepted_file_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf)
     (root, grip_home, source, destination)
 }
 
+pub fn accepted_tree_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let grip_home = minimal_home(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(source.join("nested")).unwrap();
+    fs::write(source.join("nested/file"), "accepted").unwrap();
+    write_registry(&grip_home, &[("tree", &source, &destination)]);
+    let output = command_with_grip_home(root.path(), &grip_home, &["push"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (root, grip_home, source, destination)
+}
+
+pub fn untracked_file_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+    let (root, grip_home, source, destination) = accepted_file_fixture();
+    let output = command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &["mapping", "remove", source.to_str().unwrap()],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (root, grip_home, source, destination)
+}
+
+pub fn payload_recovery_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf, String) {
+    let (root, grip_home, source, destination) = accepted_file_fixture();
+    fs::write(&destination, "replacement").unwrap();
+    let output = command_with_grip_home(root.path(), &grip_home, &["--output=json", "pull"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = json(&output);
+    let operation = value["details"]["operation_record"]["id"].as_str().unwrap();
+    let reference = format!("payload:{operation}:0");
+    (root, grip_home, source, destination, reference)
+}
+
+pub fn assert_snapshot_unchanged(expected: &BTreeMap<PathBuf, EntrySnapshot>, root: &Path) {
+    assert_eq!(expected, &snapshot(root), "filesystem snapshot changed");
+}
+
+pub fn fail_once_at<T>(expected: T) -> impl FnMut(T) -> Result<(), grip::GripError>
+where
+    T: Clone + PartialEq + std::fmt::Debug,
+{
+    let mut failed = false;
+    move |actual| {
+        if !failed && actual == expected {
+            failed = true;
+            Err(grip::GripError::Internal(format!(
+                "injected failure at {actual:?}"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
     use grip::classification::model::ClassificationScope;
     use grip::discovery::model::SafePath;
@@ -319,6 +388,42 @@ pub fn pull_execution_fixture() -> (
         .collect();
     let plan = grip::mutation::plan::build_for(
         grip::mutation::model::MutationDirection::Pull,
+        grip::classification::model::ClassificationScope {
+            kind: "all".into(),
+            path_space: grip::observation::model::PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+    )
+    .unwrap();
+    (root, home, registry, state, selection, plan)
+}
+
+pub fn deletion_execution_fixture() -> (
+    tempfile::TempDir,
+    grip::home::GripHome,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    grip::observation::model::Selection,
+    grip::delete::model::DeletionPlan,
+) {
+    let (root, grip_home, source, _) = accepted_file_fixture();
+    fs::remove_file(source).unwrap();
+    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let selection = grip::observation::model::Selection::All;
+    let observed =
+        grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
+    let records = observed
+        .values()
+        .map(|entry| {
+            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
+        })
+        .collect();
+    let plan = grip::delete::plan::build(
+        grip::delete::model::DeletionAuthority::Source,
         grip::classification::model::ClassificationScope {
             kind: "all".into(),
             path_space: grip::observation::model::PathSpace::Source,

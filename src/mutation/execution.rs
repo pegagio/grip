@@ -163,7 +163,7 @@ where
                         receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
                         failure_reason = "recovery_failure";
                         fault(crate::mutation::FaultPhase::BeforeRecovery(index))?;
-                        let recovery = crate::mutation::recovery::preserve(
+                        let recovery = crate::mutation::recovery::preserve_with_post(
                             &receipt,
                             index,
                             identity,
@@ -171,6 +171,7 @@ where
                             expected_target.ok_or_else(|| {
                                 GripError::Internal("replacement has no target evidence".into())
                             })?,
+                            Some(expected_origin),
                         )?;
                         action.milestones.recovery = "preserved".into();
                         action.milestones.recovery_ref = Some(recovery.relative_ref);

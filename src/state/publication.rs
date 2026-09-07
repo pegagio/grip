@@ -2,6 +2,7 @@ use super::lock::PublicationLock;
 use super::{AcceptedState, StateEnvelopeV1, decode, decode_accepted, encode, encode_v2};
 use crate::error::GripError;
 use crate::home::GripHome;
+use sha2::Digest;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink};
@@ -230,6 +231,49 @@ pub fn publish_accepted_locked(
     publish_accepted_locked_with_fault(home, expected, next, None)
 }
 
+/// Restore exact, integrity-valid State V2 bytes while the caller holds the mutation lock.
+pub(crate) fn restore_exact(
+    home: &GripHome,
+    bytes: &[u8],
+    expected_post_generation: u64,
+    expected_post_digest: &str,
+) -> Result<(), GripError> {
+    let recovered = decode_accepted(Some(bytes))?;
+    if recovered.generation.is_none() {
+        return Err(GripError::CorruptState(
+            "recovered state has no generation".into(),
+        ));
+    }
+    if let Ok(current) = load(home)
+        && let Some(current_bytes) = current.bytes.as_deref()
+    {
+        let digest = format!("{:x}", sha2::Sha256::digest(current_bytes));
+        if current.accepted.generation != Some(expected_post_generation)
+            || digest != expected_post_digest
+        {
+            return Err(GripError::InvalidConfiguration(
+                "current valid state differs from recorded post-transition authority".into(),
+            ));
+        }
+    }
+    let directory = prepare_directory(home)?;
+    let _lock = PublicationLock::acquire(&directory.join("state.lock"))?;
+    write_v2_atomic(
+        &directory,
+        &directory.join("state.json"),
+        bytes,
+        Some(&recovered.baselines),
+        None,
+    )?;
+    let reread = read_private_file(&directory.join("state.json"))?;
+    if reread != bytes || decode_accepted(Some(&reread))? != recovered {
+        return Err(GripError::CorruptState(
+            "restored state verification failed".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[doc(hidden)]
 pub fn publish_accepted_locked_with_fault(
     home: &GripHome,
@@ -255,6 +299,7 @@ pub fn publish_accepted_locked_with_fault(
     let state_dir = home.path().join("state");
     ensure_dir(&state_dir)?;
     let target = state_dir.join("state.json");
+    let next_bytes = encode_v2(next, generation)?;
     if let Some(bytes) = expected.bytes.as_deref() {
         let recovery_root = state_dir.join("recovery");
         ensure_dir(&recovery_root)?;
@@ -264,6 +309,7 @@ pub fn publish_accepted_locked_with_fault(
         let generation_dir = recovery_root.join(format!("generation-{prior_generation}"));
         ensure_dir(&generation_dir)?;
         let recovery = generation_dir.join("state.json");
+        let created = !recovery.exists();
         if recovery.exists() {
             if read_private_file(&recovery)? != bytes {
                 return Err(GripError::CorruptState(
@@ -273,10 +319,51 @@ pub fn publish_accepted_locked_with_fault(
         } else {
             write_v2_atomic(&generation_dir, &recovery, bytes, None, None)?;
         }
+        let manifest_path = generation_dir.join("manifest.json");
+        if created && !manifest_path.exists() {
+            let prior_digest = format!("{:x}", sha2::Sha256::digest(bytes));
+            let next_digest = format!("{:x}", sha2::Sha256::digest(&next_bytes));
+            let manifest = crate::recovery::model::RecoveryEnvelopeV1::new(
+                crate::recovery::model::RecoveryManifestPayloadV1 {
+                    reference: crate::recovery::model::RecoveryRef::AcceptedState {
+                        generation: prior_generation,
+                        digest: prior_digest.clone(),
+                    },
+                    kind: crate::recovery::model::RecoveryKind::AcceptedState,
+                    created_at: recovery_timestamp(),
+                    origin_operation: None,
+                    origin_transition: "state_publication".into(),
+                    managed_identity: None,
+                    bound_side: None,
+                    bound_target: None,
+                    prior_evidence: serde_json::json!({"generation": prior_generation, "sha256": prior_digest}),
+                    expected_post_evidence: serde_json::json!({"generation": generation, "sha256": next_digest}),
+                    byte_count: bytes.len() as u64,
+                    payload_ref: "state.json".into(),
+                },
+            )?;
+            crate::operation::publication::publish_new_component(
+                &generation_dir,
+                "manifest.json",
+                &crate::recovery::model::encode(&manifest)?,
+            )?;
+        }
     }
-    let bytes = encode_v2(next, generation)?;
-    write_v2_atomic(&state_dir, &target, &bytes, Some(&next.baselines), fault)?;
+    write_v2_atomic(
+        &state_dir,
+        &target,
+        &next_bytes,
+        Some(&next.baselines),
+        fault,
+    )?;
     Ok(Some(generation))
+}
+
+fn recovery_timestamp() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| format!("{}Z", duration.as_secs()))
+        .unwrap_or_else(|_| "0Z".into())
 }
 
 fn write_v2_atomic(

@@ -34,3 +34,4 @@ The implemented bidirectional surface is `grip sync [-n|--dry-run] [--destinatio
 - [Grip product model](./grip-product-model.md)
 - [Baseline classification and status](./baseline-classification-and-status.md)
 - [Local development workflows](./local-development-workflows.md)
+- [Deletion, retirement, and recovery](./deletion-retirement-and-recovery.md)
