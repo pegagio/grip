@@ -2,10 +2,24 @@ mod support;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-fn p95(mut samples: Vec<Duration>) -> Duration {
+#[derive(Debug, Clone, Copy)]
+struct Distribution {
+    p50: Duration,
+    p95: Duration,
+    maximum: Duration,
+}
+
+fn distribution(mut samples: Vec<Duration>) -> Distribution {
     samples.sort_unstable();
-    let index = (samples.len() * 95).div_ceil(100).saturating_sub(1);
-    samples[index]
+    let percentile = |value: usize| {
+        let index = (samples.len() * value).div_ceil(100).saturating_sub(1);
+        samples[index]
+    };
+    Distribution {
+        p50: percentile(50),
+        p95: percentile(95),
+        maximum: *samples.last().unwrap(),
+    }
 }
 fn sample_count() -> usize {
     std::env::var("GRIP_PERFORMANCE_SAMPLE_COUNT")
@@ -14,7 +28,7 @@ fn sample_count() -> usize {
         .filter(|count| *count > 0)
         .unwrap_or(100)
 }
-fn measure(mut command: impl FnMut() -> Command) -> Duration {
+fn measure(mut command: impl FnMut() -> Command) -> Distribution {
     let _ = command().output().unwrap();
     let samples = (0..sample_count())
         .map(|_| {
@@ -24,10 +38,10 @@ fn measure(mut command: impl FnMut() -> Command) -> Duration {
             start.elapsed()
         })
         .collect();
-    p95(samples)
+    distribution(samples)
 }
 
-fn measure_consistent(mut command: impl FnMut() -> Command) -> Duration {
+fn measure_consistent(mut command: impl FnMut() -> Command) -> Distribution {
     let expected = command().output().unwrap();
     let samples = (0..sample_count())
         .map(|_| {
@@ -40,7 +54,7 @@ fn measure_consistent(mut command: impl FnMut() -> Command) -> Duration {
             elapsed
         })
         .collect();
-    p95(samples)
+    distribution(samples)
 }
 
 #[test]
@@ -109,6 +123,11 @@ fn warm_release_commands_meet_p95_targets() {
     std::fs::create_dir(&discovery_home).unwrap();
     std::fs::create_dir(&discovery_source).unwrap();
     std::fs::create_dir(&discovery_destination).unwrap();
+    let qualification = support::qualification_record(&discovery_source, "release");
+    eprintln!(
+        "qualification={}",
+        serde_json::to_string(&qualification).unwrap()
+    );
     for directory_index in 0..100 {
         let relative_directory = format!("directory-{directory_index:03}");
         let directory = discovery_source.join(&relative_directory);
@@ -117,15 +136,71 @@ fn warm_release_commands_meet_p95_targets() {
         std::fs::create_dir(&destination_directory).unwrap();
         for file_index in 33..99 {
             let name = format!("entry-{file_index:03}.txt");
-            std::fs::write(directory.join(&name), b"representative").unwrap();
-            std::fs::write(destination_directory.join(name), b"representative").unwrap();
+            let source_file = directory.join(&name);
+            let destination_file = destination_directory.join(name);
+            std::fs::write(&source_file, b"representative").unwrap();
+            std::fs::write(&destination_file, b"representative").unwrap();
+            let seconds = 1_700_000_000 + i64::from(directory_index * 100 + file_index);
+            support::set_fixture_modified_time(&source_file, seconds, 123_456_789);
+            support::set_fixture_modified_time(&destination_file, seconds, 123_456_789);
         }
+        support::set_fixture_modified_time(&directory, 1_700_100_000, 987_654_321);
+        support::set_fixture_modified_time(&destination_directory, 1_700_100_000, 987_654_321);
+    }
+    for (name, value) in [
+        ("com.apple.TextEncoding", b"utf-8".as_slice()),
+        (
+            "com.apple.ResourceFork",
+            b"representative-resource-fork".as_slice(),
+        ),
+    ] {
+        support::set_fixture_xattr(
+            &discovery_source.join("directory-000/entry-033.txt"),
+            name,
+            value,
+        );
+        support::set_fixture_xattr(
+            &discovery_destination.join("directory-000/entry-033.txt"),
+            name,
+            value,
+        );
+    }
+    support::set_fixture_mode(&discovery_source.join("directory-001/entry-033.txt"), 0o640);
+    support::set_fixture_mode(
+        &discovery_destination.join("directory-001/entry-033.txt"),
+        0o640,
+    );
+    support::set_fixture_bsd_flags(
+        &discovery_source.join("directory-002/entry-033.txt"),
+        libc::UF_NODUMP,
+    );
+    support::set_fixture_bsd_flags(
+        &discovery_destination.join("directory-002/entry-033.txt"),
+        libc::UF_NODUMP,
+    );
+    for directory_index in 0..3 {
+        let seconds = 1_700_000_000 + i64::from(directory_index * 100 + 33);
+        support::set_fixture_modified_time(
+            &discovery_source.join(format!("directory-{directory_index:03}/entry-033.txt")),
+            seconds,
+            123_456_789,
+        );
+        support::set_fixture_modified_time(
+            &discovery_destination.join(format!("directory-{directory_index:03}/entry-033.txt")),
+            seconds,
+            123_456_789,
+        );
     }
     std::fs::write(
         discovery_source.join("directory-050/.gripignore"),
         "*.ignored\n",
     )
     .unwrap();
+    support::set_fixture_modified_time(
+        &discovery_source.join("directory-050"),
+        1_700_100_000,
+        987_654_321,
+    );
     support::write_registry(
         &discovery_home,
         &[("tree", &discovery_source, &discovery_destination)],
@@ -147,7 +222,12 @@ fn warm_release_commands_meet_p95_targets() {
         .args(["baseline", "accept"])
         .output()
         .unwrap();
-    assert!(accepted.status.success());
+    assert!(
+        accepted.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&accepted.stdout),
+        String::from_utf8_lossy(&accepted.stderr)
+    );
     for directory_index in 0..100 {
         let source_directory = discovery_source.join(format!("directory-{directory_index:03}"));
         for file_index in 0..33 {
@@ -192,9 +272,7 @@ fn warm_release_commands_meet_p95_targets() {
             grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
         let records = observed
             .values()
-            .map(|entry| {
-                grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-            })
+            .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
             .collect();
         grip::push::plan::build_with_parent_requirements(
             grip::classification::model::ClassificationScope {
@@ -209,13 +287,15 @@ fn warm_release_commands_meet_p95_targets() {
         .unwrap()
     };
     let expected_plan = build_plan();
-    let execute_mode_plan = p95((0..sample_count())
-        .map(|_| {
-            let start = Instant::now();
-            assert_eq!(build_plan(), expected_plan);
-            start.elapsed()
-        })
-        .collect());
+    let execute_mode_plan = distribution(
+        (0..sample_count())
+            .map(|_| {
+                let start = Instant::now();
+                assert_eq!(build_plan(), expected_plan);
+                start.elapsed()
+            })
+            .collect(),
+    );
     let dry_run_output = Command::new(&binary)
         .env_clear()
         .env("HOME", root.path())
@@ -227,19 +307,27 @@ fn warm_release_commands_meet_p95_targets() {
         support::json(&dry_run_output)["details"]["plan_id"]["digest"],
         expected_plan.plan_id
     );
-    assert_eq!(expected_plan.counts.actionable, 6_600);
+    assert_eq!(expected_plan.counts.actionable, 6_700);
 
     for directory_index in 0..100 {
         let source_directory = discovery_source.join(format!("directory-{directory_index:03}"));
         let destination_directory =
             discovery_destination.join(format!("directory-{directory_index:03}"));
         for file_index in 0..66 {
-            std::fs::copy(
-                source_directory.join(format!("entry-{file_index:03}.txt")),
-                destination_directory.join(format!("entry-{file_index:03}.txt")),
-            )
-            .unwrap();
+            let source_file = source_directory.join(format!("entry-{file_index:03}.txt"));
+            let destination_file = destination_directory.join(format!("entry-{file_index:03}.txt"));
+            std::fs::copy(&source_file, &destination_file).unwrap();
+            support::copy_complete_metadata(
+                &source_file,
+                &destination_file,
+                grip::discovery::model::NodeKind::File,
+            );
         }
+        support::copy_complete_metadata(
+            &source_directory,
+            &destination_directory,
+            grip::discovery::model::NodeKind::Directory,
+        );
     }
     let pull_accepted = Command::new(&binary)
         .env_clear()
@@ -275,12 +363,7 @@ fn warm_release_commands_meet_p95_targets() {
             grip::observation::inspect(&home, &registry, &pull_state.accepted, &selection).unwrap();
         let records = observed
             .values()
-            .map(|entry| {
-                grip::classification::classify(
-                    entry,
-                    pull_state.accepted.baselines.get(&entry.identity),
-                )
-            })
+            .map(|entry| grip::classification::classify_accepted(entry, &pull_state.accepted))
             .collect();
         grip::mutation::plan::build_for(
             grip::mutation::model::MutationDirection::Pull,
@@ -295,13 +378,15 @@ fn warm_release_commands_meet_p95_targets() {
         .unwrap()
     };
     let expected_pull_plan = build_pull_plan();
-    let pull_execute_plan = p95((0..sample_count())
-        .map(|_| {
-            let start = Instant::now();
-            assert_eq!(build_pull_plan(), expected_pull_plan);
-            start.elapsed()
-        })
-        .collect());
+    let pull_execute_plan = distribution(
+        (0..sample_count())
+            .map(|_| {
+                let start = Instant::now();
+                assert_eq!(build_pull_plan(), expected_pull_plan);
+                start.elapsed()
+            })
+            .collect(),
+    );
     assert_eq!(expected_pull_plan.counts.selected, 10_000);
     assert_eq!(expected_pull_plan.counts.actionable, 3_300);
     for directory_index in 0..100 {
@@ -317,8 +402,15 @@ fn warm_release_commands_meet_p95_targets() {
         }
         for file_index in 50..66 {
             let name = format!("entry-{file_index:03}.txt");
-            std::fs::write(source_directory.join(&name), b"converged").unwrap();
-            std::fs::write(destination_directory.join(name), b"converged").unwrap();
+            let source_file = source_directory.join(&name);
+            let destination_file = destination_directory.join(name);
+            std::fs::write(&source_file, b"converged").unwrap();
+            std::fs::write(&destination_file, b"converged").unwrap();
+            support::copy_complete_metadata(
+                &source_file,
+                &destination_file,
+                grip::discovery::model::NodeKind::File,
+            );
         }
         for file_index in 66..76 {
             let name = format!("entry-{file_index:03}.txt");
@@ -341,12 +433,7 @@ fn warm_release_commands_meet_p95_targets() {
             grip::observation::inspect(&home, &registry, &sync_state.accepted, &selection).unwrap();
         let records = observed
             .values()
-            .map(|entry| {
-                grip::classification::classify(
-                    entry,
-                    sync_state.accepted.baselines.get(&entry.identity),
-                )
-            })
+            .map(|entry| grip::classification::classify_accepted(entry, &sync_state.accepted))
             .collect();
         grip::mutation::plan::build_sync_with_parent_requirements(
             grip::classification::model::ClassificationScope {
@@ -361,13 +448,15 @@ fn warm_release_commands_meet_p95_targets() {
         .unwrap()
     };
     let expected_sync_plan = build_sync_plan();
-    let sync_execute_plan = p95((0..sample_count())
-        .map(|_| {
-            let start = Instant::now();
-            assert_eq!(build_sync_plan(), expected_sync_plan);
-            start.elapsed()
-        })
-        .collect());
+    let sync_execute_plan = distribution(
+        (0..sample_count())
+            .map(|_| {
+                let start = Instant::now();
+                assert_eq!(build_sync_plan(), expected_sync_plan);
+                start.elapsed()
+            })
+            .collect(),
+    );
     assert_eq!(expected_sync_plan.counts.selected, 10_000);
     assert!(expected_sync_plan.counts.actionable > 0);
     assert!(expected_sync_plan.counts.converged > 0);
@@ -401,20 +490,97 @@ fn warm_release_commands_meet_p95_targets() {
             .args(["--output=json", "recovery", "list"]);
         command
     });
-    eprintln!(
-        "p95 help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?} sync_dry_run_mixed_10000={dry_run_sync:?} sync_execute_plan_mixed_10000={sync_execute_plan:?} delete_preview_10000={delete_preview:?} recovery_inventory_10000={recovery_inventory:?}"
+    let synchronization_container = root.path().join("synchronization-container");
+    let synchronization_source = root.path().join("synchronization-source");
+    let synchronization_destination = root.path().join("synchronization-destination");
+    std::fs::create_dir(&synchronization_container).unwrap();
+    let synchronization_home = support::minimal_home(&synchronization_container);
+    std::fs::create_dir(&synchronization_source).unwrap();
+    std::fs::create_dir(&synchronization_destination).unwrap();
+    for directory_index in 0..100 {
+        let source_directory =
+            synchronization_source.join(format!("directory-{directory_index:03}"));
+        let destination_directory =
+            synchronization_destination.join(format!("directory-{directory_index:03}"));
+        std::fs::create_dir(&source_directory).unwrap();
+        std::fs::create_dir(&destination_directory).unwrap();
+        for file_index in 0..99 {
+            let source_file = source_directory.join(format!("entry-{file_index:03}"));
+            let destination_file = destination_directory.join(format!("entry-{file_index:03}"));
+            std::fs::write(&source_file, b"accepted").unwrap();
+            std::fs::write(&destination_file, b"accepted").unwrap();
+            let seconds = 1_710_000_000 + i64::from(directory_index * 100 + file_index);
+            support::set_fixture_modified_time(&source_file, seconds, 246_813_579);
+            support::set_fixture_modified_time(&destination_file, seconds, 246_813_579);
+        }
+        support::set_fixture_modified_time(&source_directory, 1_710_100_000, 135_792_468);
+        support::set_fixture_modified_time(&destination_directory, 1_710_100_000, 135_792_468);
+    }
+    support::write_registry(
+        &synchronization_home,
+        &[(
+            "tree",
+            &synchronization_source,
+            &synchronization_destination,
+        )],
     );
-    assert!(help <= Duration::from_millis(100));
-    assert!(version <= Duration::from_millis(100));
-    assert!(validate <= Duration::from_secs(1));
-    assert!(mapping_list <= Duration::from_secs(1));
-    assert!(discovery <= Duration::from_secs(2));
-    assert!(status <= Duration::from_secs(2));
-    assert!(dry_run_push <= Duration::from_secs(2));
-    assert!(dry_run_pull <= Duration::from_secs(2));
-    assert!(pull_execute_plan <= Duration::from_secs(2));
-    assert!(dry_run_sync <= Duration::from_secs(2));
-    assert!(sync_execute_plan <= Duration::from_secs(2));
-    assert!(delete_preview <= Duration::from_secs(2));
-    assert!(recovery_inventory <= Duration::from_secs(2));
+    let initial_sync = Command::new(&binary)
+        .env_clear()
+        .env("HOME", root.path())
+        .env("GRIP_HOME", &synchronization_home)
+        .args(["baseline", "accept"])
+        .output()
+        .unwrap();
+    assert!(initial_sync.status.success());
+    for directory_index in 0..10 {
+        std::fs::write(
+            synchronization_source.join(format!("directory-{directory_index:03}/entry-000")),
+            b"representative synchronization change",
+        )
+        .unwrap();
+    }
+    let synchronization_start = Instant::now();
+    let synchronization = Command::new(&binary)
+        .env_clear()
+        .env("HOME", root.path())
+        .env("GRIP_HOME", &synchronization_home)
+        .arg("sync")
+        .output()
+        .unwrap();
+    let synchronization_duration = synchronization_start.elapsed();
+    assert!(synchronization.status.success());
+    eprintln!(
+        "distributions help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?} sync_dry_run_mixed_10000={dry_run_sync:?} sync_execute_plan_mixed_10000={sync_execute_plan:?} delete_preview_10000={delete_preview:?} recovery_inventory_10000={recovery_inventory:?} representative_sync_10000_entries_10_changes={synchronization_duration:?}"
+    );
+    for measured in [
+        help,
+        version,
+        validate,
+        mapping_list,
+        discovery,
+        status,
+        dry_run_push,
+        execute_mode_plan,
+        dry_run_pull,
+        pull_execute_plan,
+        dry_run_sync,
+        sync_execute_plan,
+        delete_preview,
+        recovery_inventory,
+    ] {
+        assert!(measured.p50 <= measured.p95 && measured.p95 <= measured.maximum);
+    }
+    assert!(help.p95 <= Duration::from_millis(100));
+    assert!(version.p95 <= Duration::from_millis(100));
+    assert!(validate.p95 <= Duration::from_secs(1));
+    assert!(mapping_list.p95 <= Duration::from_secs(1));
+    assert!(discovery.p95 <= Duration::from_secs(2));
+    assert!(status.p95 <= Duration::from_secs(2));
+    assert!(dry_run_push.p95 <= Duration::from_secs(2));
+    assert!(dry_run_pull.p95 <= Duration::from_secs(2));
+    assert!(pull_execute_plan.p95 <= Duration::from_secs(2));
+    assert!(dry_run_sync.p95 <= Duration::from_secs(2));
+    assert!(sync_execute_plan.p95 <= Duration::from_secs(2));
+    assert!(delete_preview.p95 <= Duration::from_secs(2));
+    assert!(recovery_inventory.p95 <= Duration::from_secs(2));
 }

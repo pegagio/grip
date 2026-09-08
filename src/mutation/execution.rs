@@ -163,16 +163,33 @@ where
                         receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
                         failure_reason = "recovery_failure";
                         fault(crate::mutation::FaultPhase::BeforeRecovery(index))?;
-                        let recovery = crate::mutation::recovery::preserve_with_post(
-                            &receipt,
-                            index,
-                            identity,
-                            &destination,
-                            expected_target.ok_or_else(|| {
-                                GripError::Internal("replacement has no target evidence".into())
-                            })?,
-                            Some(expected_origin),
-                        )?;
+                        let expected_target = expected_target.ok_or_else(|| {
+                            GripError::Internal("replacement has no target evidence".into())
+                        })?;
+                        let recovery = if let Some(metadata) = action.metadata.as_ref() {
+                            crate::mutation::recovery::preserve_complete(
+                                &receipt,
+                                index,
+                                identity,
+                                &destination,
+                                expected_target,
+                                metadata.expected_before.as_ref().ok_or_else(|| {
+                                    GripError::Internal(
+                                        "replacement has no complete target evidence".into(),
+                                    )
+                                })?,
+                                &metadata.expected_after,
+                            )?
+                        } else {
+                            crate::mutation::recovery::preserve_with_post(
+                                &receipt,
+                                index,
+                                identity,
+                                &destination,
+                                expected_target,
+                                Some(expected_origin),
+                            )?
+                        };
                         action.milestones.recovery = "preserved".into();
                         action.milestones.recovery_ref = Some(recovery.relative_ref);
                         failure_reason = "journal_failure";
@@ -212,6 +229,18 @@ where
                     }
                     action.milestones.publication = "visible".into();
                     action.milestones.durability_confirmed = true;
+                    if let Some(metadata) = action.metadata.as_ref() {
+                        crate::metadata::macos::apply_metadata_paths_with_hook(
+                            &origin,
+                            &destination,
+                            metadata.expected_after.node_kind,
+                            &metadata.expected_after.metadata,
+                            |phase| metadata_fault(&mut fault, index, phase),
+                        )
+                        .map_err(|error| {
+                            GripError::from_io("could not apply complete file metadata", error)
+                        })?;
+                    }
                     failure_reason = "journal_failure";
                     receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
                     failure_reason = "publication_failure";
@@ -222,11 +251,86 @@ where
                         index,
                     ))?;
                     crate::mutation::filesystem::verify_target(&destination, expected_origin)?;
+                    if let Some(metadata) = action.metadata.as_ref() {
+                        let complete = crate::observation::fingerprint::inspect_complete(
+                            &destination,
+                            metadata.expected_after.node_kind,
+                        )?;
+                        if complete.state != metadata.expected_after {
+                            return Err(GripError::Internal(
+                                "complete file verification failed".into(),
+                            ));
+                        }
+                    }
                     action.milestones.verification = "verified".into();
                     fault(crate::mutation::FaultPhase::AfterTargetVerification(index))?;
                     failure_reason = "cleanup_failure";
                     drop(staged);
                     fault(crate::mutation::FaultPhase::AfterStagingCleanup(index))?;
+                }
+                ActionKind::ApplyMetadata | ActionKind::FinalizeDirectoryMetadata => {
+                    let identity = action.identity.as_ref().ok_or_else(|| {
+                        GripError::Internal("metadata action has no managed identity".into())
+                    })?;
+                    let metadata = action.metadata.clone().ok_or_else(|| {
+                        GripError::Internal(
+                            "metadata action is missing complete transition evidence".into(),
+                        )
+                    })?;
+                    let (origin, expected_target_legacy) = match action.direction {
+                        MutationDirection::Push => {
+                            (identity.source_path(), action.expected_destination.as_ref())
+                        }
+                        MutationDirection::Pull => {
+                            (identity.destination_path(), action.expected_source.as_ref())
+                        }
+                    };
+                    if let Some(expected_before) = metadata.expected_before.as_ref() {
+                        action.milestones.recovery = "planned".into();
+                        receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
+                        failure_reason = "recovery_failure";
+                        fault(crate::mutation::FaultPhase::BeforeRecovery(index))?;
+                        let recovery = crate::mutation::recovery::preserve_complete(
+                            &receipt,
+                            index,
+                            identity,
+                            &destination,
+                            expected_target_legacy.ok_or_else(|| {
+                                GripError::Internal("metadata action has no target evidence".into())
+                            })?,
+                            expected_before,
+                            &metadata.expected_after,
+                        )?;
+                        action.milestones.recovery = "preserved".into();
+                        action.milestones.recovery_ref = Some(recovery.relative_ref);
+                        receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
+                        fault(crate::mutation::FaultPhase::AfterRecovery(index))?;
+                    }
+                    failure_reason = "publication_failure";
+                    action.milestones.publication = "visible".into();
+                    crate::metadata::macos::apply_metadata_paths_with_hook(
+                        &origin,
+                        &destination,
+                        metadata.expected_after.node_kind,
+                        &metadata.expected_after.metadata,
+                        |phase| metadata_fault(&mut fault, index, phase),
+                    )
+                    .map_err(|error| {
+                        GripError::from_io("could not apply complete metadata", error)
+                    })?;
+                    action.milestones.publication = "visible".into();
+                    action.milestones.durability_confirmed = true;
+                    failure_reason = "verification_failure";
+                    let verified = crate::observation::fingerprint::inspect_complete(
+                        &destination,
+                        metadata.expected_after.node_kind,
+                    )?;
+                    if verified.state != metadata.expected_after {
+                        return Err(GripError::Internal(
+                            "complete metadata verification failed".into(),
+                        ));
+                    }
+                    action.milestones.verification = "verified".into();
                 }
             }
             action.status = crate::mutation::model::ActionStatus::Completed;
@@ -399,9 +503,7 @@ where
     );
     let final_records = final_observed
         .values()
-        .map(|entry| {
-            classification::classify(entry, locked_state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| classification::classify_accepted(entry, &locked_state.accepted))
         .collect::<Vec<_>>();
     let candidate = finish_or_fail!(
         crate::baseline::build_from_actioned(&locked_state.accepted, &final_records, &actioned),
@@ -434,10 +536,10 @@ where
     if let Err(error) = fault(crate::mutation::FaultPhase::BeforeBaselinePublication) {
         return terminal_baseline_failure(receipt, plan, &locked_state, error, false, None);
     }
-    let generation = match crate::state::publication::publish_accepted_locked_with_fault(
+    let generation = match crate::state::publication::publish_complete_locked_with_fault(
         home,
         &locked_state,
-        &candidate.next,
+        &candidate.next.complete_baselines,
         state_fault,
     ) {
         Ok(Some(generation)) => generation,
@@ -570,6 +672,38 @@ where
     })
 }
 
+fn metadata_fault<F>(
+    fault: &mut F,
+    index: usize,
+    phase: crate::metadata::macos::MetadataApplyPhase,
+) -> std::io::Result<()>
+where
+    F: FnMut(crate::mutation::FaultPhase) -> Result<(), GripError>,
+{
+    use crate::metadata::macos::MetadataApplyPhase;
+    use crate::mutation::FaultPhase;
+
+    let phase = match phase {
+        MetadataApplyPhase::AfterProtectedFlagsCleared => {
+            FaultPhase::AfterMetadataProtectedFlagsCleared(index)
+        }
+        MetadataApplyPhase::AfterOwnership => FaultPhase::AfterMetadataOwnership(index),
+        MetadataApplyPhase::AfterAcl => FaultPhase::AfterMetadataAcl(index),
+        MetadataApplyPhase::AfterExtendedAttributes => {
+            FaultPhase::AfterMetadataExtendedAttributes(index)
+        }
+        MetadataApplyPhase::AfterPermissionMode => FaultPhase::AfterMetadataPermissionMode(index),
+        MetadataApplyPhase::AfterModificationTime => {
+            FaultPhase::AfterMetadataModificationTime(index)
+        }
+        MetadataApplyPhase::AfterBsdFlags => FaultPhase::AfterMetadataBsdFlags(index),
+        MetadataApplyPhase::AfterDurability => FaultPhase::AfterMetadataDurability(index),
+        MetadataApplyPhase::BeforeVerification => FaultPhase::BeforeMetadataVerification(index),
+        MetadataApplyPhase::AfterVerification => FaultPhase::AfterMetadataVerification(index),
+    };
+    fault(phase).map_err(|error| std::io::Error::other(error.to_string()))
+}
+
 fn rebuild_plan(
     home: &GripHome,
     registry: &RegistrySnapshot,
@@ -583,7 +717,7 @@ fn rebuild_plan(
         .map_err(|error| error.for_operation(operation_name))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     match operation {
         MutationOperation::Push => crate::mutation::plan::build_with_parent_requirements(
@@ -640,15 +774,66 @@ fn revalidate_action(
             "managed entry disappeared during action revalidation",
         )
     })?;
-    let record = classification::classify(entry, state.accepted.baselines.get(identity));
+    let record = classification::classify_accepted(entry, &state.accepted);
     let source_matches = record.source == action.expected_source;
-    let destination_matches = record.destination == action.expected_destination;
+    let created_directory_finalizer = action.kind == ActionKind::FinalizeDirectoryMetadata
+        && action
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.expected_before.is_none());
+    let descendant_directory_finalizer = action.kind == ActionKind::FinalizeDirectoryMetadata
+        && !action.dependencies.is_empty()
+        && action
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.expected_before.is_some());
+    let complete_finalizer_matches = if descendant_directory_finalizer {
+        action.metadata.as_ref().is_some_and(|metadata| {
+            let (origin, target) = match action.direction {
+                MutationDirection::Push => (
+                    record.source_complete.as_ref(),
+                    record.destination_complete.as_ref(),
+                ),
+                MutationDirection::Pull => (
+                    record.destination_complete.as_ref(),
+                    record.source_complete.as_ref(),
+                ),
+            };
+            let target_matches = metadata.expected_before.as_ref().is_some_and(|expected| {
+                target.is_some_and(|actual| {
+                    let mut normalized = actual.clone();
+                    normalized.metadata.modified_time = expected.metadata.modified_time;
+                    normalized == *expected
+                })
+            });
+            origin.is_some_and(|actual| *actual == metadata.expected_after) && target_matches
+        })
+    } else {
+        true
+    };
+    let destination_matches = if created_directory_finalizer {
+        record.destination.as_ref().is_some_and(|destination| {
+            destination.node_kind == crate::discovery::model::NodeKind::Directory
+        }) && action.metadata.as_ref().is_some_and(|metadata| {
+            record.source_complete.as_ref() == Some(&metadata.expected_after)
+        })
+    } else {
+        record.destination == action.expected_destination
+    };
     let classification_matches = operation != MutationOperation::Resolve
-        || record.classification == crate::classification::model::Classification::DivergentConflict;
-    if record.blocking && operation != MutationOperation::Resolve
+        || matches!(
+            record.classification,
+            crate::classification::model::Classification::DivergentConflict
+                | crate::classification::model::Classification::MetadataMigrationConflict
+        );
+    if record.blocking
+        && operation != MutationOperation::Resolve
+        && !created_directory_finalizer
+        && !descendant_directory_finalizer
         || !classification_matches
         || !source_matches
         || !destination_matches
+        || !complete_finalizer_matches
     {
         return Err(stale(
             operation,

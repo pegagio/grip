@@ -78,6 +78,8 @@ pub struct DeletionAction {
     pub target: std::path::PathBuf,
     pub target_path: SafePath,
     pub expected_target: SupportedState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_target_complete: Option<crate::metadata::model::SupportedEntryStateV3>,
     pub expected_absent_peer: String,
     pub expected_children: Vec<SafePath>,
     pub dependencies: Vec<usize>,

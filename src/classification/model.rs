@@ -7,6 +7,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Classification {
+    MetadataMigrationReady,
+    MetadataMigrationConflict,
     SourceAddition,
     InitialMatch,
     InitialCollision,
@@ -41,6 +43,12 @@ pub enum ChangedDimension {
     NodeKind,
     Content,
     PermissionMode,
+    Owner,
+    Group,
+    ModificationTime,
+    ExtendedAttribute,
+    AccessControlList,
+    BsdFlags,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,6 +71,16 @@ pub struct ClassificationRecord {
     pub source: Option<SupportedState>,
     pub destination: Option<SupportedState>,
     pub baseline: Option<SupportedState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_complete: Option<crate::metadata::model::SupportedEntryStateV3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination_complete: Option<crate::metadata::model::SupportedEntryStateV3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline_complete: Option<crate::metadata::model::SupportedEntryStateV3>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub compatibility_findings: Vec<crate::metadata::model::CompatibilityFinding>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub endpoint_capabilities: Vec<crate::metadata::model::EndpointCapabilityProfile>,
     pub prospective_direction: Direction,
     pub changed_dimensions: ChangedDimensions,
     pub attention: bool,
@@ -72,6 +90,8 @@ pub struct ClassificationRecord {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ClassificationCounts {
+    pub metadata_migration_ready: usize,
+    pub metadata_migration_conflict: usize,
     pub source_addition: usize,
     pub initial_match: usize,
     pub initial_collision: usize,
@@ -95,6 +115,8 @@ pub struct ClassificationCounts {
 impl ClassificationCounts {
     pub fn record(&mut self, classification: Classification) {
         match classification {
+            Classification::MetadataMigrationReady => self.metadata_migration_ready += 1,
+            Classification::MetadataMigrationConflict => self.metadata_migration_conflict += 1,
             Classification::SourceAddition => self.source_addition += 1,
             Classification::InitialMatch => self.initial_match += 1,
             Classification::InitialCollision => self.initial_collision += 1,

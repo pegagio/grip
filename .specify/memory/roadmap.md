@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.16 -> 1.0.17
-Bump rationale: Record verified completion of Feature 008.
+Version change: 1.0.18 -> 1.0.19
+Bump rationale: Record Feature 009 verification after its successful implementation debrief.
 
 Changes this revision:
-  - Transitioned Feature 008 from in-progress to verified
-  - Added the attributable Feature 008 verification report
+  - Transitioned Feature 009 from in-progress to verified
+  - Added the attributable Feature 009 debrief as verification evidence
 
-Specs affected: 008
+Specs affected: 009
 Open questions added/resolved: none
 
-Notes: Feature 008 verification is supported by its completed specification, implementation delta, validation evidence, and debrief report.
+Notes: Feature 009 completes and verifies the approved initial-product roadmap.
 -->
 
 # Grip — Spec Roadmap
@@ -147,8 +147,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Deletions, Tracking and Untracking, Safety and Recovery, Incremental Delivery Milestone 5
 - **Notes:** The specification settles the retirement portion of Q-06 and completes Q-11. Recovery actions requiring an authoritative side remain explicit. Verification evidence: `specs/008-authorized-deletion-retirement/roadmap-reviews/debrief-20260907T190356Z.md` (`PROCEED`, no findings).
 
-### 009 — Metadata and Filesystem Contract Completion  [status: planned]
+### 009 — Metadata and Filesystem Contract Completion  [status: verified]
 
+- **Spec dir:** `specs/009-metadata-filesystem-contract`
 - **Description:** Expand and finalize the supported macOS and Unix metadata contract, close filesystem edge cases, and verify the complete initial product against representative correctness and performance workloads.
 - **Outcome:** Grip detects, copies, compares, and verifies every promised metadata field when permitted; reports unsupported or unauthorized transitions precisely; enforces its supported-node boundary; and demonstrates the complete product-definition behavior without introducing disproportionate machinery.
 - **Scope (in):** Final metadata allowlist; permission mode; user and group identity representation; modification-time semantics; extended attributes; ACLs; supported BSD flags; directory metadata; final symbolic-link disposition; case and Unicode behavior; cross-filesystem capability reporting; hard-link and sparse-file detection; special-node and mount-boundary enforcement; end-to-end classification and mutation suites; representative performance acceptance.
@@ -156,7 +157,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 004, 008
 - **Governed by:** C-01, C-04, C-05, C-06, C-08, C-09, C-10, C-11
 - **Addresses:** `docs/product-definition.md` — Content and Metadata, Supported Node Boundary, Testing Direction, Incremental Delivery Milestone 6
-- **Notes:** The spec must complete Q-06, Q-07, and Q-08. Performance success must be measured on representative local trees without speculative caches, broad locks, or inode-tracking schemes.
+- **Notes:** The spec completes Q-06, Q-07, and Q-08. Representative macOS/APFS correctness and performance qualification passed without persistent caches, broad locks, parallel execution, or inode-tracking schemes. Verification evidence: `specs/009-metadata-filesystem-contract/roadmap-reviews/debrief-20260908T135643Z.md` (`PROCEED`, no findings).
 
 ## Open Questions
 
@@ -190,4 +191,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.0.16 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-07
+**Version**: 1.0.19 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-08

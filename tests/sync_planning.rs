@@ -99,3 +99,59 @@ fn unmanaged_destination_content_remains_a_non_action() {
     }));
     assert!(!source.join("unmanaged").exists());
 }
+
+#[test]
+fn sync_metadata_actions_are_directional_and_plan_identity_is_repeatable() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let grip_home = support::minimal_home(root.path());
+    let source_a = root.path().join("source-a");
+    let destination_a = root.path().join("destination-a");
+    let source_b = root.path().join("source-b");
+    let destination_b = root.path().join("destination-b");
+    for path in [&source_a, &destination_a, &source_b, &destination_b] {
+        fs::write(path, b"same").unwrap();
+    }
+    support::copy_complete_metadata(
+        &source_a,
+        &destination_a,
+        grip::discovery::model::NodeKind::File,
+    );
+    support::copy_complete_metadata(
+        &source_b,
+        &destination_b,
+        grip::discovery::model::NodeKind::File,
+    );
+    support::write_registry(
+        &grip_home,
+        &[
+            ("file", &source_a, &destination_a),
+            ("file", &source_b, &destination_b),
+        ],
+    );
+    assert!(
+        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
+            .status
+            .success()
+    );
+    support::set_fixture_mode(&source_a, 0o600);
+    support::set_fixture_mode(&destination_b, 0o640);
+    let first = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &["--output=json", "sync", "--dry-run"],
+    );
+    let second = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &["--output=json", "sync", "--dry-run"],
+    );
+    let first = support::json(&first);
+    let second = support::json(&second);
+    assert_eq!(first["details"]["plan_id"], second["details"]["plan_id"]);
+    let actions = first["details"]["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[0]["kind"], "apply_metadata");
+    assert_eq!(actions[0]["direction"], "push");
+    assert_eq!(actions[1]["kind"], "apply_metadata");
+    assert_eq!(actions[1]["direction"], "pull");
+}

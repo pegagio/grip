@@ -1,8 +1,8 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001, S004, S007, S008, S009, S010, S011]
-updated: 2026-09-07
+sources: [S001, S004, S007, S008, S009, S010, S011, S012]
+updated: 2026-09-08
 ---
 
 # Synchronization and conflicts
@@ -27,7 +27,10 @@ Mutating operations perform a complete preflight and block before the first muta
 
 Feature 008 executes a one-sided deletion only through `delete` with an explicit authoritative side. A changed remaining peer creates a delete/change blocker, ordinary push, pull, and sync continue to delete nothing, and successful deletion preserves recovery evidence before removing the peer and retiring the accepted record. Converged deletions and policy-driven membership changes are handled separately by explicit retirement. (S011)
 
+Feature 009 applies every direction and conflict rule to the complete metadata state. Metadata-only changes are ordinary actions, directory metadata finalizes after descendants, and resolution always transfers one complete winner rather than combining content or metadata fields. (S012)
+
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
 - [Baseline classification and status](./baseline-classification-and-status.md)
+- [Metadata and filesystem contract](./metadata-and-filesystem-contract.md)

@@ -1,8 +1,8 @@
 ---
 title: Deletion, retirement, and recovery
 type: component
-sources: [S011]
-updated: 2026-09-07
+sources: [S011, S012]
+updated: 2026-09-08
 ---
 
 # Deletion, retirement, and recovery
@@ -19,6 +19,8 @@ Directory removal requires a fresh verified-empty enumeration. Unmanaged descend
 
 `grip recovery remove [-n|--dry-run] --confirm RECOVERY_REF...` removes only exact confirmed recoverable bytes. Cleanup preserves immutable provenance and publishes a cleaned tombstone; partial failure distinguishes removed, failed, and unattempted entries without changing accepted registry or baseline authority. (S011)
 
+Feature 009 extends new recovery evidence to Recovery Metadata V2, binding complete prior mode, numeric ownership, mtime, xattrs, ordered ACL, BSD flags, payload reference, and preservation verification to the action. V1 remains strictly readable under its original contract but cannot authorize a new replacement under the expanded metadata promise. (S012)
+
 ## Related pages
 
 - [Command-line and path selection](./command-line-and-path-selection.md)
@@ -26,3 +28,4 @@ Directory removal requires a fresh verified-empty enumeration. Unmanaged descend
 - [Filesystem support boundaries](./filesystem-support-boundaries.md)
 - [Safety and recovery model](./safety-and-recovery-model.md)
 - [Synchronization and conflicts](./synchronization-and-conflicts.md)
+- [Metadata and filesystem contract](./metadata-and-filesystem-contract.md)

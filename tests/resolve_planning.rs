@@ -47,6 +47,35 @@ fn resolution_winner_determines_transfer_direction_and_plan_identity() {
 }
 
 #[test]
+fn resolution_plan_selects_one_complete_content_and_metadata_winner() {
+    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    fs::write(&source, "source content").unwrap();
+    support::set_fixture_mode(&source, 0o600);
+    fs::write(&destination, "destination content").unwrap();
+    support::set_fixture_mode(&destination, 0o640);
+    let output = support::command_with_grip_home(
+        root.path(),
+        &grip_home,
+        &[
+            "--output=json",
+            "resolve",
+            source.to_str().unwrap(),
+            "--source",
+            "--dry-run",
+        ],
+    );
+    assert!(output.status.success());
+    let action = &support::json(&output)["details"]["actions"][0];
+    assert_eq!(action["direction"], "push");
+    assert_eq!(action["kind"], "replace_file");
+    assert_eq!(
+        action["metadata"]["expected_after"]["metadata"]["permission_mode"],
+        "0600"
+    );
+    assert_eq!(action["metadata"]["recovery_schema_version"], 2);
+}
+
+#[test]
 fn resolution_rejects_a_non_conflicting_entry() {
     let (root, grip_home, source, _) = support::accepted_file_fixture();
     let output = support::command_with_grip_home(
@@ -75,6 +104,11 @@ fn resolution_rejects_each_supported_non_conflict_change_shape() {
             "converged" => {
                 fs::write(&source, "same change").unwrap();
                 fs::write(&destination, "same change").unwrap();
+                support::copy_complete_metadata(
+                    &source,
+                    &destination,
+                    grip::discovery::model::NodeKind::File,
+                );
             }
             _ => unreachable!(),
         }

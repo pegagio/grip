@@ -74,6 +74,17 @@ pub fn classify(entry: &ObservedEntry, baseline: Option<&SupportedState>) -> Cla
         source: entry.source.clone(),
         destination: entry.destination.clone(),
         baseline: baseline.cloned(),
+        source_complete: entry
+            .source_complete
+            .as_ref()
+            .map(|value| value.state.clone()),
+        destination_complete: entry
+            .destination_complete
+            .as_ref()
+            .map(|value| value.state.clone()),
+        baseline_complete: None,
+        compatibility_findings: entry.metadata_findings.clone(),
+        endpoint_capabilities: entry.endpoint_capabilities.clone(),
         prospective_direction: direction,
         changed_dimensions: ChangedDimensions {
             source_to_baseline: changed_dimensions(source, baseline),
@@ -83,6 +94,139 @@ pub fn classify(entry: &ObservedEntry, baseline: Option<&SupportedState>) -> Cla
         attention,
         blocking: blocking || entry.blocking,
         reasons,
+    }
+}
+
+/// Classify with explicit State V2 migration semantics or complete State V3 equality.
+pub fn classify_accepted(
+    entry: &ObservedEntry,
+    accepted: &crate::state::AcceptedState,
+) -> ClassificationRecord {
+    let legacy = accepted.baselines.get(&entry.identity);
+    let complete = accepted.complete_baselines.get(&entry.identity);
+    if entry.source_complete.is_none() && entry.destination_complete.is_none() && complete.is_none()
+    {
+        return classify(entry, legacy);
+    }
+    let source = entry.source_complete.as_ref().map(|value| &value.state);
+    let destination = entry
+        .destination_complete
+        .as_ref()
+        .map(|value| &value.state);
+    let unsafe_destination = entry
+        .unsupported
+        .iter()
+        .any(|reason| reason.starts_with("destination:") || reason == "wrong_node_kind");
+    let classification = if entry.membership == Membership::Untracked {
+        Classification::UntrackedPendingRetirement
+    } else if entry.membership == Membership::Ignored && (legacy.is_some() || complete.is_some()) {
+        Classification::NewlyIgnoredPendingRetirement
+    } else if entry.blocking && unsafe_destination {
+        Classification::UnsafeCollision
+    } else if entry.blocking {
+        Classification::UnsupportedManaged
+    } else if accepted.schema_version == Some(2) && legacy.is_some() {
+        if source.is_some() && source == destination {
+            Classification::MetadataMigrationReady
+        } else {
+            Classification::MetadataMigrationConflict
+        }
+    } else if let Some(baseline) = complete {
+        classify_complete_with_baseline(source, destination, baseline)
+    } else {
+        classify_complete_without_baseline(source, destination)
+    };
+    let (direction, attention, blocking, reason) = properties(classification);
+    let mut record = classify(entry, legacy);
+    record.classification = classification;
+    record.prospective_direction = direction;
+    record.attention = attention;
+    record.blocking = blocking || entry.blocking;
+    record.reasons = entry.unsupported.clone();
+    if !reason.is_empty() {
+        record.reasons.push(reason.into());
+    }
+    record.source_complete = source.cloned();
+    record.destination_complete = destination.cloned();
+    record.baseline_complete = complete.cloned();
+    record.changed_dimensions = ChangedDimensions {
+        source_to_baseline: changed_dimensions_complete(source, complete),
+        destination_to_baseline: changed_dimensions_complete(destination, complete),
+        source_to_destination: changed_dimensions_complete(source, destination),
+    };
+    record
+}
+
+pub fn changed_dimensions_complete(
+    first: Option<&crate::metadata::model::SupportedEntryStateV3>,
+    second: Option<&crate::metadata::model::SupportedEntryStateV3>,
+) -> Option<Vec<ChangedDimension>> {
+    let (Some(first), Some(second)) = (first, second) else {
+        return None;
+    };
+    if first.node_kind != second.node_kind {
+        return Some(vec![ChangedDimension::NodeKind]);
+    }
+    let mut dimensions = Vec::new();
+    if first.content != second.content {
+        dimensions.push(ChangedDimension::Content);
+    }
+    let a = &first.metadata;
+    let b = &second.metadata;
+    if a.permission_mode != b.permission_mode {
+        dimensions.push(ChangedDimension::PermissionMode);
+    }
+    if a.uid != b.uid {
+        dimensions.push(ChangedDimension::Owner);
+    }
+    if a.gid != b.gid {
+        dimensions.push(ChangedDimension::Group);
+    }
+    if a.modified_time != b.modified_time {
+        dimensions.push(ChangedDimension::ModificationTime);
+    }
+    if a.extended_attributes != b.extended_attributes {
+        dimensions.push(ChangedDimension::ExtendedAttribute);
+    }
+    if a.acl != b.acl {
+        dimensions.push(ChangedDimension::AccessControlList);
+    }
+    if a.bsd_flags != b.bsd_flags {
+        dimensions.push(ChangedDimension::BsdFlags);
+    }
+    Some(dimensions)
+}
+
+fn classify_complete_without_baseline(
+    source: Option<&crate::metadata::model::SupportedEntryStateV3>,
+    destination: Option<&crate::metadata::model::SupportedEntryStateV3>,
+) -> Classification {
+    match (source, destination) {
+        (Some(_), None) => Classification::SourceAddition,
+        (Some(a), Some(b)) if a == b => Classification::InitialMatch,
+        (Some(_), Some(_)) => Classification::InitialCollision,
+        _ => Classification::DestinationOnlyUnmanaged,
+    }
+}
+
+fn classify_complete_with_baseline(
+    source: Option<&crate::metadata::model::SupportedEntryStateV3>,
+    destination: Option<&crate::metadata::model::SupportedEntryStateV3>,
+    baseline: &crate::metadata::model::SupportedEntryStateV3,
+) -> Classification {
+    match (source, destination) {
+        (None, None) => Classification::ConvergedDeletion,
+        (None, Some(value)) if value == baseline => Classification::SourceSideDeletion,
+        (None, Some(_)) => Classification::DeleteChangeConflict,
+        (Some(value), None) if value == baseline => Classification::DestinationSideDeletion,
+        (Some(_), None) => Classification::ChangeDeleteConflict,
+        (Some(a), Some(b)) if a == baseline && b == baseline => Classification::Synchronized,
+        (Some(a), Some(b)) if a != baseline && b == baseline => Classification::SourceOnlyChange,
+        (Some(a), Some(b)) if a == baseline && b != baseline => {
+            Classification::DestinationOnlyChange
+        }
+        (Some(a), Some(b)) if a == b => Classification::ConvergedTwoSidedChange,
+        (Some(_), Some(_)) => Classification::DivergentConflict,
     }
 }
 
@@ -127,6 +271,12 @@ fn classify_with_baseline(
 
 fn properties(classification: Classification) -> (Direction, bool, bool, &'static str) {
     match classification {
+        Classification::MetadataMigrationReady => {
+            (Direction::None, true, false, "metadata_migration_ready")
+        }
+        Classification::MetadataMigrationConflict => {
+            (Direction::None, true, true, "metadata_migration_conflict")
+        }
         Classification::Synchronized => (Direction::None, false, false, ""),
         Classification::DestinationOnlyUnmanaged => {
             (Direction::None, false, false, "unmanaged_destination")

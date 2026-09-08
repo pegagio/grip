@@ -85,6 +85,28 @@ pub fn validate_recovered_compatibility(
             }
         }
     }
+    for (identity, baseline) in &accepted.complete_baselines {
+        for path in [identity.source_path(), identity.destination_path()] {
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(GripError::InvalidConfiguration(
+                        "recovered registry resolves an accepted identity through a symbolic link"
+                            .into(),
+                    ));
+                }
+                Ok(_) => {
+                    crate::observation::fingerprint::inspect_complete(&path, baseline.node_kind)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(GripError::from_io(
+                        "could not inspect recovered registry payload compatibility",
+                        error,
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
 }
 

@@ -190,7 +190,12 @@ fn registry_compatibility(
             .map_err(|_| GripError::CorruptState("recovered registry is not UTF-8".into()))?,
     )?;
     let state = crate::state::publication::load(home)?;
-    for identity in state.accepted.baselines.keys() {
+    for identity in state
+        .accepted
+        .baselines
+        .keys()
+        .chain(state.accepted.complete_baselines.keys())
+    {
         if !recovered.mappings().iter().any(|mapping| {
             identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
         }) {
@@ -233,7 +238,7 @@ fn state_compatibility(
 ) -> Result<serde_json::Value, GripError> {
     let located = crate::recovery::inventory::locate_manifest(home, reference)?;
     let bytes = crate::mutation::filesystem::read_private_file(&located.payload_path)?;
-    let recovered = crate::state::decode_accepted(Some(&bytes))?;
+    let recovered = crate::state::decode_current_accepted(&bytes)?;
     let RecoveryRef::AcceptedState { generation, digest } = reference else {
         unreachable!()
     };
@@ -245,7 +250,11 @@ fn state_compatibility(
         ));
     }
     let registry = crate::registry::publication::load(home, false)?;
-    for identity in recovered.baselines.keys() {
+    for identity in recovered
+        .baselines
+        .keys()
+        .chain(recovered.complete_baselines.keys())
+    {
         if !registry.registry.mappings().iter().any(|mapping| {
             identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
         }) {
@@ -344,7 +353,12 @@ fn restore_registry(
             .map_err(|_| GripError::CorruptState("recovered registry is not UTF-8".into()))?,
     )?;
     let state = crate::state::publication::load(home)?;
-    for identity in state.accepted.baselines.keys() {
+    for identity in state
+        .accepted
+        .baselines
+        .keys()
+        .chain(state.accepted.complete_baselines.keys())
+    {
         if !recovered_registry.mappings().iter().any(|mapping| {
             identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
         }) {
@@ -450,7 +464,7 @@ fn restore_state(
 ) -> Result<RestorePlan, GripError> {
     let located = crate::recovery::inventory::locate_manifest(home, &expected.reference)?;
     let bytes = crate::mutation::filesystem::read_private_file(&located.payload_path)?;
-    let recovered = crate::state::decode_accepted(Some(&bytes))?;
+    let recovered = crate::state::decode_current_accepted(&bytes)?;
     let RecoveryRef::AcceptedState { generation, digest } = &expected.reference else {
         unreachable!()
     };
@@ -474,7 +488,11 @@ fn restore_state(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| GripError::CorruptState("state recovery lacks post digest".into()))?;
     let registry = crate::registry::publication::load(home, false)?;
-    for identity in recovered.baselines.keys() {
+    for identity in recovered
+        .baselines
+        .keys()
+        .chain(recovered.complete_baselines.keys())
+    {
         if !registry.registry.mappings().iter().any(|mapping| {
             identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
         }) {
@@ -591,6 +609,7 @@ fn restore_payload(
     prior
         .validate()
         .map_err(|message| GripError::CorruptState(message.into()))?;
+    let complete_recovery = load_complete_recovery(&located, &expected.reference, &target)?;
     let post = if located.payload.expected_post_evidence.is_null() {
         None
     } else {
@@ -631,6 +650,11 @@ fn restore_payload(
             ));
         }
     };
+    let in_place_complete_restore = occupied.as_ref().is_some_and(|current| {
+        complete_recovery.is_some()
+            && current.node_kind == prior.node_kind
+            && current.content == prior.content
+    });
     let mut receipt = crate::operation::publication::initialize_typed(
         home,
         "recovery_restore",
@@ -716,7 +740,46 @@ fn restore_payload(
                 );
             }
         };
-        let displaced =
+        let displaced = if in_place_complete_restore {
+            let current_complete =
+                match crate::observation::fingerprint::inspect_complete(&target, current.node_kind)
+                {
+                    Ok(value) => value.state,
+                    Err(error) => {
+                        return restore_fail(
+                            &mut receipt,
+                            &mut result,
+                            "preservation",
+                            error,
+                            false,
+                            "not_attempted",
+                            false,
+                        );
+                    }
+                };
+            match crate::mutation::recovery::preserve_complete(
+                &receipt,
+                0,
+                &identity,
+                &target,
+                current,
+                &current_complete,
+                &complete_recovery.as_ref().unwrap().0.payload.prior_state,
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "preservation",
+                        error,
+                        false,
+                        "not_attempted",
+                        false,
+                    );
+                }
+            }
+        } else {
             match crate::mutation::recovery::preserve(&receipt, 0, &identity, &target, current) {
                 Ok(value) => value,
                 Err(error) => {
@@ -730,137 +793,235 @@ fn restore_payload(
                         false,
                     );
                 }
-            };
+            }
+        };
         result.actions[0].milestones.recovery = "preserved".into();
         result.actions[0].milestones.recovery_ref = Some(displaced.relative_ref);
-        if let Err(error) = crate::mutation::filesystem::remove_verified(&target, current) {
-            return restore_fail(
-                &mut receipt,
-                &mut result,
-                "displacement",
-                error,
-                false,
-                "not_attempted",
-                false,
-            );
-        }
-        result.actions[0].milestones.publication = "displaced".into();
-    }
-    match prior.node_kind {
-        NodeKind::File => {
-            if fault == Some(RestoreFault::Staging) {
+        if !in_place_complete_restore {
+            if let Err(error) = crate::mutation::filesystem::remove_verified(&target, current) {
                 return restore_fail(
                     &mut receipt,
                     &mut result,
-                    "staging",
-                    GripError::Internal("injected restore staging failure".into()),
+                    "displacement",
+                    error,
                     false,
                     "not_attempted",
                     false,
                 );
             }
-            let mut staged = match crate::mutation::filesystem::stage_file_for(
-                crate::mutation::model::MutationDirection::Push,
-                &located.payload_path,
-                &target,
-                &prior,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
+            result.actions[0].milestones.publication = "displaced".into();
+        }
+    }
+    if in_place_complete_restore {
+        let (complete, origin) = complete_recovery.as_ref().unwrap();
+        if let Err(error) = crate::metadata::macos::apply_recovery_metadata_paths(
+            origin,
+            &target,
+            complete.payload.prior_state.node_kind,
+            &complete.payload.prior_state.metadata,
+        ) {
+            return restore_fail(
+                &mut receipt,
+                &mut result,
+                "metadata_application",
+                GripError::from_io("could not restore complete metadata", error),
+                true,
+                "not_attempted",
+                false,
+            );
+        }
+        result.actions[0].milestones.publication = "visible".into();
+        if fault == Some(RestoreFault::Verification) {
+            return restore_fail(
+                &mut receipt,
+                &mut result,
+                "verification",
+                GripError::Internal("injected restore verification failure".into()),
+                true,
+                "failed",
+                true,
+            );
+        }
+        if let Err(error) = verify_restored_target(&target, &prior, complete_recovery.as_ref()) {
+            return restore_fail(
+                &mut receipt,
+                &mut result,
+                "verification",
+                error,
+                true,
+                "failed",
+                true,
+            );
+        }
+    } else {
+        match prior.node_kind {
+            NodeKind::File => {
+                if fault == Some(RestoreFault::Staging) {
                     return restore_fail(
                         &mut receipt,
                         &mut result,
                         "staging",
+                        GripError::Internal("injected restore staging failure".into()),
+                        false,
+                        "not_attempted",
+                        false,
+                    );
+                }
+                let mut staged = match crate::mutation::filesystem::stage_file_for(
+                    crate::mutation::model::MutationDirection::Push,
+                    &located.payload_path,
+                    &target,
+                    &prior,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return restore_fail(
+                            &mut receipt,
+                            &mut result,
+                            "staging",
+                            error,
+                            false,
+                            "not_attempted",
+                            false,
+                        );
+                    }
+                };
+                result.actions[0].milestones.staging = "verified".into();
+                if fault == Some(RestoreFault::Publication) {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "publication",
+                        GripError::Internal("injected restore publication failure".into()),
+                        false,
+                        "not_attempted",
+                        false,
+                    );
+                }
+                if let Err(error) =
+                    crate::mutation::filesystem::publish_addition(&mut staged, &target)
+                {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "publication",
                         error,
                         false,
                         "not_attempted",
                         false,
                     );
                 }
-            };
-            result.actions[0].milestones.staging = "verified".into();
-            if fault == Some(RestoreFault::Publication) {
+                result.actions[0].milestones.publication = "visible".into();
+                if let Some((complete, origin)) = complete_recovery.as_ref()
+                    && let Err(error) = crate::metadata::macos::apply_recovery_metadata_paths(
+                        origin,
+                        &target,
+                        complete.payload.prior_state.node_kind,
+                        &complete.payload.prior_state.metadata,
+                    )
+                {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "metadata_application",
+                        GripError::from_io("could not restore complete metadata", error),
+                        true,
+                        "not_attempted",
+                        false,
+                    );
+                }
+                if fault == Some(RestoreFault::Verification) {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "verification",
+                        GripError::Internal("injected restore verification failure".into()),
+                        true,
+                        "failed",
+                        true,
+                    );
+                }
+                if let Err(error) =
+                    verify_restored_target(&target, &prior, complete_recovery.as_ref())
+                {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "verification",
+                        error,
+                        true,
+                        "failed",
+                        true,
+                    );
+                }
+            }
+            NodeKind::Directory => {
+                if let Err(error) = crate::mutation::filesystem::create_directory(&target) {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "publication",
+                        error,
+                        false,
+                        "not_attempted",
+                        false,
+                    );
+                }
+                result.actions[0].milestones.publication = "visible".into();
+                if let Some((complete, origin)) = complete_recovery.as_ref()
+                    && let Err(error) = crate::metadata::macos::apply_recovery_metadata_paths(
+                        origin,
+                        &target,
+                        complete.payload.prior_state.node_kind,
+                        &complete.payload.prior_state.metadata,
+                    )
+                {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "metadata_application",
+                        GripError::from_io("could not restore complete metadata", error),
+                        true,
+                        "not_attempted",
+                        false,
+                    );
+                }
+                if fault == Some(RestoreFault::Verification) {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "verification",
+                        GripError::Internal("injected restore verification failure".into()),
+                        true,
+                        "failed",
+                        true,
+                    );
+                }
+                if let Err(error) =
+                    verify_restored_target(&target, &prior, complete_recovery.as_ref())
+                {
+                    return restore_fail(
+                        &mut receipt,
+                        &mut result,
+                        "verification",
+                        error,
+                        true,
+                        "failed",
+                        true,
+                    );
+                }
+            }
+            _ => {
                 return restore_fail(
                     &mut receipt,
                     &mut result,
                     "publication",
-                    GripError::Internal("injected restore publication failure".into()),
+                    GripError::CorruptState("recovery describes unsupported payload state".into()),
                     false,
                     "not_attempted",
                     false,
                 );
             }
-            if let Err(error) = crate::mutation::filesystem::publish_addition(&mut staged, &target)
-            {
-                return restore_fail(
-                    &mut receipt,
-                    &mut result,
-                    "publication",
-                    error,
-                    false,
-                    "not_attempted",
-                    false,
-                );
-            }
-            result.actions[0].milestones.publication = "visible".into();
-            if fault == Some(RestoreFault::Verification) {
-                return restore_fail(
-                    &mut receipt,
-                    &mut result,
-                    "verification",
-                    GripError::Internal("injected restore verification failure".into()),
-                    true,
-                    "failed",
-                    true,
-                );
-            }
-            if let Err(error) = crate::mutation::filesystem::verify_target(&target, &prior) {
-                return restore_fail(
-                    &mut receipt,
-                    &mut result,
-                    "verification",
-                    error,
-                    true,
-                    "failed",
-                    true,
-                );
-            }
-        }
-        NodeKind::Directory => {
-            if let Err(error) = crate::mutation::filesystem::create_directory(&target) {
-                return restore_fail(
-                    &mut receipt,
-                    &mut result,
-                    "publication",
-                    error,
-                    false,
-                    "not_attempted",
-                    false,
-                );
-            }
-            result.actions[0].milestones.publication = "visible".into();
-            if let Err(error) = crate::mutation::filesystem::verify_target(&target, &prior) {
-                return restore_fail(
-                    &mut receipt,
-                    &mut result,
-                    "verification",
-                    error,
-                    true,
-                    "failed",
-                    true,
-                );
-            }
-        }
-        _ => {
-            return restore_fail(
-                &mut receipt,
-                &mut result,
-                "publication",
-                GripError::CorruptState("recovery describes unsupported payload state".into()),
-                false,
-                "not_attempted",
-                false,
-            );
         }
     }
     result.actions[0].status = "completed".into();
@@ -899,6 +1060,87 @@ fn restore_payload(
     result.status = "completed".into();
     result.operation_record = Some(receipt.operation_id().into());
     Ok(result)
+}
+
+fn load_complete_recovery(
+    located: &crate::recovery::inventory::LocatedRecovery,
+    reference: &RecoveryRef,
+    target: &Path,
+) -> Result<Option<(crate::recovery::model::RecoveryMetadataEnvelopeV2, PathBuf)>, GripError> {
+    let path = located.directory.join("metadata-v2.json");
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(GripError::CorruptState(
+                "complete recovery metadata is not a regular file".into(),
+            ));
+        }
+        Err(error) => {
+            return Err(GripError::from_io(
+                "could not inspect complete recovery metadata",
+                error,
+            ));
+        }
+    }
+    let bytes = crate::mutation::filesystem::read_private_file(&path)?;
+    let metadata = crate::recovery::model::decode_metadata_v2(&bytes)?;
+    let RecoveryRef::Payload {
+        operation_id,
+        action_index,
+    } = reference
+    else {
+        return Err(GripError::CorruptState(
+            "complete payload recovery has a non-payload reference".into(),
+        ));
+    };
+    if metadata.payload.operation_id != *operation_id
+        || metadata.payload.action_index != *action_index
+    {
+        return Err(GripError::CorruptState(
+            "complete recovery metadata does not match its public reference".into(),
+        ));
+    }
+    let identity = EntryIdentity::new(
+        metadata.payload.identity.mapping.clone(),
+        decode_hex(&metadata.payload.identity.relative_path_hex)?,
+    )
+    .map_err(|message| GripError::CorruptState(message.into()))?;
+    if target != identity.source_path() && target != identity.destination_path() {
+        return Err(GripError::CorruptState(
+            "complete recovery metadata does not match its bound target".into(),
+        ));
+    }
+    let payload_ref = metadata.payload.payload_ref.as_deref().ok_or_else(|| {
+        GripError::CorruptState("complete recovery metadata has no private metadata object".into())
+    })?;
+    let origin = located.directory.join(payload_ref);
+    if !origin.is_file() {
+        return Err(GripError::CorruptState(
+            "complete recovery private metadata object is unavailable".into(),
+        ));
+    }
+    Ok(Some((metadata, origin)))
+}
+
+fn verify_restored_target(
+    target: &Path,
+    prior: &SupportedState,
+    complete: Option<&(crate::recovery::model::RecoveryMetadataEnvelopeV2, PathBuf)>,
+) -> Result<(), GripError> {
+    crate::mutation::filesystem::verify_target(target, prior)?;
+    if let Some((metadata, _)) = complete {
+        let observed = crate::observation::fingerprint::inspect_complete(
+            target,
+            metadata.payload.prior_state.node_kind,
+        )?;
+        if observed.state != metadata.payload.prior_state {
+            return Err(GripError::CorruptState(
+                "restored complete state does not match Recovery Metadata V2".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_target(path: &Path) -> Result<(), GripError> {

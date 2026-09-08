@@ -114,6 +114,7 @@ fn inspect_pass(
             )
             .and_then(|()| inspect_tree_destination(mapping, &mut records, &mut node_evidence))?,
         }
+        append_name_compatibility_findings(mapping, &mut records)?;
     }
     records.sort();
     Ok(DiscoveryPass {
@@ -122,6 +123,85 @@ fn inspect_pass(
         node_evidence,
         policy_evidence,
     })
+}
+
+fn append_name_compatibility_findings(
+    mapping: &Mapping,
+    records: &mut Vec<DiscoveryRecord>,
+) -> Result<(), GripError> {
+    if mapping.kind != MappingKind::Tree {
+        return Ok(());
+    }
+    let mut capability_root = mapping.destination.as_path();
+    while !capability_root.exists() {
+        capability_root = capability_root.parent().ok_or_else(|| {
+            GripError::discovery_invalid(
+                OPERATION,
+                "inconclusive_name_comparison",
+                vec![mapping.destination.display().to_string()],
+                "No existing destination ancestor can qualify APFS name comparison",
+            )
+        })?;
+    }
+    let file = std::fs::File::open(capability_root)
+        .map_err(|error| unavailable(capability_root, "path_unavailable", error))?;
+    let profile = crate::metadata::macos::endpoint_capability_profile(
+        &file,
+        crate::metadata::model::EndpointRole::Destination,
+        SafePath::from_path(capability_root).display,
+    )
+    .map_err(|error| unavailable(capability_root, "capability_unavailable", error))?;
+    let case_sensitive = match profile.case_sensitive {
+        crate::metadata::model::Evidence::Observed { value } => value,
+        _ => {
+            let eligible = records
+                .iter()
+                .filter(|record| {
+                    record.mapping_source == mapping.source
+                        && record.category == RecordCategory::Eligible
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            for mut record in eligible {
+                record.category = RecordCategory::UnsafeDestinationCollision;
+                record.reason = Some("inconclusive_name_comparison");
+                record.blocking = true;
+                records.push(record);
+            }
+            return Ok(());
+        }
+    };
+    let mut groups: BTreeMap<Vec<u8>, Vec<DiscoveryRecord>> = BTreeMap::new();
+    let mut inconclusive = Vec::new();
+    for record in records.iter().filter(|record| {
+        record.mapping_source == mapping.source && record.category == RecordCategory::Eligible
+    }) {
+        let Some(relative) = record.relative_path.as_ref() else {
+            continue;
+        };
+        match crate::metadata::macos::name_comparison_key(relative.raw_bytes(), case_sensitive) {
+            crate::metadata::model::Evidence::Observed { value } => {
+                groups.entry(value).or_default().push(record.clone());
+            }
+            _ => {
+                let mut finding = record.clone();
+                finding.category = RecordCategory::UnsafeDestinationCollision;
+                finding.reason = Some("inconclusive_name_comparison");
+                finding.blocking = true;
+                inconclusive.push(finding);
+            }
+        }
+    }
+    records.extend(inconclusive);
+    for group in groups.into_values().filter(|group| group.len() > 1) {
+        for mut record in group {
+            record.category = RecordCategory::UnsafeDestinationCollision;
+            record.reason = Some("apfs_name_collision");
+            record.blocking = true;
+            records.push(record);
+        }
+    }
+    Ok(())
 }
 
 fn inspect_file_destination(
@@ -372,6 +452,7 @@ fn inspect_tree_mapping(
         .map_err(|error| unavailable(&mapping.source, "directory_unreadable", error))?;
     let root_metadata = filesystem::NodeMetadata {
         stat: *root.root_metadata(),
+        extended_flags: None,
     };
     evidence_map.insert(
         (EvidenceSide::Source, mapping.source.clone(), Vec::new()),

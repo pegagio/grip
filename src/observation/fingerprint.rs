@@ -11,6 +11,95 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+/// Construct a complete Feature 009 fingerprint without following the final path component.
+pub fn inspect_complete(
+    path: &Path,
+    expected_kind: NodeKind,
+) -> Result<super::model::CompleteObservedState, GripError> {
+    if !matches!(expected_kind, NodeKind::File | NodeKind::Directory) {
+        return Err(GripError::Internal(
+            "unsupported nodes are not fingerprinted".into(),
+        ));
+    }
+    let mut flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
+    if expected_kind == NodeKind::Directory {
+        flags |= OFlags::DIRECTORY;
+    }
+    let descriptor = open(path, flags, Mode::empty()).map_err(|error| {
+        GripError::from_io(
+            "could not open entry for complete fingerprinting",
+            error.into(),
+        )
+    })?;
+    let before = fstat(&descriptor)
+        .map_err(|error| GripError::from_io("could not inspect entry descriptor", error.into()))?;
+    let actual_kind = rustix::fs::FileType::from_raw_mode(before.st_mode);
+    if expected_kind == NodeKind::File && actual_kind != rustix::fs::FileType::RegularFile
+        || expected_kind == NodeKind::Directory && actual_kind != rustix::fs::FileType::Directory
+    {
+        return Err(GripError::Internal(
+            "entry kind changed during observation".into(),
+        ));
+    }
+    let mut file = File::from(descriptor);
+    let content = if expected_kind == NodeKind::File {
+        let mut digest = Sha256::new();
+        let mut length = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|error| {
+                GripError::from_io("could not read file for fingerprinting", error)
+            })?;
+            if read == 0 {
+                break;
+            }
+            digest.update(&buffer[..read]);
+            length += read as u64;
+        }
+        Some(ContentFingerprint {
+            algorithm: "sha256".into(),
+            digest: format!("{:x}", digest.finalize()),
+            length,
+        })
+    } else {
+        None
+    };
+    let observed_metadata = crate::metadata::macos::observe_complete_metadata(&file, expected_kind)
+        .map_err(|error| GripError::from_io("could not inspect complete metadata", error))?;
+    let after = fstat(&file).map_err(|error| {
+        GripError::from_io("could not reinspect entry descriptor", error.into())
+    })?;
+    if before.st_dev != after.st_dev
+        || before.st_ino != after.st_ino
+        || before.st_mode != after.st_mode
+        || before.st_nlink != after.st_nlink
+        || before.st_size != after.st_size
+        || before.st_mtime != after.st_mtime
+        || before.st_mtime_nsec != after.st_mtime_nsec
+    {
+        return Err(GripError::discovery_operational(
+            "classification",
+            "stale_metadata_evidence",
+            Vec::new(),
+            "entry changed while complete metadata was observed",
+        ));
+    }
+    let state = crate::metadata::model::SupportedEntryStateV3 {
+        node_kind: expected_kind,
+        content,
+        metadata: observed_metadata.metadata,
+    };
+    state
+        .validate()
+        .map_err(|message| GripError::Internal(message.into()))?;
+    Ok(super::model::CompleteObservedState {
+        state,
+        excluded_xattrs: observed_metadata.xattrs.excluded,
+        unknown_xattrs: observed_metadata.xattrs.unknown,
+        unsupported_bsd_flags: observed_metadata.unsupported_bsd_flags,
+    })
+}
+
 /// Reuses descriptor-bound ancestor directories during one observation pass.
 pub struct RelativeInspector {
     root: crate::discovery::filesystem::Directory,

@@ -50,7 +50,16 @@ pub fn build(
             .ok_or_else(|| {
                 GripError::Internal("actionable deletion has no remaining peer".into())
             })?;
-            if record.baseline.as_ref() != Some(&expected_target) {
+            let expected_target_complete = match authority {
+                DeletionAuthority::Source => record.destination_complete.clone(),
+                DeletionAuthority::Destination => record.source_complete.clone(),
+            };
+            let authorized = if let Some(baseline) = record.baseline_complete.as_ref() {
+                expected_target_complete.as_ref() == Some(baseline)
+            } else {
+                record.baseline.as_ref() == Some(&expected_target)
+            };
+            if !authorized {
                 return Err(GripError::Internal(
                     "actionable deletion peer does not equal the accepted baseline".into(),
                 ));
@@ -82,6 +91,7 @@ pub fn build(
                 target_path: crate::discovery::model::SafePath::from_path(&target),
                 target,
                 expected_target,
+                expected_target_complete,
                 expected_absent_peer: authority.as_str().into(),
                 expected_children: Vec::new(),
                 dependencies: Vec::new(),
@@ -246,6 +256,11 @@ mod tests {
             source,
             destination,
             baseline,
+            source_complete: None,
+            destination_complete: None,
+            baseline_complete: None,
+            compatibility_findings: Vec::new(),
+            endpoint_capabilities: Vec::new(),
             prospective_direction: Direction::None,
             changed_dimensions: ChangedDimensions {
                 source_to_baseline: None,

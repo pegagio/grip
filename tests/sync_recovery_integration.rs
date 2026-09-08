@@ -15,18 +15,22 @@ fn sync_preserves_the_losing_target_for_each_replacement() {
     let recovery = value["details"]["actions"][0]["milestones"]["recovery_ref"]
         .as_str()
         .unwrap();
+    let operation_directory = grip_home.join("state/operations").join(operation);
+    let recovery_v2 = grip::recovery::model::decode_metadata_v2(
+        &fs::read(operation_directory.join(recovery)).unwrap(),
+    )
+    .unwrap();
+    let payload_ref = recovery_v2.payload.payload_ref.as_deref().unwrap();
     assert_eq!(
         fs::read_to_string(
-            grip_home
-                .join("state/operations")
-                .join(operation)
-                .join(recovery)
+            operation_directory
+                .join("recovery/00000000")
+                .join(payload_ref)
         )
         .unwrap(),
         "accepted"
     );
     assert_eq!(fs::read_to_string(destination).unwrap(), "new source");
-    let operation_directory = grip_home.join("state/operations").join(operation);
     let recovery_directory = operation_directory.join("recovery/00000000");
     assert_eq!(
         fs::metadata(&recovery_directory)

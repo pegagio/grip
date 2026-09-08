@@ -2,7 +2,7 @@
 title: Implementation and delivery direction
 type: decision
 sources: [S001, S002, S003, S004, S006, S008, S009]
-updated: 2026-09-07
+updated: 2026-09-08
 ---
 
 # Implementation and delivery direction
@@ -23,7 +23,7 @@ Common inspection and planning workflows must remain responsive on representativ
 
 The durable roadmap refines the product's six delivery milestones into nine planned specifications. It separates CLI and state foundations, mapping ownership, and discovery before baseline classification, then introduces push, pull, bidirectional conflict handling, authorized deletion, and final metadata and filesystem completion in dependency order. (S003)
 
-Features 001 through 008 are verified. Feature 008 adds separately authorized directional deletion, deliberate retirement, and explicit recovery inspection, restoration, and cleanup while preserving the rule that ordinary synchronization cannot infer destructive intent. Feature 009 is now the next dependency-eligible slice. (S003)
+Features 001 through 009 are verified. Feature 008 adds separately authorized directional deletion, deliberate retirement, and explicit recovery inspection, restoration, and cleanup while preserving the rule that ordinary synchronization cannot infer destructive intent. Feature 009 completes the roadmap with qualified macOS/APFS metadata and filesystem behavior, using measured operation-local reuse without persistent caching or parallel execution. (S003)
 
 Feature 005 adds the first payload-mutating vertical slice through a pure plan, one outer writer lock, descriptor-relative staging, private recovery, partitioned operation evidence, final verification, and one accepted-state publication; it adds no dependency, cache, background service, automatic rollback, broad payload lock, or new state schema. (S003) (S008)
 

@@ -15,6 +15,11 @@ fn file_fixture() -> (
     let destination = root.path().join("destination");
     fs::write(&source, "same").unwrap();
     fs::write(&destination, "same").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     support::write_registry(&grip_home, &[("file", &source, &destination)]);
     (root, grip_home, source, destination)
 }
@@ -32,7 +37,7 @@ fn status_check_diff_and_baseline_share_the_versioned_result_contract() {
     );
     assert_eq!(
         status_json["details"]["counts"].as_object().unwrap().len(),
-        18
+        20
     );
 
     let check = support::command_with_grip_home(
@@ -237,6 +242,11 @@ fn diff_reports_three_safe_comparisons_without_payload_content() {
     let secret = "do-not-render-this-payload";
     fs::write(&source, secret).unwrap();
     fs::write(&destination, secret).unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     let output =
         support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "diff"]);
     assert_eq!(output.status.code(), Some(0));
@@ -244,11 +254,11 @@ fn diff_reports_three_safe_comparisons_without_payload_content() {
     let changed = &value["details"]["records"][0]["changed_dimensions"];
     assert_eq!(
         changed["source_to_baseline"],
-        serde_json::json!(["content"])
+        serde_json::json!(["content", "modification_time"])
     );
     assert_eq!(
         changed["destination_to_baseline"],
-        serde_json::json!(["content"])
+        serde_json::json!(["content", "modification_time"])
     );
     assert_eq!(changed["source_to_destination"], serde_json::json!([]));
     let rendered = String::from_utf8(output.stdout).unwrap();
@@ -329,6 +339,7 @@ fn human_classification_output_includes_dimensions_and_blocking_reasons() {
     fs::create_dir(&tree_destination).unwrap();
     fs::write(tree_source.join("entry"), "same").unwrap();
     fs::write(tree_destination.join("entry"), "same").unwrap();
+    support::copy_tree_entry_metadata(&tree_source, &tree_destination);
     support::write_registry(&tree_home, &[("tree", &tree_source, &tree_destination)]);
     assert!(
         support::command_with_grip_home(tree_root.path(), &tree_home, &["baseline", "accept"])

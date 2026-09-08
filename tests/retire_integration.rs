@@ -14,7 +14,8 @@ fn converged_deletion_retirement_changes_state_only() {
     );
     assert!(
         output.status.success(),
-        "{}",
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
@@ -36,9 +37,7 @@ fn retirement_publication_failure_preserves_payloads_and_authoritative_generatio
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::retire::plan::build(
         grip::classification::model::ClassificationScope {
@@ -107,10 +106,13 @@ fn retirement_execute_reports_contention_while_preview_remains_lock_free() {
     fs::remove_file(destination).unwrap();
     let home = grip::home::select(Some(grip_home.clone().into_os_string()), None).unwrap();
     let guard = grip::state::mutation_lock::MutationLock::acquire(&home, "test-owner").unwrap();
+    let preview =
+        support::command_with_grip_home(root.path(), &grip_home, &["retire", "-n", "--all"]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["retire", "-n", "--all"])
-            .status
-            .success()
+        preview.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&preview.stdout),
+        String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(
         support::command_with_grip_home(root.path(), &grip_home, &["retire", "--all"])

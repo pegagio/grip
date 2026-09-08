@@ -180,6 +180,20 @@ fn pull_prebaseline_fault_matrix_keeps_partial_work_unaccepted() {
         (FaultPhase::BeforeStaging(0), false, true),
         (FaultPhase::AfterStaging(0), false, true),
         (FaultPhase::BeforePayloadPublication(0), false, true),
+        (
+            FaultPhase::AfterMetadataProtectedFlagsCleared(0),
+            true,
+            true,
+        ),
+        (FaultPhase::AfterMetadataOwnership(0), true, true),
+        (FaultPhase::AfterMetadataAcl(0), true, true),
+        (FaultPhase::AfterMetadataExtendedAttributes(0), true, true),
+        (FaultPhase::AfterMetadataPermissionMode(0), true, true),
+        (FaultPhase::AfterMetadataModificationTime(0), true, true),
+        (FaultPhase::AfterMetadataBsdFlags(0), true, true),
+        (FaultPhase::AfterMetadataDurability(0), true, true),
+        (FaultPhase::BeforeMetadataVerification(0), true, true),
+        (FaultPhase::AfterMetadataVerification(0), true, true),
         (FaultPhase::AfterPayloadPublication(0), true, true),
         (FaultPhase::BeforeTargetVerification(0), true, true),
         (FaultPhase::AfterTargetVerification(0), true, true),
@@ -263,9 +277,7 @@ fn first_pull_action_failure_leaves_later_actions_unattempted() {
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::mutation::plan::build_for(
         grip::mutation::model::MutationDirection::Pull,

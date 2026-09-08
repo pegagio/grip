@@ -255,6 +255,7 @@ dependencies = [
  "clap",
  "home",
  "ignore",
+ "libc",
  "rustix",
  "serde",
  "serde_json",

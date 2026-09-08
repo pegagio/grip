@@ -60,9 +60,7 @@ fn pull_plan_is_direction_bound_and_deterministic() {
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect::<Vec<_>>();
     let mut reversed = records.clone();
     reversed.reverse();
@@ -75,5 +73,38 @@ fn pull_plan_is_direction_bound_and_deterministic() {
     assert_eq!(
         first.actions[0].destination,
         first.actions[0].identity.as_ref().unwrap().source_path()
+    );
+}
+
+#[test]
+fn metadata_only_pull_plan_carries_complete_transition_and_recovery_contract() {
+    let fixture = support::MetadataFixture::file(b"same");
+    support::copy_complete_metadata(
+        &fixture.source,
+        &fixture.destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    assert!(
+        support::command_with_grip_home(
+            fixture.root.path(),
+            &fixture.grip_home,
+            &["baseline", "accept"],
+        )
+        .status
+        .success()
+    );
+    support::set_fixture_mode(&fixture.destination, 0o600);
+    let output = support::command_with_grip_home(
+        fixture.root.path(),
+        &fixture.grip_home,
+        &["--output=json", "pull", "--dry-run"],
+    );
+    let action = &support::json(&output)["details"]["actions"][0];
+    assert_eq!(action["direction"], "pull");
+    assert_eq!(action["kind"], "apply_metadata");
+    assert_eq!(action["metadata"]["recovery_schema_version"], 2);
+    assert_eq!(
+        action["metadata"]["changed_dimensions"],
+        serde_json::json!(["permission_mode"])
     );
 }

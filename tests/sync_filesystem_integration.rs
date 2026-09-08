@@ -47,6 +47,11 @@ fn converged_only_sync_records_and_accepts_state_then_becomes_noop() {
     let (root, grip_home, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "converged").unwrap();
     fs::write(&destination, "converged").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     let first =
         support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "sync"]);
     assert!(first.status.success());

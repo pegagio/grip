@@ -1,8 +1,8 @@
 ---
 title: Baseline classification and status
 type: component
-sources: [S007]
-updated: 2026-09-06
+sources: [S007, S012]
+updated: 2026-09-08
 ---
 
 # Baseline classification and status
@@ -11,7 +11,9 @@ Feature 004 separates fresh observation, pure three-way classification, presenta
 
 Each managed identity compares current source evidence, current destination evidence, and optional accepted baseline evidence. Without a baseline, the model distinguishes source addition, initial match, initial collision, and destination-only unmanaged evidence. With a baseline, it distinguishes synchronized, source-only and destination-only changes, converged edits, divergent conflicts, directional deletions, delete/change conflicts, converged deletion, newly ignored pending retirement, and untracked pending retirement. (S007)
 
-The first equality contract covers node kind and, for regular files, SHA-256 content identity, file length as supporting evidence, and full Unix permission mode. Modification time is diagnostic only. Unsupported or unavailable observations are represented explicitly, and difference output reports source-to-baseline, destination-to-baseline, and source-to-destination changed dimensions only when the corresponding safe observations exist. (S007)
+Feature 004's first equality contract covered node kind, regular-file content, and permission mode. Feature 009 expands accepted State V3 to the complete file and directory metadata contract, makes modification time equality-defining, and adds explicit absent, unavailable, unsupported, unreadable, unauthorized, and observed evidence states. Field differences remain individually visible while conflict selection treats the entry as one value. (S007) (S012)
+
+Legacy State V2 authority is never silently upgraded. Equal complete current copies are `metadata_migration_ready` and require explicit baseline acceptance; differing copies are `metadata_migration_conflict` and require an explicit whole-entry source or destination winner. (S012)
 
 An optional selector resolves one exact mapping, managed entry, or component-boundary subtree in source space by default or destination space with `--destination`. An omitted selector includes current mappings and retained baseline-only identities, allowing removed mappings and newly ignored accepted entries to remain visible pending explicit retirement. (S007)
 
@@ -27,3 +29,4 @@ The completed test matrix covers every classification, deterministic repetition,
 - [Configuration and state](./configuration-and-state.md)
 - [Command-line and path selection](./command-line-and-path-selection.md)
 - [Safety and recovery model](./safety-and-recovery-model.md)
+- [Metadata and filesystem contract](./metadata-and-filesystem-contract.md)

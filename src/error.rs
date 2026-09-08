@@ -36,6 +36,23 @@ pub enum ResultCategory {
     InternalError,
 }
 
+/// Stable machine-readable causes for Feature 009 metadata contract failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetadataReasonCode {
+    MetadataUnavailable,
+    MetadataUnsupported,
+    MetadataUnreadable,
+    MetadataUnauthorized,
+    UnknownExtendedAttribute,
+    ProtectedBsdFlag,
+    MetadataMigrationRequired,
+    ApfsIdentityCollision,
+    SparseFile,
+    HardLink,
+    MountBoundary,
+}
+
 impl ResultCategory {
     pub const fn code(self) -> &'static str {
         match self {
@@ -72,6 +89,12 @@ impl ResultCategory {
 
 #[derive(Debug, Error)]
 pub enum GripError {
+    #[error("{message}")]
+    MetadataContract {
+        reason: MetadataReasonCode,
+        paths: Vec<crate::discovery::model::SafePath>,
+        message: String,
+    },
     #[error("{0}")]
     InvalidConfiguration(String),
     #[error("{0}")]
@@ -151,6 +174,7 @@ pub enum GripError {
 impl GripError {
     pub fn category(&self) -> ResultCategory {
         match self {
+            Self::MetadataContract { .. } => ResultCategory::InvalidConfiguration,
             Self::InvalidConfiguration(_) => ResultCategory::InvalidConfiguration,
             Self::RegistryIo(_) => ResultCategory::InternalError,
             Self::UnsupportedSchema(_) => ResultCategory::UnsupportedSchema,

@@ -91,9 +91,7 @@ fn deletion_revalidates_each_action_and_stops_when_a_child_is_recreated() {
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::delete::plan::build(
         grip::delete::model::DeletionAuthority::Source,

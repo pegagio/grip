@@ -85,9 +85,11 @@ fn exact_state_recovery_restores_integrity_valid_prior_generation() {
         String::from_utf8_lossy(&restore.stderr)
     );
     assert_eq!(
-        grip::state::decode_accepted(Some(&fs::read(grip_home.join("state/state.json")).unwrap()))
-            .unwrap()
-            .generation,
+        grip::state::decode_current_accepted(
+            &fs::read(grip_home.join("state/state.json")).unwrap()
+        )
+        .unwrap()
+        .generation,
         Some(0)
     );
 }
@@ -214,6 +216,11 @@ fn state_restore_repairs_corrupt_authority_but_blocks_newer_valid_generation() {
     let reference = reference_of_kind(&support::json(&list), "accepted_state");
     fs::write(&source, "newer").unwrap();
     fs::write(&destination, "newer").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     assert!(
         support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
             .status

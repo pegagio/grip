@@ -110,28 +110,55 @@ pub fn build(
 
 fn surviving_differences(record: &ClassificationRecord) -> Vec<String> {
     let mut differences = Vec::new();
-    if record
-        .source
+    let source_to_baseline = record
+        .source_complete
         .as_ref()
-        .zip(record.baseline.as_ref())
-        .is_some_and(|(current, baseline)| current != baseline)
-    {
+        .zip(record.baseline_complete.as_ref())
+        .map_or_else(
+            || {
+                record
+                    .source
+                    .as_ref()
+                    .zip(record.baseline.as_ref())
+                    .is_some_and(|(current, baseline)| current != baseline)
+            },
+            |(current, baseline)| current != baseline,
+        );
+    if source_to_baseline {
         differences.push("source_to_baseline".into());
     }
-    if record
-        .destination
+    let destination_to_baseline = record
+        .destination_complete
         .as_ref()
-        .zip(record.baseline.as_ref())
-        .is_some_and(|(current, baseline)| current != baseline)
-    {
+        .zip(record.baseline_complete.as_ref())
+        .map_or_else(
+            || {
+                record
+                    .destination
+                    .as_ref()
+                    .zip(record.baseline.as_ref())
+                    .is_some_and(|(current, baseline)| current != baseline)
+            },
+            |(current, baseline)| current != baseline,
+        );
+    if destination_to_baseline {
         differences.push("destination_to_baseline".into());
     }
-    if record
-        .source
+    let source_to_destination = record
+        .source_complete
         .as_ref()
-        .zip(record.destination.as_ref())
-        .is_some_and(|(source, destination)| source != destination)
-    {
+        .zip(record.destination_complete.as_ref())
+        .map_or_else(
+            || {
+                record
+                    .source
+                    .as_ref()
+                    .zip(record.destination.as_ref())
+                    .is_some_and(|(source, destination)| source != destination)
+            },
+            |(source, destination)| source != destination,
+        );
+    if source_to_destination {
         differences.push("source_to_destination".into());
     }
     differences
@@ -193,6 +220,11 @@ mod tests {
             source: Some(state(if changed { 'b' } else { 'a' })),
             destination: Some(state('a')),
             baseline: Some(state('a')),
+            source_complete: None,
+            destination_complete: None,
+            baseline_complete: None,
+            compatibility_findings: Vec::new(),
+            endpoint_capabilities: Vec::new(),
             prospective_direction: Direction::None,
             changed_dimensions: ChangedDimensions {
                 source_to_baseline: None,

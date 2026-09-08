@@ -1,8 +1,65 @@
 mod support;
 
 use grip::operation::model::{
-    ActionCheckpointPayloadV1, OperationPlanPayloadV1, OperationSummaryPayloadV1,
+    ActionCheckpointPayloadV1, OperationPlanEnvelopeV1, OperationPlanPayloadV1,
+    OperationSummaryPayloadV1,
 };
+
+#[test]
+fn operation_record_v1_preserves_complete_metadata_plan_extensions() {
+    let plan_id = "e".repeat(64);
+    let complete_metadata = serde_json::json!({
+        "permission_mode":"0644",
+        "uid":501,
+        "gid":20,
+        "modified_time":{"seconds":1700000000,"nanoseconds":99},
+        "extended_attributes":[{"name":[117,115,101,114,46,116,101,115,116],"length":3,"algorithm":"sha256","digest":"a".repeat(64)}],
+        "acl":{"state":"absent"},
+        "bsd_flags":["hidden"]
+    });
+    let payload = OperationPlanPayloadV1 {
+        operation_id: "push-metadata".into(),
+        operation: "push".into(),
+        plan_id: plan_id.clone(),
+        plan: serde_json::json!({
+            "operation":"push",
+            "direction":"push",
+            "plan_id":plan_id,
+            "compatibility_findings":[{
+                "endpoint":"destination",
+                "path_display":"/safe/path",
+                "path_raw_hex":null,
+                "field":"bsd_flags",
+                "required":"immutable",
+                "evidence_state":"observed",
+                "reason":"protected_flag",
+                "message":"flag must be cleared before replacement",
+                "corrective_choice":"align or remove the protected flag before retrying",
+                "blocking":false
+            }],
+            "actions":[{
+                "index":0,
+                "direction":"push",
+                "expected_metadata":complete_metadata,
+                "flag_clear_steps":["immutable"],
+                "recovery":{"schema_version":2,"reference":"recovery/00000000/metadata.json"},
+                "verification":{"full_state":"required","durability":"required"}
+            }]
+        }),
+    };
+    let envelope = OperationPlanEnvelopeV1::new(payload).unwrap();
+    let bytes = grip::operation::model::encode(&envelope).unwrap();
+    let decoded: OperationPlanEnvelopeV1 = grip::operation::model::decode(&bytes).unwrap();
+    assert_eq!(decoded, envelope);
+    assert_eq!(
+        decoded.payload.plan["actions"][0]["recovery"]["schema_version"],
+        2
+    );
+    assert_eq!(
+        decoded.payload.plan["actions"][0]["verification"]["durability"],
+        "required"
+    );
+}
 
 #[test]
 fn operation_record_v1_accepts_all_mutation_operations_but_rejects_unknown_operations() {

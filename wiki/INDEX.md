@@ -23,6 +23,7 @@ page files, not here.
 - [Configuration and state](./pages/configuration-and-state.md)
 - [Deletion, retirement, and recovery](./pages/deletion-retirement-and-recovery.md)
 - [Mapping registry publication](./pages/mapping-registry-publication.md)
+- [Metadata and filesystem contract](./pages/metadata-and-filesystem-contract.md)
 - [Synchronization and conflicts](./pages/synchronization-and-conflicts.md)
 
 ## References

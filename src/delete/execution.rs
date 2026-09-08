@@ -82,12 +82,7 @@ pub fn execute_with_hook(
         crate::observation::inspect(home, &registry, &expected_state.accepted, selection)?;
     let records = observed
         .values()
-        .map(|entry| {
-            crate::classification::classify(
-                entry,
-                expected_state.accepted.baselines.get(&entry.identity),
-            )
-        })
+        .map(|entry| crate::classification::classify_accepted(entry, &expected_state.accepted))
         .collect();
     let rebuilt = crate::delete::plan::build(plan.authority, plan.scope.clone(), records)?;
     if rebuilt.plan_id != plan.plan_id {
@@ -142,14 +137,26 @@ pub fn execute_with_hook(
                 "injected deletion preservation failure".into(),
             ))
         } else {
-            crate::mutation::recovery::preserve_with_post(
-                &receipt,
-                index,
-                &action.identity,
-                &action.target,
-                &action.expected_target,
-                None,
-            )
+            if let Some(expected_complete) = action.expected_target_complete.as_ref() {
+                crate::mutation::recovery::preserve_complete_with_post(
+                    &receipt,
+                    index,
+                    &action.identity,
+                    &action.target,
+                    &action.expected_target,
+                    expected_complete,
+                    None,
+                )
+            } else {
+                crate::mutation::recovery::preserve_with_post(
+                    &receipt,
+                    index,
+                    &action.identity,
+                    &action.target,
+                    &action.expected_target,
+                    None,
+                )
+            }
         };
         let recovery = match recovery {
             Ok(recovery) => recovery,
@@ -304,6 +311,7 @@ pub fn execute_with_hook(
     let mut next = expected_state.accepted.clone();
     for action in &applied.actions {
         next.baselines.remove(&action.identity);
+        next.complete_baselines.remove(&action.identity);
     }
     let state_directory = match crate::state::publication::prepare_directory(home) {
         Ok(value) => value,
@@ -344,7 +352,7 @@ pub fn execute_with_hook(
         );
     }
     let generation =
-        match crate::state::publication::publish_accepted_locked(home, expected_state, &next) {
+        match crate::state::publication::publish_current_locked(home, expected_state, &next) {
             Ok(value) => value,
             Err(error) => {
                 return fail(
@@ -452,7 +460,17 @@ fn revalidate_action(
         ));
     }
     crate::state::publication::revalidate(home, expected_state)?;
-    if expected_state.accepted.baselines.get(&action.identity) != Some(&action.expected_target) {
+    let accepted_matches = if let Some(expected_complete) = action.expected_target_complete.as_ref()
+    {
+        expected_state
+            .accepted
+            .complete_baselines
+            .get(&action.identity)
+            == Some(expected_complete)
+    } else {
+        expected_state.accepted.baselines.get(&action.identity) == Some(&action.expected_target)
+    };
+    if !accepted_matches {
         return Err(GripError::CorruptState(
             "accepted deletion membership or baseline changed".into(),
         ));
@@ -475,7 +493,25 @@ fn revalidate_action(
             ));
         }
     }
-    crate::mutation::filesystem::verify_removal_ready(&action.target, &action.expected_target)
+    crate::mutation::filesystem::verify_removal_ready(&action.target, &action.expected_target)?;
+    if let Some(expected_complete) = action.expected_target_complete.as_ref() {
+        let mut current = crate::observation::fingerprint::inspect_complete(
+            &action.target,
+            expected_complete.node_kind,
+        )?
+        .state;
+        if expected_complete.node_kind == crate::discovery::model::NodeKind::Directory
+            && !action.dependencies.is_empty()
+        {
+            current.metadata.modified_time = expected_complete.metadata.modified_time;
+        }
+        if current != *expected_complete {
+            return Err(GripError::InvalidConfiguration(
+                "deletion target complete state changed before removal".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn fail(
