@@ -8,6 +8,7 @@ use grip::observation::model::{PathSpace, Selection};
 use grip::operation::model::{ActionCheckpointPayloadV1, OperationSummaryPayloadV1};
 use grip::push::FaultPhase;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 fn fixture() -> (
     tempfile::TempDir,
@@ -31,7 +32,7 @@ fn fixture() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::push::plan::build_with_parent_requirements(
         ClassificationScope {
@@ -64,7 +65,44 @@ fn replacement_fixture() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .collect();
+    let plan = grip::push::plan::build_with_parent_requirements(
+        ClassificationScope {
+            kind: "all".into(),
+            path_space: PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+        registry.missing_destination_parents(),
+    )
+    .unwrap();
+    (root, home, registry, state, selection, plan)
+}
+
+fn metadata_only_fixture() -> (
+    tempfile::TempDir,
+    grip::home::GripHome,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    Selection,
+    grip::push::model::PushPlan,
+) {
+    let (root, home, registry, state, selection, plan) = fixture();
+    grip::push::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
+    fs::set_permissions(
+        root.path().join("source"),
+        fs::Permissions::from_mode(0o640),
+    )
+    .unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let observed =
+        grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
+    let records = observed
+        .values()
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::push::plan::build_with_parent_requirements(
         ClassificationScope {
@@ -244,6 +282,49 @@ fn replacement_recovery_faults_preserve_prior_baseline_and_payload_evidence() {
         if phase == FaultPhase::AfterRecovery(0) {
             assert!(failure.plan.actions[0].milestones.recovery_ref.is_some());
         }
+    }
+}
+
+#[test]
+fn metadata_substep_faults_preserve_recovery_and_never_publish_new_state() {
+    for phase in [
+        FaultPhase::AfterMetadataProtectedFlagsCleared(0),
+        FaultPhase::AfterMetadataOwnership(0),
+        FaultPhase::AfterMetadataAcl(0),
+        FaultPhase::AfterMetadataExtendedAttributes(0),
+        FaultPhase::AfterMetadataPermissionMode(0),
+        FaultPhase::AfterMetadataModificationTime(0),
+        FaultPhase::AfterMetadataBsdFlags(0),
+        FaultPhase::AfterMetadataDurability(0),
+        FaultPhase::BeforeMetadataVerification(0),
+        FaultPhase::AfterMetadataVerification(0),
+    ] {
+        let (_root, home, registry, state, selection, plan) = metadata_only_fixture();
+        let prior_generation = state.accepted.generation;
+        let error = grip::push::execution::execute_with_fault_hook(
+            &home,
+            &registry,
+            &state,
+            &selection,
+            &plan,
+            support::fail_push_at(phase),
+        )
+        .unwrap_err();
+        let grip::GripError::PushFailed(failure) = error else {
+            panic!("expected structured metadata failure at {phase:?}");
+        };
+        assert_eq!(failure.reason, "publication_failure");
+        assert_eq!(failure.plan.actions[0].milestones.recovery, "preserved");
+        assert!(failure.plan.actions[0].milestones.recovery_ref.is_some());
+        assert_eq!(failure.plan.actions[0].milestones.publication, "visible");
+        assert_eq!(failure.baseline.outcome, "not_published");
+        assert_eq!(
+            grip::state::publication::load(&home)
+                .unwrap()
+                .accepted
+                .generation,
+            prior_generation
+        );
     }
 }
 

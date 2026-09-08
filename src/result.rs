@@ -3,6 +3,20 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use std::io::{self, Write};
 
+/// Safe typed projection shared by metadata-aware human and JSON results.
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetadataResultDetails {
+    pub metadata_dimensions: Vec<crate::metadata::model::MetadataDimension>,
+    pub evidence: std::collections::BTreeMap<String, crate::metadata::model::Evidence<String>>,
+    pub compatibility_findings: Vec<crate::metadata::model::CompatibilityFinding>,
+    pub extended_attributes: Vec<crate::metadata::model::XattrFingerprint>,
+    pub recovery_authority: Option<String>,
+    pub verification: String,
+    pub durability_confirmed: bool,
+    pub accepted_generation: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
     Human,
@@ -22,6 +36,23 @@ impl CommandOutcome {
             category: ResultCategory::Success,
             message: message.into(),
             details: Map::new(),
+        }
+    }
+
+    /// Build a metadata-aware outcome without exposing raw extended-attribute values.
+    pub fn metadata(
+        category: ResultCategory,
+        message: impl Into<String>,
+        details: &MetadataResultDetails,
+    ) -> Self {
+        Self {
+            category,
+            message: message.into(),
+            details: serde_json::to_value(details)
+                .expect("typed metadata result serializes")
+                .as_object()
+                .expect("metadata result details serialize as an object")
+                .clone(),
         }
     }
 
@@ -221,6 +252,17 @@ impl CommandOutcome {
                 .details
                 .insert("reason".into(), "state_contention".into());
         }
+        if let GripError::MetadataContract { reason, paths, .. } = error {
+            outcome.details.insert(
+                "reason".into(),
+                serde_json::to_value(reason).expect("metadata reason serializes"),
+            );
+            outcome.details.insert(
+                "paths".into(),
+                serde_json::to_value(paths).expect("safe metadata paths serialize"),
+            );
+            outcome.details.insert("blocking".into(), true.into());
+        }
         if let GripError::MutationContention {
             requested_operation,
             owner,
@@ -283,10 +325,10 @@ impl CommandOutcome {
             outcome.details.insert("counts".into(), json(&plan.counts));
             outcome
                 .details
-                .insert("entries".into(), json(&plan.entries));
+                .insert("entries".into(), public_mutation_entries(&plan.entries));
             outcome
                 .details
-                .insert("actions".into(), json(&plan.actions));
+                .insert("actions".into(), public_mutation_actions(&plan.actions));
             outcome
                 .details
                 .insert("blockers".into(), json(&plan.blockers));
@@ -386,10 +428,46 @@ impl CommandOutcome {
             ResultCategory::Success
         };
         let mut value = serde_json::to_value(result).expect("classification result serializes");
+        let mut capabilities = std::collections::BTreeMap::new();
+        if let Some(records) = value.get_mut("records").and_then(Value::as_array_mut) {
+            for record in records {
+                let Some(record) = record.as_object_mut() else {
+                    continue;
+                };
+                if record.get("classification").and_then(Value::as_str) == Some("synchronized") {
+                    record.remove("source_complete");
+                    record.remove("destination_complete");
+                    record.remove("baseline_complete");
+                }
+                let mapping_source = record
+                    .get("mapping_source")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned();
+                if let Some(profiles) = record.remove("endpoint_capabilities") {
+                    capabilities.entry(mapping_source).or_insert(profiles);
+                }
+            }
+        }
         let details = value
             .as_object_mut()
             .expect("classification result is an object")
             .clone();
+        let mut details = details;
+        details.insert(
+            "endpoint_capabilities".into(),
+            Value::Array(
+                capabilities
+                    .into_iter()
+                    .map(|(mapping_source, profiles)| {
+                        serde_json::json!({
+                            "mapping_source": mapping_source,
+                            "profiles": profiles,
+                        })
+                    })
+                    .collect(),
+            ),
+        );
         Self {
             category,
             message: format!(
@@ -487,8 +565,8 @@ impl CommandOutcome {
         details.insert("scope".into(), json(&plan.scope));
         details.insert("plan_id".into(), plan_id(&plan.plan_id));
         details.insert("counts".into(), json(&plan.counts));
-        details.insert("entries".into(), json(&plan.entries));
-        details.insert("actions".into(), json(&plan.actions));
+        details.insert("entries".into(), public_mutation_entries(&plan.entries));
+        details.insert("actions".into(), public_mutation_actions(&plan.actions));
         details.insert("blockers".into(), json(&plan.blockers));
         details.insert("operation_record".into(), Value::Null);
         details.insert(
@@ -533,8 +611,8 @@ impl CommandOutcome {
         details.insert("scope".into(), json(&plan.scope));
         details.insert("plan_id".into(), plan_id(&plan.plan_id));
         details.insert("counts".into(), json(&plan.counts));
-        details.insert("entries".into(), json(&plan.entries));
-        details.insert("actions".into(), json(&plan.actions));
+        details.insert("entries".into(), public_mutation_entries(&plan.entries));
+        details.insert("actions".into(), public_mutation_actions(&plan.actions));
         details.insert("blockers".into(), json(&plan.blockers));
         details.insert(
             "operation_record".into(),
@@ -562,8 +640,36 @@ impl CommandOutcome {
     }
 }
 
-fn json<T: Serialize>(value: &T) -> Value {
+fn json<T: Serialize + ?Sized>(value: &T) -> Value {
     serde_json::to_value(value).expect("typed result value serializes")
+}
+
+fn public_mutation_actions(actions: &[crate::mutation::model::MutationAction]) -> Value {
+    let mut value = json(actions);
+    if let Some(actions) = value.as_array_mut() {
+        for action in actions {
+            let Some(action) = action.as_object_mut() else {
+                continue;
+            };
+            if action.get("metadata").is_some() {
+                action.remove("expected_source");
+                action.remove("expected_destination");
+            }
+        }
+    }
+    value
+}
+
+fn public_mutation_entries(entries: &[crate::mutation::model::EntryDisposition]) -> Value {
+    let reportable = entries
+        .iter()
+        .filter(|entry| {
+            entry.disposition != crate::mutation::model::Disposition::NoAction
+                || entry.classification
+                    != crate::classification::model::Classification::Synchronized
+        })
+        .collect::<Vec<_>>();
+    json(&reportable)
 }
 
 fn plan_id(digest: &str) -> Value {
@@ -648,6 +754,7 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
     match mode {
         OutputMode::Human => {
             writeln!(writer, "{}", outcome.message)?;
+            render_human_metadata_details(&outcome.details, writer)?;
             if let Some(conflicts) = outcome.details.get("conflicts").and_then(Value::as_array) {
                 for conflict in conflicts {
                     writeln!(
@@ -988,6 +1095,101 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
     }
 }
 
+fn render_human_metadata_details(
+    details: &Map<String, Value>,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    if let Some(dimensions) = details.get("metadata_dimensions").and_then(Value::as_array) {
+        for dimension in dimensions {
+            writeln!(
+                writer,
+                "metadata_dimension: {}",
+                dimension.as_str().unwrap_or("unknown")
+            )?;
+        }
+    }
+    if let Some(evidence) = details.get("evidence").and_then(Value::as_object) {
+        for (field, value) in evidence {
+            writeln!(
+                writer,
+                "metadata_evidence: {field} {}",
+                value
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )?;
+        }
+    }
+    if let Some(findings) = details
+        .get("compatibility_findings")
+        .and_then(Value::as_array)
+    {
+        for finding in findings {
+            writeln!(
+                writer,
+                "compatibility: {} {} {} blocking={} corrective_choice={}",
+                finding
+                    .get("endpoint")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                finding
+                    .get("field")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                finding
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                finding
+                    .get("blocking")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                finding
+                    .get("corrective_choice")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unavailable")
+            )?;
+        }
+    }
+    if let Some(mappings) = details
+        .get("endpoint_capabilities")
+        .and_then(Value::as_array)
+    {
+        for mapping in mappings {
+            let source = mapping
+                .get("mapping_source")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            if let Some(profiles) = mapping.get("profiles").and_then(Value::as_array) {
+                for profile in profiles {
+                    writeln!(
+                        writer,
+                        "endpoint_capability: mapping={} endpoint={} filesystem={} case_sensitive={} mtime_precision_ns={}",
+                        source,
+                        profile
+                            .get("endpoint")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown"),
+                        evidence_display(profile.get("filesystem_type")),
+                        evidence_display(profile.get("case_sensitive")),
+                        evidence_display(profile.get("mtime_precision_nanoseconds")),
+                    )?;
+                }
+            }
+        }
+    }
+    if let Some(reference) = details.get("recovery_authority").and_then(Value::as_str) {
+        writeln!(writer, "recovery_authority: {reference}")?;
+    }
+    if let Some(verification) = details.get("verification").and_then(Value::as_str) {
+        writeln!(writer, "verification: {verification}")?;
+    }
+    if let Some(generation) = details.get("accepted_generation").and_then(Value::as_u64) {
+        writeln!(writer, "accepted_generation: {generation}")?;
+    }
+    Ok(())
+}
+
 fn recovery_reference(reference: &Value) -> String {
     match reference.get("kind").and_then(Value::as_str) {
         Some("payload") => format!(
@@ -1065,7 +1267,70 @@ fn render_human_classification_record(record: &Value, writer: &mut dyn Write) ->
             }
         }
     }
+    if let Some(findings) = record
+        .get("compatibility_findings")
+        .and_then(Value::as_array)
+    {
+        for finding in findings {
+            writeln!(
+                writer,
+                "  compatibility endpoint={} field={} reason={} blocking={} required={} corrective_choice={}",
+                finding
+                    .get("endpoint")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                finding
+                    .get("field")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                finding
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                yes_no(finding.get("blocking")),
+                finding
+                    .get("required")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                finding
+                    .get("corrective_choice")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unavailable")
+            )?;
+        }
+    }
+    if let Some(profiles) = record
+        .get("endpoint_capabilities")
+        .and_then(Value::as_array)
+    {
+        for profile in profiles {
+            writeln!(
+                writer,
+                "  endpoint={} filesystem={} case_sensitive={} mtime_precision_ns={}",
+                profile
+                    .get("endpoint")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                evidence_display(profile.get("filesystem_type")),
+                evidence_display(profile.get("case_sensitive")),
+                evidence_display(profile.get("mtime_precision_nanoseconds"))
+            )?;
+        }
+    }
     Ok(())
+}
+
+fn evidence_display(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return "unavailable".into();
+    };
+    match value.get("state").and_then(Value::as_str) {
+        Some("observed") => value
+            .get("value")
+            .map_or_else(|| "observed".into(), Value::to_string),
+        Some(state) => state.into(),
+        None => "unavailable".into(),
+    }
 }
 
 fn yes_no(value: Option<&Value>) -> &'static str {
@@ -1142,6 +1407,70 @@ pub fn emit_diagnostic(verbosity: u8, event: &str, writer: &mut dyn Write) -> io
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::model::{
+        CompatibilityFinding, CompatibilityReason, EndpointRole, Evidence, MetadataDimension,
+        XattrFingerprint,
+    };
+
+    #[test]
+    fn metadata_result_v1_retains_evidence_and_authority_without_raw_xattr_values() {
+        let details = MetadataResultDetails {
+            metadata_dimensions: vec![
+                MetadataDimension::PermissionMode,
+                MetadataDimension::ExtendedAttribute,
+            ],
+            evidence: std::collections::BTreeMap::from([
+                (
+                    "owner".into(),
+                    Evidence::Observed {
+                        value: "501".into(),
+                    },
+                ),
+                ("acl".into(), Evidence::Absent),
+                (
+                    "group".into(),
+                    Evidence::Unauthorized {
+                        reason: "group membership not proven".into(),
+                    },
+                ),
+            ]),
+            compatibility_findings: vec![CompatibilityFinding {
+                endpoint: EndpointRole::Destination,
+                path_display: "/safe/path".into(),
+                path_raw_hex: None,
+                field: MetadataDimension::Owner,
+                required: "501".into(),
+                evidence_state: "unauthorized".into(),
+                reason: CompatibilityReason::Unauthorized,
+                message: "owner transition is not authorized".into(),
+                corrective_choice: "pre-align ownership or select the other authority".into(),
+                blocking: true,
+            }],
+            extended_attributes: vec![XattrFingerprint {
+                name: b"user.test".to_vec(),
+                length: 12,
+                algorithm: "sha256".into(),
+                digest: "a".repeat(64),
+            }],
+            recovery_authority: Some("payload:push-1:0".into()),
+            verification: "verified".into(),
+            durability_confirmed: true,
+            accepted_generation: Some(7),
+        };
+        let envelope = ResultEnvelopeV1::from(CommandOutcome::metadata(
+            ResultCategory::Success,
+            "metadata inspected",
+            &details,
+        ));
+        let encoded = serde_json::to_string(&envelope).unwrap();
+        assert_eq!(envelope.schema_version, 1);
+        assert_eq!(envelope.details["evidence"]["acl"]["state"], "absent");
+        assert_eq!(envelope.details["accepted_generation"], 7);
+        assert_eq!(envelope.details["durability_confirmed"], true);
+        assert_eq!(envelope.details["recovery_authority"], "payload:push-1:0");
+        assert!(!encoded.contains("raw_value"));
+        assert!(!encoded.contains("secret-xattr-value"));
+    }
     #[test]
     fn json_envelope_has_consistent_status_and_code() {
         let mut output = Vec::new();

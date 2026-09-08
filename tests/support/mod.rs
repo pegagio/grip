@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -38,6 +38,67 @@ pub fn command_with_grip_home(home: &Path, grip_home: &Path, args: &[&str]) -> O
         .output()
         .unwrap()
 }
+
+fn qualification_command(program: &str, arguments: &[&str]) -> String {
+    Command::new(program)
+        .args(arguments)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unavailable".into())
+}
+
+pub fn qualification_record(
+    endpoint: &Path,
+    build_profile: &str,
+) -> grip::metadata::model::PlatformQualificationRecord {
+    let file = fs::File::open(endpoint).unwrap();
+    let profile = grip::metadata::macos::endpoint_capability_profile(
+        &file,
+        grip::metadata::model::EndpointRole::Source,
+        endpoint.display().to_string(),
+    )
+    .unwrap();
+    let observed_string = |evidence: &grip::metadata::model::Evidence<String>| match evidence {
+        grip::metadata::model::Evidence::Observed { value } => value.clone(),
+        _ => "unavailable".into(),
+    };
+    let observed_u64 = |evidence: &grip::metadata::model::Evidence<u64>| match evidence {
+        grip::metadata::model::Evidence::Observed { value } => *value,
+        _ => 0,
+    };
+    let masks = match &profile.volume_capability_masks {
+        grip::metadata::model::Evidence::Observed { value } => value.clone(),
+        _ => Vec::new(),
+    };
+    grip::metadata::model::PlatformQualificationRecord {
+        macos_version: qualification_command("sw_vers", &["-productVersion"]),
+        macos_build: qualification_command("sw_vers", &["-buildVersion"]),
+        darwin_kernel: qualification_command("uname", &["-srv"]),
+        apfs_bundle_version: qualification_command(
+            "plutil",
+            &[
+                "-extract",
+                "CFBundleShortVersionString",
+                "raw",
+                "-o",
+                "-",
+                "/System/Library/Filesystems/apfs.fs/Contents/Info.plist",
+            ],
+        ),
+        filesystem_type: observed_string(&profile.filesystem_type),
+        mount_flags: observed_u64(&profile.mount_flags),
+        volume_capability_masks: masks,
+        binary_build_profile: build_profile.into(),
+        binary_revision: qualification_command("git", &["rev-parse", "HEAD"]),
+        test_matrix_version: "feature-009-v1".into(),
+        performance_host_description: qualification_command("uname", &["-m"]),
+    }
+}
 pub fn minimal_home(root: &Path) -> PathBuf {
     let grip = root.join(".grip");
     fs::create_dir(&grip).unwrap();
@@ -48,6 +109,216 @@ pub fn minimal_home(root: &Path) -> PathBuf {
     .unwrap();
     grip
 }
+
+#[derive(Debug)]
+pub struct MetadataFixture {
+    pub root: tempfile::TempDir,
+    pub grip_home: PathBuf,
+    pub source: PathBuf,
+    pub destination: PathBuf,
+}
+
+impl MetadataFixture {
+    pub fn file(contents: &[u8]) -> Self {
+        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let grip_home = minimal_home(root.path());
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        fs::write(&source, contents).unwrap();
+        fs::write(&destination, contents).unwrap();
+        write_registry(&grip_home, &[("file", &source, &destination)]);
+        Self {
+            root,
+            grip_home,
+            source,
+            destination,
+        }
+    }
+
+    pub fn tree() -> Self {
+        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let grip_home = minimal_home(root.path());
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        for tree in [&source, &destination] {
+            fs::create_dir(tree).unwrap();
+            fs::create_dir(tree.join("nested")).unwrap();
+            fs::write(tree.join("nested/file"), b"accepted").unwrap();
+            fs::create_dir(tree.join("empty")).unwrap();
+        }
+        write_registry(&grip_home, &[("tree", &source, &destination)]);
+        Self {
+            root,
+            grip_home,
+            source,
+            destination,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AclFixtureEntry {
+    pub principal_uuid: [u8; 16],
+    pub kind: &'static str,
+    pub permissions: Vec<&'static str>,
+    pub flags: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BsdFlagFixture {
+    Nodump,
+    Immutable,
+    Append,
+    Hidden,
+    Opaque,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApfsCapabilityFixture {
+    pub filesystem_type: &'static str,
+    pub case_sensitive: bool,
+    pub case_preserving: bool,
+    pub mtime_precision_nanoseconds: u32,
+}
+
+impl ApfsCapabilityFixture {
+    pub fn case_insensitive() -> Self {
+        Self {
+            filesystem_type: "apfs",
+            case_sensitive: false,
+            case_preserving: true,
+            mtime_precision_nanoseconds: 1,
+        }
+    }
+
+    pub fn case_sensitive() -> Self {
+        Self {
+            case_sensitive: true,
+            ..Self::case_insensitive()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataFaultPoint {
+    Observe,
+    Preflight,
+    Revalidate,
+    Preserve,
+    ApplyOwnership,
+    ApplyAcl,
+    ApplyXattr,
+    ApplyMode,
+    ApplyModifiedTime,
+    ApplyBsdFlags,
+    Verify,
+    PublishState,
+    DeliverResult,
+}
+
+pub fn set_fixture_mode(path: &Path, mode: u32) {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+pub fn set_fixture_modified_time(path: &Path, seconds: i64, nanoseconds: u32) {
+    let file = fs::File::open(path).unwrap();
+    rustix::fs::futimens(
+        &file,
+        &rustix::fs::Timestamps {
+            last_access: rustix::fs::Timespec {
+                tv_sec: 0,
+                tv_nsec: rustix::fs::UTIME_OMIT,
+            },
+            last_modification: rustix::fs::Timespec {
+                tv_sec: seconds,
+                tv_nsec: i64::from(nanoseconds),
+            },
+        },
+    )
+    .unwrap();
+}
+
+pub fn set_fixture_xattr(path: &Path, name: &str, value: &[u8]) {
+    rustix::fs::setxattr(path, name, value, rustix::fs::XattrFlags::empty()).unwrap();
+}
+
+pub fn remove_fixture_xattr(path: &Path, name: &str) {
+    rustix::fs::removexattr(path, name).unwrap();
+}
+
+pub fn set_fixture_acl(path: &Path, entries: &[&str]) {
+    for entry in entries {
+        let output = Command::new("chmod")
+            .arg("+a")
+            .arg(entry)
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+pub fn clear_fixture_acl(path: &Path) {
+    let output = Command::new("chmod").arg("-N").arg(path).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+pub fn set_fixture_bsd_flags(path: &Path, flags: u32) {
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: path is an owned NUL-terminated fixture path and flags contains caller-selected user flags.
+    assert_eq!(unsafe { libc::chflags(path.as_ptr(), flags) }, 0);
+}
+
+pub fn copy_complete_metadata(
+    source: &Path,
+    destination: &Path,
+    kind: grip::discovery::model::NodeKind,
+) {
+    let expected = grip::observation::fingerprint::inspect_complete(source, kind)
+        .unwrap()
+        .state;
+    grip::metadata::macos::apply_metadata_paths(source, destination, kind, &expected.metadata)
+        .unwrap();
+}
+
+pub fn copy_tree_entry_metadata(source: &Path, destination: &Path) {
+    fn copy_children(source: &Path, destination: &Path) {
+        let mut entries = fs::read_dir(source)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+            let kind = if source_path.is_dir() {
+                copy_children(&source_path, &destination_path);
+                grip::discovery::model::NodeKind::Directory
+            } else {
+                grip::discovery::model::NodeKind::File
+            };
+            copy_complete_metadata(&source_path, &destination_path, kind);
+        }
+    }
+
+    copy_children(source, destination);
+}
+
+pub fn fixture_xattr(path: &Path, name: &str) -> Vec<u8> {
+    let mut value = vec![0; 1024 * 1024];
+    let length = rustix::fs::getxattr(path, name, &mut value).unwrap();
+    value.truncate(length);
+    value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntrySnapshot {
     pub bytes: Vec<u8>,
@@ -58,6 +329,25 @@ pub struct EntrySnapshot {
     pub inode: u64,
     pub modified_seconds: i64,
     pub modified_nanoseconds: i64,
+    pub extended_attributes: BTreeMap<Vec<u8>, Vec<u8>>,
+    pub acl: Option<Vec<u8>>,
+    pub bsd_flags: u32,
+}
+
+fn snapshot_xattrs(path: &Path) -> BTreeMap<Vec<u8>, Vec<u8>> {
+    let mut names = vec![0; 64 * 1024];
+    let length = rustix::fs::llistxattr(path, &mut names).unwrap();
+    names.truncate(length);
+    names
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            let mut value = vec![0; 1024 * 1024];
+            let length = rustix::fs::lgetxattr(path, name, &mut value).unwrap();
+            value.truncate(length);
+            (name.to_vec(), value)
+        })
+        .collect()
 }
 
 pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
@@ -67,6 +357,15 @@ pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
                 let p = entry.path();
                 let relative = p.strip_prefix(base).unwrap().to_owned();
                 let metadata = fs::symlink_metadata(&p).unwrap();
+                let native_metadata = if metadata.is_file() || metadata.is_dir() {
+                    let file = fs::File::open(&p).unwrap();
+                    Some((
+                        grip::metadata::macos::raw_acl(&file).unwrap(),
+                        grip::metadata::macos::raw_bsd_flags(&file).unwrap(),
+                    ))
+                } else {
+                    None
+                };
                 let snapshot = EntrySnapshot {
                     bytes: if metadata.is_file() {
                         fs::read(&p).unwrap()
@@ -80,6 +379,9 @@ pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
                     inode: metadata.ino(),
                     modified_seconds: metadata.mtime(),
                     modified_nanoseconds: metadata.mtime_nsec(),
+                    extended_attributes: snapshot_xattrs(&p),
+                    acl: native_metadata.as_ref().and_then(|value| value.0.clone()),
+                    bsd_flags: native_metadata.map_or(0, |value| value.1),
                 };
                 result.insert(relative.clone(), snapshot);
                 if metadata.is_dir() {
@@ -192,6 +494,8 @@ pub fn write_v2_state(
     let state = grip::state::AcceptedState {
         generation: Some(generation),
         baselines,
+        complete_baselines: BTreeMap::new(),
+        schema_version: Some(2),
         accepted_bytes: None,
     };
     let directory = grip_home.join("state");
@@ -314,6 +618,7 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
             destination_path: SafePath::from_path(Path::new("/destination")),
             expected_source: None,
             expected_destination: None,
+            metadata: None,
             dependencies: Vec::new(),
             status: ActionStatus::Unattempted,
             milestones: ActionEvidence::default(),
@@ -382,9 +687,7 @@ pub fn pull_execution_fixture() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::mutation::plan::build_for(
         grip::mutation::model::MutationDirection::Pull,
@@ -418,9 +721,7 @@ pub fn deletion_execution_fixture() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::delete::plan::build(
         grip::delete::model::DeletionAuthority::Source,
@@ -454,9 +755,7 @@ pub fn sync_execution_fixture() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::mutation::plan::build_sync_with_parent_requirements(
         grip::classification::model::ClassificationScope {
@@ -488,15 +787,20 @@ pub fn resolution_execution_fixture(
     let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
-    let identity = state.accepted.baselines.keys().next().unwrap().clone();
+    let identity = state
+        .accepted
+        .complete_baselines
+        .keys()
+        .next()
+        .or_else(|| state.accepted.baselines.keys().next())
+        .unwrap()
+        .clone();
     let selection = grip::observation::model::Selection::Entry(identity);
     let observed =
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::mutation::plan::build_resolution(
         grip::classification::model::ClassificationScope {
@@ -550,9 +854,7 @@ pub fn mixed_sync_execution_fixture() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::mutation::plan::build_sync_with_parent_requirements(
         grip::classification::model::ClassificationScope {

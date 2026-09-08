@@ -5,6 +5,10 @@ use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, Stat, fstat, open, openat, statat};
 use std::ffi::CString;
 use std::io;
+#[cfg(target_os = "macos")]
+use std::os::fd::AsRawFd;
+#[cfg(target_os = "macos")]
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 /// An open directory used as the authority for relative child inspection.
@@ -64,7 +68,10 @@ impl Directory {
         let name = child_name(name)?;
         let stat =
             statat(&self.descriptor, name.as_c_str(), AtFlags::SYMLINK_NOFOLLOW).map_err(errno)?;
-        Ok(NodeMetadata { stat })
+        Ok(NodeMetadata {
+            stat,
+            extended_flags: extended_flags_at(self.descriptor.as_raw_fd(), name.as_c_str()).ok(),
+        })
     }
 
     /// Open a child directory relative to this directory without following links.
@@ -105,6 +112,7 @@ impl Directory {
 #[derive(Debug, Clone, Copy)]
 pub struct NodeMetadata {
     pub stat: Stat,
+    pub extended_flags: Option<u64>,
 }
 
 impl NodeMetadata {
@@ -115,14 +123,22 @@ impl NodeMetadata {
 
     /// Classify a node against the source root's filesystem allowlist.
     pub fn classify(&self, root_device: u64) -> NodeKind {
-        classify(&self.stat, root_device)
+        classify_metadata(self, root_device)
     }
 }
 
 /// Inspect an exact path without following its final component.
 pub fn metadata_at_path(path: &Path) -> io::Result<NodeMetadata> {
     statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW)
-        .map(|stat| NodeMetadata { stat })
+        .map(|stat| NodeMetadata {
+            stat,
+            #[cfg(target_os = "macos")]
+            extended_flags: CString::new(path.as_os_str().as_bytes())
+                .ok()
+                .and_then(|path| extended_flags_at(libc::AT_FDCWD, path.as_c_str()).ok()),
+            #[cfg(not(target_os = "macos"))]
+            extended_flags: None,
+        })
         .map_err(errno)
 }
 
@@ -185,12 +201,6 @@ pub fn classify(stat: &Stat, root_device: u64) -> NodeKind {
         FileType::Directory if stat.st_dev as u64 != root_device => NodeKind::NestedMount,
         FileType::Directory => NodeKind::Directory,
         FileType::RegularFile if stat.st_nlink > 1 => NodeKind::HardLink,
-        FileType::RegularFile
-            if stat.st_size > 0
-                && (stat.st_blocks as u64).saturating_mul(512) < stat.st_size as u64 =>
-        {
-            NodeKind::SparseFile
-        }
         FileType::RegularFile => NodeKind::File,
         FileType::Unknown => {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
@@ -203,6 +213,51 @@ pub fn classify(stat: &Stat, root_device: u64) -> NodeKind {
             NodeKind::UnknownSpecial
         }
     }
+}
+
+/// Apply authoritative macOS extended-flag evidence when classifying a node.
+pub fn classify_metadata(metadata: &NodeMetadata, root_device: u64) -> NodeKind {
+    let basic = classify(&metadata.stat, root_device);
+    if basic == NodeKind::File
+        && metadata
+            .extended_flags
+            .is_some_and(|flags| flags & 0x0000_0010 != 0)
+    {
+        NodeKind::SparseFile
+    } else {
+        basic
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn extended_flags_at(fd: libc::c_int, path: &std::ffi::CStr) -> io::Result<u64> {
+    let mut attributes = libc::attrlist {
+        bitmapcount: 5,
+        reserved: 0,
+        commonattr: 0,
+        volattr: 0,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0x0000_0200,
+    };
+    let mut buffer = [0_u8; 16];
+    // SAFETY: all pointers refer to valid storage and flags prohibit link following.
+    let result = unsafe {
+        libc::getattrlistat(
+            fd,
+            path.as_ptr(),
+            (&mut attributes as *mut libc::attrlist).cast(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            0x0000_0020 | 0x0000_0001 | 0x0000_0800,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(u64::from_ne_bytes(
+        buffer[4..12].try_into().expect("fixed flag slice"),
+    ))
 }
 
 /// Return the stable reason associated with an unsupported node kind.
@@ -307,7 +362,17 @@ mod tests {
         stat.st_nlink = 1;
         stat.st_size = 4096;
         stat.st_blocks = 0;
-        assert_eq!(classify(&stat, device), NodeKind::SparseFile);
+        assert_eq!(classify(&stat, device), NodeKind::File);
+        assert_eq!(
+            classify_metadata(
+                &NodeMetadata {
+                    stat,
+                    extended_flags: Some(0x10)
+                },
+                device,
+            ),
+            NodeKind::SparseFile
+        );
         stat.st_size = 1;
         stat.st_blocks = 1;
         assert_eq!(classify(&stat, device), NodeKind::File);

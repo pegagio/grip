@@ -3,6 +3,7 @@ mod support;
 use grip::discovery::model::NodeKind;
 use grip::home;
 use grip::mapping::MappingKind;
+use grip::metadata::model::{AclState, MetadataState, ModificationTime, SupportedEntryStateV3};
 use grip::observation::model::{
     ContentFingerprint, EntryIdentity, MappingSnapshot, SupportedState,
 };
@@ -13,6 +14,132 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
+
+fn complete_state() -> SupportedEntryStateV3 {
+    SupportedEntryStateV3 {
+        node_kind: NodeKind::File,
+        content: Some(ContentFingerprint {
+            algorithm: "sha256".into(),
+            digest: "c".repeat(64),
+            length: 3,
+        }),
+        metadata: MetadataState {
+            permission_mode: "0640".into(),
+            uid: 501,
+            gid: 20,
+            modified_time: ModificationTime {
+                seconds: 1_700_000_000,
+                nanoseconds: 42,
+            },
+            extended_attributes: Vec::new(),
+            acl: AclState::Absent,
+            bsd_flags: Default::default(),
+        },
+    }
+}
+
+fn complete_identity(relative: &[u8]) -> EntryIdentity {
+    EntryIdentity::new(
+        MappingSnapshot {
+            kind: MappingKind::Tree,
+            source: PathBuf::from("/source"),
+            destination: PathBuf::from("/destination"),
+        },
+        relative.to_vec(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn state_v3_round_trips_complete_canonical_state_and_generation() {
+    let mut baselines = BTreeMap::new();
+    baselines.insert(complete_identity(b"z"), complete_state());
+    baselines.insert(complete_identity(b"a"), complete_state());
+    let accepted = state::AcceptedStateV3 {
+        generation: 9,
+        baselines,
+        accepted_bytes: None,
+    };
+    let bytes = state::encode_v3(&accepted).unwrap();
+    let decoded = state::decode_versioned(&bytes).unwrap();
+    let state::DecodedAcceptedState::Complete(decoded) = decoded else {
+        panic!("V3 must remain complete state");
+    };
+    assert_eq!(decoded.generation, 9);
+    assert_eq!(decoded.baselines, accepted.baselines);
+
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["payload"]["baselines"][0]["relative_path_hex"], "61");
+}
+
+#[test]
+fn state_v3_rejects_integrity_unknown_fields_and_noncanonical_order() {
+    let mut baselines = BTreeMap::new();
+    baselines.insert(complete_identity(b"a"), complete_state());
+    baselines.insert(complete_identity(b"b"), complete_state());
+    let accepted = state::AcceptedStateV3 {
+        generation: 1,
+        baselines,
+        accepted_bytes: None,
+    };
+    let bytes = state::encode_v3(&accepted).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["extra"] = serde_json::json!(true);
+    assert!(state::decode_versioned(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut envelope: state::StateEnvelopeV3 = serde_json::from_slice(&bytes).unwrap();
+    envelope.integrity.digest.replace_range(..1, "0");
+    assert!(envelope.validate().is_err());
+    envelope = state::StateEnvelopeV3::new(1, &accepted.baselines);
+    envelope.payload.baselines.swap(0, 1);
+    assert!(envelope.validate().is_err());
+}
+
+#[test]
+fn legacy_v2_remains_legacy_and_v3_cannot_be_downgraded() {
+    let legacy = accepted_with_digest('a');
+    let v2 = state::encode_v2(&legacy, 4).unwrap();
+    assert!(matches!(
+        state::decode_versioned(&v2).unwrap(),
+        state::DecodedAcceptedState::Legacy(_)
+    ));
+
+    let mut baselines = BTreeMap::new();
+    baselines.insert(complete_identity(b"a"), complete_state());
+    let v3 = state::encode_v3(&state::AcceptedStateV3 {
+        generation: 5,
+        baselines,
+        accepted_bytes: None,
+    })
+    .unwrap();
+    assert!(state::decode_accepted(Some(&v3)).is_err());
+}
+
+#[test]
+fn complete_state_publication_is_atomic_and_loads_as_v3() {
+    let root = tempfile::tempdir().unwrap();
+    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+    let state_dir = state::publication::prepare_directory(&home).unwrap();
+    let _lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
+    let expected = state::publication::load(&home).unwrap();
+    let baselines = BTreeMap::from([(complete_identity(b"file"), complete_state())]);
+    assert_eq!(
+        state::publication::publish_complete_locked(&home, &expected, &baselines).unwrap(),
+        Some(0)
+    );
+    let loaded = state::publication::load(&home).unwrap();
+    let complete = loaded.complete.expect("published state must remain V3");
+    assert_eq!(complete.generation, 0);
+    assert_eq!(complete.baselines, baselines);
+    assert_eq!(
+        fs::metadata(state_dir.join("state.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+}
 
 #[test]
 fn validates_digest_schema_and_generation() {
@@ -150,6 +277,8 @@ fn version_neutral_reader_accepts_absent_v1_and_v2_state() {
     let accepted = state::AcceptedState {
         generation: Some(8),
         baselines,
+        complete_baselines: BTreeMap::new(),
+        schema_version: Some(2),
         accepted_bytes: None,
     };
     let v2 = state::encode_v2(&accepted, 8).unwrap();
@@ -184,6 +313,8 @@ fn accepted_with_digest(digest_byte: char) -> state::AcceptedState {
     state::AcceptedState {
         generation: None,
         baselines,
+        complete_baselines: BTreeMap::new(),
+        schema_version: Some(2),
         accepted_bytes: None,
     }
 }

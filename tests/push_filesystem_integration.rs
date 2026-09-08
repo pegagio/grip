@@ -29,9 +29,7 @@ fn execution_fixture() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
     let records = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = grip::push::plan::build_with_parent_requirements(
         grip::classification::model::ClassificationScope {

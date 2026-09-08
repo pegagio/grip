@@ -16,6 +16,11 @@ fn file_fixture() -> (
     let destination = root.path().join("destination");
     fs::write(&source, "same").unwrap();
     fs::write(&destination, "same").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     support::write_registry(&grip_home, &[("file", &source, &destination)]);
     (root, grip_home, source, destination)
 }
@@ -33,6 +38,11 @@ fn initial_refresh_noop_and_empty_scope_have_expected_generation_behavior() {
 
     fs::write(&source, "changed").unwrap();
     fs::write(&destination, "changed").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     let prior = fs::read(grip_home.join("state/state.json")).unwrap();
     let refreshed = support::command_with_grip_home(
         root.path(),
@@ -82,6 +92,7 @@ fn scoped_acceptance_preserves_out_of_scope_and_pending_retirement_baselines() {
     fs::write(destination.join("a"), "a0").unwrap();
     fs::write(source.join("b"), "b0").unwrap();
     fs::write(destination.join("b"), "b0").unwrap();
+    support::copy_tree_entry_metadata(&source, &destination);
     support::write_registry(&grip_home, &[("tree", &source, &destination)]);
     assert!(
         support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
@@ -93,6 +104,16 @@ fn scoped_acceptance_preserves_out_of_scope_and_pending_retirement_baselines() {
     fs::write(destination.join("a"), "a1").unwrap();
     fs::write(source.join("b"), "b1").unwrap();
     fs::write(destination.join("b"), "b1").unwrap();
+    support::copy_complete_metadata(
+        &source.join("a"),
+        &destination.join("a"),
+        grip::discovery::model::NodeKind::File,
+    );
+    support::copy_complete_metadata(
+        &source.join("b"),
+        &destination.join("b"),
+        grip::discovery::model::NodeKind::File,
+    );
     let scoped = support::command_with_grip_home(
         root.path(),
         &grip_home,
@@ -300,6 +321,7 @@ fn acceptance_rejects_content_mode_and_membership_drift_before_publication() {
     fs::create_dir(&destination).unwrap();
     fs::write(source.join("entry"), "same").unwrap();
     fs::write(destination.join("entry"), "same").unwrap();
+    support::copy_tree_entry_metadata(&source, &destination);
     support::write_registry(&grip_home, &[("tree", &source, &destination)]);
     let error = direct_accept_with_hook(&grip_home, || {
         fs::write(source.join(".gripignore"), "entry\n").unwrap();
@@ -349,6 +371,16 @@ fn push_publishes_one_scoped_generation_and_preserves_out_of_scope_baselines() {
     for path in [&source_a, &source_b, &destination_a, &destination_b] {
         fs::write(path, "accepted").unwrap();
     }
+    support::copy_complete_metadata(
+        &source_a,
+        &destination_a,
+        grip::discovery::model::NodeKind::File,
+    );
+    support::copy_complete_metadata(
+        &source_b,
+        &destination_b,
+        grip::discovery::model::NodeKind::File,
+    );
     support::write_registry(
         &grip_home,
         &[
@@ -376,5 +408,5 @@ fn push_publishes_one_scoped_generation_and_preserves_out_of_scope_baselines() {
     let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     assert_eq!(state.accepted.generation, Some(1));
-    assert_eq!(state.accepted.baselines.len(), 2);
+    assert_eq!(state.accepted.complete_baselines.len(), 2);
 }

@@ -197,7 +197,7 @@ fn stage_file_with_mode(
     let source_before = source_file
         .metadata()
         .map_err(|error| GripError::from_io("could not inspect mutation origin", error))?;
-    validate_regular(&source_before)?;
+    validate_regular(source, &source_before)?;
     let name = format!(
         ".grip-stage-{}-{}",
         std::process::id(),
@@ -532,11 +532,16 @@ fn verify_staged_identity(staged: &StagedFile) -> Result<(), GripError> {
     Ok(())
 }
 
-fn validate_regular(metadata: &fs::Metadata) -> Result<(), GripError> {
+fn validate_regular(path: &Path, metadata: &fs::Metadata) -> Result<(), GripError> {
+    let path_metadata = crate::discovery::filesystem::metadata_at_path(path)
+        .map_err(|error| GripError::from_io("could not revalidate mutation origin", error))?;
     if !metadata.is_file()
         || metadata.file_type().is_symlink()
         || metadata.nlink() != 1
-        || (metadata.len() > 0 && metadata.blocks().saturating_mul(512) < metadata.len())
+        || metadata.dev() != path_metadata.stat.st_dev as u64
+        || metadata.ino() != path_metadata.stat.st_ino
+        || path_metadata.classify(path_metadata.stat.st_dev as u64)
+            != crate::discovery::model::NodeKind::File
     {
         return Err(GripError::Internal(
             "mutation origin is no longer an ordinary supported file".into(),

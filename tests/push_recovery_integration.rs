@@ -29,6 +29,7 @@ fn plan(action_count: usize) -> PushPlan {
             destination_path: SafePath::from_path(Path::new("/destination")),
             expected_source: None,
             expected_destination: None,
+            metadata: None,
             dependencies: Vec::new(),
             status: ActionStatus::Unattempted,
             milestones: ActionEvidence::default(),

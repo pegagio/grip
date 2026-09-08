@@ -38,12 +38,13 @@ fn source_winner_preserves_destination_and_publishes_complete_state() {
         .as_str()
         .unwrap();
     let operation = value["details"]["operation_record"]["id"].as_str().unwrap();
+    assert!(recovery.ends_with("metadata-v2.json"));
     assert_eq!(
         fs::read_to_string(
             grip_home
                 .join("state/operations")
                 .join(operation)
-                .join(recovery)
+                .join("recovery/00000000/payload")
         )
         .unwrap(),
         "destination loses"
@@ -117,17 +118,26 @@ fn changed_destination_or_accepted_baseline_rejects_the_stale_resolution() {
         if drift == "destination" {
             fs::write(root.path().join("destination"), "newer destination change").unwrap();
         } else {
-            let mut baselines = state.accepted.baselines.clone();
+            let mut baselines = state.accepted.complete_baselines.clone();
             let identity = baselines.keys().next().unwrap().clone();
             baselines.insert(
                 identity,
-                support::supported_file_state(&root.path().join("source")),
+                grip::observation::fingerprint::inspect_complete(
+                    &root.path().join("source"),
+                    grip::discovery::model::NodeKind::File,
+                )
+                .unwrap()
+                .state,
             );
-            support::write_v2_state(
-                home.path(),
+            let envelope = grip::state::StateEnvelopeV3::new(
                 state.accepted.generation.unwrap_or(0) + 1,
-                baselines,
+                &baselines,
             );
+            fs::write(
+                home.path().join("state/state.json"),
+                serde_json::to_vec(&envelope).unwrap(),
+            )
+            .unwrap();
         }
         let result =
             grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan);

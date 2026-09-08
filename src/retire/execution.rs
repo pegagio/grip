@@ -55,12 +55,7 @@ pub fn execute_with_fault(
         crate::observation::inspect(home, &registry, &expected_state.accepted, selection)?;
     let records = observed
         .values()
-        .map(|entry| {
-            crate::classification::classify(
-                entry,
-                expected_state.accepted.baselines.get(&entry.identity),
-            )
-        })
+        .map(|entry| crate::classification::classify_accepted(entry, &expected_state.accepted))
         .collect();
     let rebuilt = crate::retire::plan::build(plan.scope.clone(), plan.force, records)?;
     if rebuilt.plan_id != plan.plan_id {
@@ -89,6 +84,7 @@ pub fn execute_with_fault(
             return fail(&mut receipt, &mut applied, expected_state, error);
         }
         next.baselines.remove(&action.identity);
+        next.complete_baselines.remove(&action.identity);
     }
     let state_directory = match crate::state::publication::prepare_directory(home) {
         Ok(value) => value,
@@ -108,7 +104,7 @@ pub fn execute_with_fault(
         );
     }
     let generation =
-        match crate::state::publication::publish_accepted_locked(home, expected_state, &next) {
+        match crate::state::publication::publish_current_locked(home, expected_state, &next) {
             Ok(value) => value,
             Err(error) => return fail(&mut receipt, &mut applied, expected_state, error),
         };

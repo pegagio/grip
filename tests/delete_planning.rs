@@ -18,9 +18,7 @@ fn plans() -> (
         grip::observation::inspect(&home, &registry, &state.accepted, &Selection::All).unwrap();
     let records: Vec<_> = observed
         .values()
-        .map(|entry| {
-            grip::classification::classify(entry, state.accepted.baselines.get(&entry.identity))
-        })
+        .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
     let scope = ClassificationScope {
         kind: "all".into(),

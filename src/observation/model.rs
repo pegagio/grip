@@ -127,6 +127,15 @@ pub struct DiagnosticEvidence {
     pub modified_nanoseconds: i64,
 }
 
+/// Complete state and operation-scoped metadata diagnostics for Feature 009 observation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteObservedState {
+    pub state: crate::metadata::model::SupportedEntryStateV3,
+    pub excluded_xattrs: Vec<Vec<u8>>,
+    pub unknown_xattrs: Vec<Vec<u8>>,
+    pub unsupported_bsd_flags: Vec<String>,
+}
+
 /// Current membership interpretation for an observed identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Membership {
@@ -143,6 +152,10 @@ pub struct ObservedEntry {
     pub membership: Membership,
     pub source: Option<SupportedState>,
     pub destination: Option<SupportedState>,
+    pub source_complete: Option<CompleteObservedState>,
+    pub destination_complete: Option<CompleteObservedState>,
+    pub metadata_findings: Vec<crate::metadata::model::CompatibilityFinding>,
+    pub endpoint_capabilities: Vec<crate::metadata::model::EndpointCapabilityProfile>,
     pub source_diagnostic: Option<DiagnosticEvidence>,
     pub destination_diagnostic: Option<DiagnosticEvidence>,
     pub unsupported: Vec<String>,
@@ -221,7 +234,11 @@ pub fn resolve_selection(
             ));
         }
     }
-    for identity in accepted.baselines.keys() {
+    for identity in accepted
+        .baselines
+        .keys()
+        .chain(accepted.complete_baselines.keys())
+    {
         let path = match path_space {
             PathSpace::Source => identity.source_path(),
             PathSpace::Destination => identity.destination_path(),

@@ -19,6 +19,11 @@ fn content_mode_timestamp_and_deletion_transitions_are_classified() {
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
     fs::write(&destination, "accepted").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     support::write_registry(&grip_home, &[("file", &source, &destination)]);
     assert_eq!(
         support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
@@ -30,18 +35,32 @@ fn content_mode_timestamp_and_deletion_transitions_are_classified() {
     fs::write(&source, "accepted").unwrap();
     let timestamp_only =
         support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "status"]);
-    assert_eq!(classification(&timestamp_only), "synchronized");
+    assert_eq!(classification(&timestamp_only), "source_only_change");
+    assert_eq!(
+        support::json(&timestamp_only)["details"]["records"][0]["changed_dimensions"]["source_to_baseline"],
+        serde_json::json!(["modification_time"])
+    );
 
+    support::copy_complete_metadata(
+        &destination,
+        &source,
+        grip::discovery::model::NodeKind::File,
+    );
     fs::write(&source, "changed").unwrap();
     let content =
         support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "status"]);
     assert_eq!(classification(&content), "source_only_change");
     assert_eq!(
         support::json(&content)["details"]["records"][0]["changed_dimensions"]["source_to_baseline"],
-        serde_json::json!(["content"])
+        serde_json::json!(["content", "modification_time"])
     );
 
     fs::write(&source, "accepted").unwrap();
+    support::copy_complete_metadata(
+        &destination,
+        &source,
+        grip::discovery::model::NodeKind::File,
+    );
     fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
     let mode =
         support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "status"]);
@@ -65,6 +84,11 @@ fn removed_mapping_baseline_is_untracked_without_reopening_payloads() {
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
     fs::write(&destination, "accepted").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
     support::write_registry(&grip_home, &[("file", &source, &destination)]);
     support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"]);
     let removed = support::command_with_grip_home(
@@ -90,6 +114,7 @@ fn newly_ignored_baseline_and_unsafe_destination_remain_visible() {
     fs::create_dir(&destination).unwrap();
     fs::write(source.join("file"), "accepted").unwrap();
     fs::write(destination.join("file"), "accepted").unwrap();
+    support::copy_tree_entry_metadata(&source, &destination);
     support::write_registry(&grip_home, &[("tree", &source, &destination)]);
     let accepted =
         support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"]);
@@ -126,6 +151,7 @@ fn mapped_root_deletion_and_non_utf8_source_are_reported_without_loss() {
     fs::create_dir(&destination).unwrap();
     fs::write(source.join("file"), "accepted").unwrap();
     fs::write(destination.join("file"), "accepted").unwrap();
+    support::copy_tree_entry_metadata(&source, &destination);
     support::write_registry(&grip_home, &[("tree", &source, &destination)]);
     assert_eq!(
         support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])

@@ -27,17 +27,21 @@ pub fn build_from_actioned(
             .ok_or_else(|| {
                 GripError::Internal("actioned identity missing from final observation".into())
             })?;
-        if record.blocking || record.source.is_none() || record.source != record.destination {
+        if record.blocking
+            || record.source_complete.is_none()
+            || record.source_complete != record.destination_complete
+        {
             return Err(GripError::BaselineNotAcceptable {
                 records: vec![record.clone()],
             });
         }
         let state = record
-            .source
+            .source_complete
             .clone()
             .expect("equivalent actioned entry has source");
-        if expected.baselines.get(identity) != Some(&state) {
-            next.baselines.insert(identity.clone(), state);
+        if expected.complete_baselines.get(identity) != Some(&state) {
+            next.complete_baselines.insert(identity.clone(), state);
+            next.baselines.remove(identity);
             changed_count += 1;
         }
     }
@@ -62,8 +66,9 @@ pub fn build(
                 Classification::InitialMatch
                     | Classification::ConvergedTwoSidedChange
                     | Classification::Synchronized
-            ) || record.source.is_none()
-                || record.source != record.destination
+                    | Classification::MetadataMigrationReady
+            ) || record.source_complete.is_none()
+                || record.source_complete != record.destination_complete
                 || record.blocking
         })
         .cloned()
@@ -73,14 +78,22 @@ pub fn build(
     }
     for record in records {
         let state = record
-            .source
+            .source_complete
             .clone()
             .expect("eligible records have source state");
-        if expected.baselines.get(&record.identity) != Some(&state) {
-            next.baselines.insert(record.identity.clone(), state);
+        if expected.complete_baselines.get(&record.identity) != Some(&state) {
+            next.complete_baselines
+                .insert(record.identity.clone(), state);
+            next.baselines.remove(&record.identity);
             changed_count += 1;
         }
     }
+    if !next.baselines.is_empty() {
+        return Err(GripError::BaselineNotAcceptable {
+            records: records.to_vec(),
+        });
+    }
+    next.schema_version = Some(3);
     Ok(Candidate {
         next,
         selected_count: records.len(),

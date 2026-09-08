@@ -115,6 +115,26 @@ pub enum ActionKind {
     CreateDirectory,
     AddFile,
     ReplaceFile,
+    ApplyMetadata,
+    FinalizeDirectoryMetadata,
+}
+
+/// Complete metadata-specific action evidence retained within Operation Record V1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MetadataActionEvidence {
+    pub expected_before: Option<crate::metadata::model::SupportedEntryStateV3>,
+    pub expected_after: crate::metadata::model::SupportedEntryStateV3,
+    pub changed_dimensions: std::collections::BTreeSet<crate::metadata::model::MetadataDimension>,
+    pub flags_to_clear: std::collections::BTreeSet<crate::metadata::model::BsdFlag>,
+    pub capability_proofs: Vec<crate::metadata::model::CapabilityEvidence>,
+    pub recovery_schema_version: Option<u8>,
+}
+
+/// Precise metadata preflight blocker attached to a deterministic plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MetadataPlanBlocker {
+    pub finding: crate::metadata::model::CompatibilityFinding,
+    pub complete_scope_blocked: bool,
 }
 
 /// Last-known execution status for one action.
@@ -172,6 +192,8 @@ pub struct MutationAction {
     pub expected_source: Option<SupportedState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_destination: Option<SupportedState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<MetadataActionEvidence>,
     pub dependencies: Vec<usize>,
     pub status: ActionStatus,
     pub milestones: ActionEvidence,

@@ -6,6 +6,7 @@ pub mod discovery;
 pub mod error;
 pub mod home;
 pub mod mapping;
+pub mod metadata;
 pub mod mutation;
 pub mod observation;
 pub mod operation;
@@ -188,7 +189,7 @@ fn execute_delete(args: &cli::DeleteArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state)?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let authority = if args.source {
         delete::model::DeletionAuthority::Source
@@ -244,7 +245,7 @@ fn execute_retire(args: &cli::RetireArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state)?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = retire::plan::build(
         classification_scope(&selection, selector, path_space),
@@ -307,7 +308,7 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("push"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let scope = classification_scope(&selection, selector, path_space);
     let plan = push::plan::build_with_parent_requirements(
@@ -349,7 +350,7 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("pull"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let scope = classification_scope(&selection, selector, path_space);
     let plan = mutation::plan::build_for(mutation::model::MutationDirection::Pull, scope, records)?;
@@ -387,7 +388,7 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("sync"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let scope = classification_scope(&selection, selector, path_space);
     let plan = mutation::plan::build_sync_with_parent_requirements(
@@ -429,7 +430,7 @@ fn execute_resolve(args: &cli::ResolveArgs) -> Result<CommandOutcome, GripError>
         .map_err(|error| error.for_operation("resolve"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let scope = classification_scope(
         &selection,
@@ -461,13 +462,18 @@ fn exact_resolution_selection(
     use observation::model::Selection;
     match selection {
         Selection::Entry(identity) => Ok(Selection::Entry(identity)),
-        Selection::Subtree(identity) if accepted.baselines.contains_key(&identity) => {
+        Selection::Subtree(identity)
+            if accepted.baselines.contains_key(&identity)
+                || accepted.complete_baselines.contains_key(&identity) =>
+        {
             Ok(Selection::Entry(identity))
         }
         Selection::Mapping(mapping) => {
             let identity = observation::model::EntryIdentity::new(mapping, Vec::new())
                 .map_err(|message| GripError::InvalidConfiguration(message.into()))?;
-            if accepted.baselines.contains_key(&identity) {
+            if accepted.baselines.contains_key(&identity)
+                || accepted.complete_baselines.contains_key(&identity)
+            {
                 Ok(Selection::Entry(identity))
             } else {
                 Err(resolution_selector_error(requested))
@@ -522,7 +528,7 @@ fn execute_inspection(
         .map_err(|error| error.for_operation(operation))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify(entry, state.accepted.baselines.get(&entry.identity)))
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let scope = classification_scope(&selection, selector, path_space);
     let result = classification::model::ClassificationResult::new(operation, scope, records);
@@ -596,12 +602,7 @@ where
         .map_err(|error| error.for_operation("baseline_accept"))?;
     let records = observed
         .values()
-        .map(|entry| {
-            classification::classify(
-                entry,
-                expected_state.accepted.baselines.get(&entry.identity),
-            )
-        })
+        .map(|entry| classification::classify_accepted(entry, &expected_state.accepted))
         .collect::<Vec<_>>();
     let candidate = baseline::build(&expected_state.accepted, &records)?;
     if candidate.changed_count == 0 {
@@ -648,12 +649,7 @@ where
     .map_err(|error| error.for_operation("baseline_accept"))?;
     let locked_records = locked_observed
         .values()
-        .map(|entry| {
-            classification::classify(
-                entry,
-                expected_state.accepted.baselines.get(&entry.identity),
-            )
-        })
+        .map(|entry| classification::classify_accepted(entry, &expected_state.accepted))
         .collect::<Vec<_>>();
     if locked_records != records {
         return Err(GripError::discovery_operational(
@@ -665,8 +661,11 @@ where
     }
     let locked_candidate = baseline::build(&expected_state.accepted, &locked_records)?;
     registry::publication::revalidate_readonly(home, &locked_registry, "baseline_accept")?;
-    let generation =
-        state::publication::publish_accepted_locked(home, &expected_state, &locked_candidate.next)?;
+    let generation = state::publication::publish_complete_locked(
+        home,
+        &expected_state,
+        &locked_candidate.next.complete_baselines,
+    )?;
     let result = match generation {
         Some(generation) => baseline::AcceptanceResult::accepted(
             locked_candidate.selected_count,
@@ -889,7 +888,7 @@ fn validate_selected_home() -> Result<(std::path::PathBuf, &'static str), GripEr
             }
             let bytes = fs::read(&state_path)
                 .map_err(|e| GripError::CorruptState(format!("state.json is unreadable: {e}")))?;
-            state::decode_accepted(Some(&bytes))?;
+            state::decode_versioned(&bytes)?;
             Ok((selected.path().to_owned(), "valid"))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

@@ -1,8 +1,8 @@
 ---
 title: Filesystem support boundaries
 type: reference
-sources: [S001, S004, S005, S006, S008, S009]
-updated: 2026-09-07
+sources: [S001, S004, S005, S006, S008, S009, S012]
+updated: 2026-09-08
 ---
 
 # Filesystem support boundaries
@@ -25,11 +25,10 @@ Missing destination parents are explicit dependency-ordered plan actions derived
 
 Pull reverses transfer roles without reversing mapping identity. The destination is opened as the transfer origin, but the existing source is the publication target: its full accepted ancestry must remain present and safe, staging occurs beside it, and the prior source is verified in private recovery before atomic replacement. Missing source content or parents block rather than becoming creation actions. (S009)
 
-Content and the supported metadata set both participate in equality and conflict detection. Feature 004's first set fingerprints ordinary-file bytes with SHA-256 and compares node kind, file length and digest, and the full Unix permission mode; modification time is diagnostic rather than equality-defining. Unsupported or unavailable evidence remains explicit rather than being silently coerced. (S004)
-
-The initial platform contract may target macOS and Unix explicitly. Cross-platform metadata fidelity, case sensitivity, Unicode normalization, user and group identity reproduction, and symlink behavior require explicit contracts rather than assumptions inherited from a broad filesystem abstraction. (S001)
+Feature 009 finalizes this boundary for current macOS with APFS. Regular files and directories compare complete supported metadata; modification time independently defines equality. Grip preserves exact path bytes, qualifies case and Unicode behavior per endpoint, blocks alias collisions, and treats unavailable, unauthorized, or lossy evidence as a precise blocker rather than coercing it. Other platforms and filesystems remain outside initial acceptance. (S012)
 
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
 - [Deletion, retirement, and recovery](./deletion-retirement-and-recovery.md)
+- [Metadata and filesystem contract](./metadata-and-filesystem-contract.md)

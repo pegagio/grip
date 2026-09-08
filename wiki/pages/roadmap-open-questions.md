@@ -2,7 +2,7 @@
 title: Roadmap open questions
 type: reference
 sources: [S003]
-updated: 2026-09-07
+updated: 2026-09-08
 ---
 
 # Roadmap open questions
@@ -16,7 +16,7 @@ The roadmap retains thirteen questions for the specification that owns each deci
 - **005 (resolved):** an operational failure stops execution at the first failed action, preserves completed effects and recovery evidence, leaves later actions unattempted, and never publishes a partial baseline. (S003)
 - **005 and 008 (resolved):** Feature 005 defines private recovery creation, preservation, binding, and reporting for replacement actions. Feature 008 completes the lifecycle with inspection, exact compatible restoration, and explicitly confirmed cleanup while retaining immutable tombstone metadata. (S003)
 - **008 (resolved):** newly ignored, explicitly untracked, and converged-deletion records remain pending until an explicit path-selected or `--all` retirement removes their accepted membership evidence without changing payloads. Differing surviving copies require a reviewed `--force` authorization. (S003)
-- **009:** settle case-sensitivity and Unicode-normalization behavior as part of final filesystem compatibility. (S003)
+- **009 (resolved):** supported equality includes independent file and directory metadata; symbolic links remain unsupported non-followed objects; current macOS on APFS is the qualification boundary; exact path bytes are preserved; and endpoint-observed case and Unicode behavior blocks incompatible managed identities rather than normalizing or renaming them. (S003)
 - **004 (resolved for automation):** `status`, `check`, `diff`, and baseline acceptance expose stable structured results and distinguish successful inspection, attention-required state, and operational failure. (S003)
 - **Governance:** name the integration branch whose acceptance freezes a feature directory under merge-bounded persistence. (S003)
 

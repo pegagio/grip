@@ -3,6 +3,7 @@ pub mod mutation_lock;
 pub mod publication;
 
 use crate::error::GripError;
+use crate::metadata::model::SupportedEntryStateV3;
 use crate::observation::model::{EntryIdentity, MappingSnapshot, SupportedState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -76,7 +77,24 @@ fn canonical_digest(payload: &StatePayloadV1) -> String {
 pub struct AcceptedState {
     pub generation: Option<u64>,
     pub baselines: BTreeMap<EntryIdentity, SupportedState>,
+    pub complete_baselines: BTreeMap<EntryIdentity, SupportedEntryStateV3>,
+    pub schema_version: Option<u8>,
     pub accepted_bytes: Option<Vec<u8>>,
+}
+
+/// Complete accepted state represented by State Envelope V3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedStateV3 {
+    pub generation: u64,
+    pub baselines: BTreeMap<EntryIdentity, SupportedEntryStateV3>,
+    pub accepted_bytes: Option<Vec<u8>>,
+}
+
+/// Strictly identified persisted state without silently upgrading legacy evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodedAcceptedState {
+    Legacy(AcceptedState),
+    Complete(AcceptedStateV3),
 }
 
 impl AcceptedState {
@@ -84,6 +102,8 @@ impl AcceptedState {
         Self {
             generation: None,
             baselines: BTreeMap::new(),
+            complete_baselines: BTreeMap::new(),
+            schema_version: None,
             accepted_bytes: None,
         }
     }
@@ -110,6 +130,102 @@ pub struct StateEnvelopeV2 {
     pub schema_version: u64,
     pub payload: StatePayloadV2,
     pub integrity: IntegrityV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatePayloadV3 {
+    pub generation: u64,
+    pub baselines: Vec<BaselineRecordV3>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaselineRecordV3 {
+    pub mapping: MappingSnapshot,
+    pub relative_path_hex: String,
+    pub state: SupportedEntryStateV3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateEnvelopeV3 {
+    pub schema_version: u64,
+    pub payload: StatePayloadV3,
+    pub integrity: IntegrityV1,
+}
+
+#[derive(Serialize)]
+struct IntegrityInputV3<'a> {
+    schema_version: u64,
+    payload: &'a StatePayloadV3,
+}
+
+impl StateEnvelopeV3 {
+    pub fn new(
+        generation: u64,
+        baselines: &BTreeMap<EntryIdentity, SupportedEntryStateV3>,
+    ) -> Self {
+        let payload = StatePayloadV3 {
+            generation,
+            baselines: baselines
+                .iter()
+                .map(|(identity, state)| BaselineRecordV3 {
+                    mapping: identity.mapping.clone(),
+                    relative_path_hex: encode_hex(&identity.relative_path),
+                    state: state.clone(),
+                })
+                .collect(),
+        };
+        let digest = digest_v3(&payload).expect("typed State V3 serialization cannot fail");
+        Self {
+            schema_version: 3,
+            payload,
+            integrity: IntegrityV1 {
+                algorithm: "sha256".into(),
+                digest,
+            },
+        }
+    }
+
+    pub fn validate(&self) -> Result<BTreeMap<EntryIdentity, SupportedEntryStateV3>, GripError> {
+        if self.schema_version != 3 {
+            return Err(GripError::UnsupportedSchema(format!(
+                "unsupported state schema version {}",
+                self.schema_version
+            )));
+        }
+        if self.integrity.algorithm != "sha256"
+            || !is_sha256(&self.integrity.digest)
+            || self.integrity.digest != digest_v3(&self.payload)?
+        {
+            return Err(GripError::CorruptState(
+                "state integrity verification failed".into(),
+            ));
+        }
+        let mut baselines = BTreeMap::new();
+        let mut previous: Option<EntryIdentity> = None;
+        for record in &self.payload.baselines {
+            validate_mapping(&record.mapping)?;
+            let identity = EntryIdentity::new(
+                record.mapping.clone(),
+                decode_hex(&record.relative_path_hex)?,
+            )
+            .map_err(|message| GripError::CorruptState(message.into()))?;
+            record
+                .state
+                .validate()
+                .map_err(|message| GripError::CorruptState(message.into()))?;
+            if previous.as_ref().is_some_and(|value| value >= &identity) {
+                return Err(GripError::CorruptState(
+                    "baseline records must be unique and canonically ordered".into(),
+                ));
+            }
+            previous = Some(identity.clone());
+            baselines.insert(identity, record.state.clone());
+        }
+        Ok(baselines)
+    }
 }
 
 #[derive(Serialize)]
@@ -199,6 +315,30 @@ fn digest_v2(payload: &StatePayloadV2) -> Result<String, GripError> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
+fn digest_v3(payload: &StatePayloadV3) -> Result<String, GripError> {
+    let bytes = serde_json::to_vec(&IntegrityInputV3 {
+        schema_version: 3,
+        payload,
+    })
+    .map_err(|error| {
+        GripError::Internal(format!("could not encode state integrity input: {error}"))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn validate_mapping(mapping: &MappingSnapshot) -> Result<(), GripError> {
+    if !mapping.source.is_absolute()
+        || !mapping.destination.is_absolute()
+        || mapping.source.to_str().is_none()
+        || mapping.destination.to_str().is_none()
+    {
+        return Err(GripError::CorruptState(
+            "baseline mapping paths must be absolute UTF-8 paths".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn is_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -255,6 +395,8 @@ pub fn decode_accepted(input: Option<&[u8]>) -> Result<AcceptedState, GripError>
             Ok(AcceptedState {
                 generation: Some(envelope.payload.generation),
                 baselines: BTreeMap::new(),
+                complete_baselines: BTreeMap::new(),
+                schema_version: Some(1),
                 accepted_bytes: Some(bytes.to_vec()),
             })
         }
@@ -266,9 +408,14 @@ pub fn decode_accepted(input: Option<&[u8]>) -> Result<AcceptedState, GripError>
             Ok(AcceptedState {
                 generation: Some(envelope.payload.generation),
                 baselines,
+                complete_baselines: BTreeMap::new(),
+                schema_version: Some(2),
                 accepted_bytes: Some(bytes.to_vec()),
             })
         }
+        3 => Err(GripError::UnsupportedSchema(
+            "State V3 cannot be decoded as legacy accepted state".into(),
+        )),
         _ => Err(GripError::UnsupportedSchema(format!(
             "unsupported state schema version {version}"
         ))),
@@ -278,6 +425,54 @@ pub fn decode_accepted(input: Option<&[u8]>) -> Result<AcceptedState, GripError>
 pub fn encode_v2(state: &AcceptedState, generation: u64) -> Result<Vec<u8>, GripError> {
     serde_json::to_vec(&StateEnvelopeV2::new(generation, &state.baselines))
         .map_err(|error| GripError::Internal(format!("could not encode State V2: {error}")))
+}
+
+/// Canonically encode a complete State Envelope V3.
+pub fn encode_v3(state: &AcceptedStateV3) -> Result<Vec<u8>, GripError> {
+    serde_json::to_vec(&StateEnvelopeV3::new(state.generation, &state.baselines))
+        .map_err(|error| GripError::Internal(format!("could not encode State V3: {error}")))
+}
+
+/// Strictly decode V1, V2, or V3 without converting legacy evidence.
+pub fn decode_versioned(input: &[u8]) -> Result<DecodedAcceptedState, GripError> {
+    let raw: serde_json::Value = serde_json::from_slice(input)
+        .map_err(|error| GripError::CorruptState(format!("invalid state JSON: {error}")))?;
+    let version = raw
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            GripError::CorruptState("state schema_version must be a nonnegative integer".into())
+        })?;
+    if version <= 2 {
+        return decode_accepted(Some(input)).map(DecodedAcceptedState::Legacy);
+    }
+    if version != 3 {
+        return Err(GripError::UnsupportedSchema(format!(
+            "unsupported state schema version {version}"
+        )));
+    }
+    let envelope: StateEnvelopeV3 = serde_json::from_value(raw)
+        .map_err(|error| GripError::CorruptState(format!("invalid state schema: {error}")))?;
+    let baselines = envelope.validate()?;
+    Ok(DecodedAcceptedState::Complete(AcceptedStateV3 {
+        generation: envelope.payload.generation,
+        baselines,
+        accepted_bytes: Some(input.to_vec()),
+    }))
+}
+
+/// Decode any supported state envelope into the current domain representation.
+pub fn decode_current_accepted(input: &[u8]) -> Result<AcceptedState, GripError> {
+    match decode_versioned(input)? {
+        DecodedAcceptedState::Legacy(accepted) => Ok(accepted),
+        DecodedAcceptedState::Complete(complete) => Ok(AcceptedState {
+            generation: Some(complete.generation),
+            baselines: BTreeMap::new(),
+            complete_baselines: complete.baselines,
+            schema_version: Some(3),
+            accepted_bytes: Some(input.to_vec()),
+        }),
+    }
 }
 
 pub fn decode(input: &str) -> Result<StateEnvelopeV1, GripError> {

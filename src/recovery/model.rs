@@ -1,6 +1,8 @@
 //! Typed public recovery references and lifecycle evidence.
 
 use crate::error::GripError;
+use crate::metadata::model::{SupportedEntryStateV3, XattrFingerprint};
+use crate::observation::model::MappingSnapshot;
 use crate::state::IntegrityV1;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -128,6 +130,102 @@ pub struct RecoveryEnvelopeV1<T> {
     pub schema_version: u8,
     pub payload: T,
     pub integrity: IntegrityV1,
+}
+
+/// Lossless identity binding for complete Recovery Metadata V2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryIdentityV2 {
+    pub mapping: MappingSnapshot,
+    pub relative_path_hex: String,
+}
+
+/// Safe reference to exact xattr bytes retained on the private recovery object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryXattrReferenceV2 {
+    pub fingerprint: XattrFingerprint,
+    pub payload_ref: String,
+    pub preserved: bool,
+    pub verified: bool,
+}
+
+/// Security metadata applied to the private recovery object, separate from original state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateRecoverySecurityV2 {
+    pub permission_mode: String,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+/// Complete, action-bound prior state required for a Feature 009 mutation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryMetadataPayloadV2 {
+    pub operation_id: String,
+    pub action_index: usize,
+    pub identity: RecoveryIdentityV2,
+    pub prior_state: SupportedEntryStateV3,
+    pub payload_ref: Option<String>,
+    pub xattrs: Vec<RecoveryXattrReferenceV2>,
+    pub private_security: PrivateRecoverySecurityV2,
+    pub preserved: bool,
+    pub verified: bool,
+}
+
+/// Integrity-protected complete recovery metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryMetadataEnvelopeV2 {
+    pub schema_version: u8,
+    pub payload: RecoveryMetadataPayloadV2,
+    pub integrity: IntegrityV1,
+}
+
+#[derive(Serialize)]
+struct IntegrityInputV2<'a> {
+    schema_version: u8,
+    payload: &'a RecoveryMetadataPayloadV2,
+}
+
+impl RecoveryMetadataEnvelopeV2 {
+    pub fn new(payload: RecoveryMetadataPayloadV2) -> Result<Self, GripError> {
+        validate_metadata_v2(&payload)?;
+        Ok(Self {
+            schema_version: 2,
+            integrity: IntegrityV1 {
+                algorithm: "sha256".into(),
+                digest: integrity_digest_v2(&payload)?,
+            },
+            payload,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), GripError> {
+        if self.schema_version != 2 {
+            return Err(GripError::UnsupportedSchema(format!(
+                "unsupported recovery metadata schema version {}",
+                self.schema_version
+            )));
+        }
+        validate_metadata_v2(&self.payload)?;
+        if self.integrity.algorithm != "sha256"
+            || !valid_digest(&self.integrity.digest)
+            || self.integrity.digest != integrity_digest_v2(&self.payload)?
+        {
+            return Err(corrupt("recovery metadata integrity verification failed"));
+        }
+        Ok(())
+    }
+}
+
+/// Strictly decode and validate complete Recovery Metadata V2.
+pub fn decode_metadata_v2(bytes: &[u8]) -> Result<RecoveryMetadataEnvelopeV2, GripError> {
+    let envelope: RecoveryMetadataEnvelopeV2 = serde_json::from_slice(bytes)
+        .map_err(|error| GripError::CorruptState(format!("invalid recovery metadata: {error}")))?;
+    envelope.validate()?;
+    Ok(envelope)
 }
 
 #[derive(Serialize)]
@@ -351,6 +449,57 @@ fn integrity_digest<T: Serialize>(payload: &T) -> Result<String, GripError> {
     })
     .map_err(|error| GripError::Internal(format!("could not hash recovery evidence: {error}")))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn integrity_digest_v2(payload: &RecoveryMetadataPayloadV2) -> Result<String, GripError> {
+    let bytes = serde_json::to_vec(&IntegrityInputV2 {
+        schema_version: 2,
+        payload,
+    })
+    .map_err(|error| GripError::Internal(format!("could not hash recovery metadata: {error}")))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn validate_metadata_v2(payload: &RecoveryMetadataPayloadV2) -> Result<(), GripError> {
+    if !valid_component(&payload.operation_id) {
+        return Err(corrupt("recovery metadata operation binding is invalid"));
+    }
+    if !payload.identity.mapping.source.is_absolute()
+        || !payload.identity.mapping.destination.is_absolute()
+        || !payload.identity.relative_path_hex.len().is_multiple_of(2)
+        || !payload
+            .identity
+            .relative_path_hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(corrupt("recovery metadata identity binding is invalid"));
+    }
+    payload.prior_state.validate().map_err(corrupt)?;
+    if payload.private_security.permission_mode != "0600" {
+        return Err(corrupt("private recovery object must use mode 0600"));
+    }
+    let expected_xattrs = &payload.prior_state.metadata.extended_attributes;
+    if payload.xattrs.len() != expected_xattrs.len()
+        || payload
+            .xattrs
+            .iter()
+            .zip(expected_xattrs)
+            .any(|(reference, expected)| {
+                reference.fingerprint != *expected
+                    || !valid_private_component(&reference.payload_ref)
+                    || !reference.preserved
+                    || !reference.verified
+            })
+    {
+        return Err(corrupt(
+            "recovery xattr references must exactly bind verified prior fingerprints",
+        ));
+    }
+    if !payload.preserved || !payload.verified {
+        return Err(corrupt("recovery metadata is not preserved and verified"));
+    }
+    Ok(())
 }
 
 fn valid_component(value: &str) -> bool {

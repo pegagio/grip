@@ -150,7 +150,12 @@ fn pull_reports_unmanaged_destination_content_without_importing_it() {
         &grip_home,
         &["--output=json", "pull", "--dry-run"],
     );
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let entries = support::json(&output)["details"]["entries"]
         .as_array()
         .unwrap()
@@ -188,7 +193,12 @@ fn pull_honors_hierarchical_source_side_gripignore_without_importing() {
 
     let output =
         support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "pull"]);
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(
         fs::read_to_string(source.join("nested/managed")).unwrap(),
         "changed"

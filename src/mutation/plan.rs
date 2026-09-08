@@ -168,6 +168,7 @@ fn build_with_parents(
             destination_path: crate::discovery::model::SafePath::from_path(&path),
             expected_source: None,
             expected_destination: None,
+            metadata: None,
             dependencies: Vec::new(),
             status: ActionStatus::Unattempted,
             milestones: ActionEvidence::default(),
@@ -175,34 +176,21 @@ fn build_with_parents(
         })
         .collect::<Vec<_>>();
     let mut blockers = Vec::new();
+    let mut finalizers = Vec::new();
 
     for mut record in records {
         let direction = action_direction(operation, winner, record.classification);
         let mut disposition =
             disposition_for_operation(operation, winner, record.classification, record.blocking);
-        if operation == MutationOperation::Resolve
-            && disposition == Disposition::Action
-            && (!record
-                .source
-                .as_ref()
-                .is_some_and(|state| state.node_kind == NodeKind::File)
-                || !record
-                    .destination
-                    .as_ref()
-                    .is_some_and(|state| state.node_kind == NodeKind::File))
-        {
-            disposition = Disposition::Blocked;
-            record.reasons = vec!["unsupported_resolution_transition".into()];
-        }
-        if direction == MutationDirection::Pull
-            && disposition == Disposition::Action
-            && record
-                .destination
-                .as_ref()
-                .is_some_and(|state| state.node_kind == NodeKind::Directory)
-        {
-            disposition = Disposition::Blocked;
-            record.reasons = vec!["unsupported_directory_metadata_transition".into()];
+        if disposition == Disposition::Action {
+            let preflight = transition_preflight_blockers(&record, direction);
+            if !preflight.is_empty() {
+                record
+                    .reasons
+                    .extend(preflight.iter().map(|blocker| blocker.reason.clone()));
+                blockers.extend(preflight);
+                disposition = Disposition::Blocked;
+            }
         }
         let mut action_indexes = Vec::new();
         if disposition == Disposition::Action {
@@ -211,18 +199,49 @@ fn build_with_parents(
                     let source = record.source.clone().ok_or_else(|| {
                         GripError::Internal("actionable push entry has no source state".into())
                     })?;
-                    let kind = match (record.classification, source.node_kind) {
+                    let complete_kind = record
+                        .source_complete
+                        .as_ref()
+                        .map(|state| state.node_kind)
+                        .unwrap_or(source.node_kind);
+                    let metadata_only = record
+                        .source_complete
+                        .as_ref()
+                        .zip(record.destination_complete.as_ref())
+                        .is_some_and(|(origin, target)| {
+                            origin.node_kind == target.node_kind && origin.content == target.content
+                        });
+                    let kind = match (record.classification, complete_kind) {
                         (Classification::SourceAddition, NodeKind::Directory) => {
                             ActionKind::CreateDirectory
                         }
                         (Classification::SourceAddition, NodeKind::File) => ActionKind::AddFile,
+                        (Classification::SourceOnlyChange, NodeKind::File) if metadata_only => {
+                            ActionKind::ApplyMetadata
+                        }
                         (Classification::SourceOnlyChange, NodeKind::File) => {
                             ActionKind::ReplaceFile
                         }
-                        (Classification::DivergentConflict, NodeKind::File)
-                            if operation == MutationOperation::Resolve =>
-                        {
-                            ActionKind::ReplaceFile
+                        (Classification::SourceOnlyChange, NodeKind::Directory) => {
+                            ActionKind::FinalizeDirectoryMetadata
+                        }
+                        (
+                            Classification::DivergentConflict
+                            | Classification::MetadataMigrationConflict,
+                            NodeKind::File,
+                        ) if operation == MutationOperation::Resolve => {
+                            if metadata_only {
+                                ActionKind::ApplyMetadata
+                            } else {
+                                ActionKind::ReplaceFile
+                            }
+                        }
+                        (
+                            Classification::DivergentConflict
+                            | Classification::MetadataMigrationConflict,
+                            NodeKind::Directory,
+                        ) if operation == MutationOperation::Resolve => {
+                            ActionKind::FinalizeDirectoryMetadata
                         }
                         _ => {
                             return Err(GripError::Internal(
@@ -236,12 +255,29 @@ fn build_with_parents(
                     let destination = record.destination.clone().ok_or_else(|| {
                         GripError::Internal("actionable pull entry has no destination state".into())
                     })?;
-                    if destination.node_kind != NodeKind::File {
-                        return Err(GripError::Internal(
-                            "actionable pull entry is not a regular file".into(),
-                        ));
-                    }
-                    (record.identity.source_path(), ActionKind::ReplaceFile)
+                    let complete_kind = record
+                        .destination_complete
+                        .as_ref()
+                        .map(|state| state.node_kind)
+                        .unwrap_or(destination.node_kind);
+                    let metadata_only = record
+                        .source_complete
+                        .as_ref()
+                        .zip(record.destination_complete.as_ref())
+                        .is_some_and(|(target, origin)| {
+                            origin.node_kind == target.node_kind && origin.content == target.content
+                        });
+                    let kind = match complete_kind {
+                        NodeKind::File if metadata_only => ActionKind::ApplyMetadata,
+                        NodeKind::File => ActionKind::ReplaceFile,
+                        NodeKind::Directory => ActionKind::FinalizeDirectoryMetadata,
+                        _ => {
+                            return Err(GripError::Internal(
+                                "actionable pull entry has unsupported node state".into(),
+                            ));
+                        }
+                    };
+                    (record.identity.source_path(), kind)
                 }
             };
             let index = actions.len();
@@ -257,11 +293,48 @@ fn build_with_parents(
                 destination_path: record.destination_path.clone(),
                 expected_source: record.source.clone(),
                 expected_destination: record.destination.clone(),
+                metadata: metadata_action_evidence(&record, direction),
                 dependencies: Vec::new(),
                 status: ActionStatus::Unattempted,
                 milestones: ActionEvidence::default(),
                 failure: None,
             });
+            if kind == ActionKind::FinalizeDirectoryMetadata {
+                let mut finalizer = actions
+                    .pop()
+                    .expect("just-planned directory finalizer is present");
+                finalizer.index = usize::MAX;
+                finalizers.push(finalizer);
+                action_indexes.clear();
+            }
+            if kind == ActionKind::CreateDirectory
+                && let Some(expected_after) = record.source_complete.clone()
+            {
+                finalizers.push(MutationAction {
+                    index: usize::MAX,
+                    direction,
+                    kind: ActionKind::FinalizeDirectoryMetadata,
+                    identity: Some(record.identity.clone()),
+                    dependent_identities: Vec::new(),
+                    source_path: Some(record.source_path.clone()),
+                    destination: record.identity.destination_path(),
+                    destination_path: record.destination_path.clone(),
+                    expected_source: record.source.clone(),
+                    expected_destination: None,
+                    metadata: Some(crate::mutation::model::MetadataActionEvidence {
+                        expected_before: None,
+                        expected_after,
+                        changed_dimensions: all_metadata_dimensions(),
+                        flags_to_clear: BTreeSet::new(),
+                        capability_proofs: Vec::new(),
+                        recovery_schema_version: None,
+                    }),
+                    dependencies: Vec::new(),
+                    status: ActionStatus::Unattempted,
+                    milestones: ActionEvidence::default(),
+                    failure: None,
+                });
+            }
         } else if disposition == Disposition::Blocked {
             blockers.push(PlanBlocker {
                 reason: record
@@ -281,6 +354,32 @@ fn build_with_parents(
             action_indexes,
             reasons: record.reasons,
         });
+    }
+
+    finalizers.sort_by(|first, second| {
+        second
+            .destination
+            .components()
+            .count()
+            .cmp(&first.destination.components().count())
+            .then(first.destination.cmp(&second.destination))
+    });
+    for mut finalizer in finalizers {
+        finalizer.index = actions.len();
+        finalizer.dependencies = actions
+            .iter()
+            .filter(|action| {
+                action.index != finalizer.index
+                    && action.destination.starts_with(&finalizer.destination)
+            })
+            .map(|action| action.index)
+            .collect();
+        if let Some(identity) = &finalizer.identity
+            && let Some(entry) = entries.iter_mut().find(|entry| &entry.identity == identity)
+        {
+            entry.action_indexes.push(finalizer.index);
+        }
+        actions.push(finalizer);
     }
 
     attach_directory_dependencies(&mut actions);
@@ -327,6 +426,199 @@ fn build_with_parents(
     };
     plan.plan_id = plan_digest(&plan)?;
     Ok(plan)
+}
+
+fn all_metadata_dimensions() -> BTreeSet<crate::metadata::model::MetadataDimension> {
+    BTreeSet::from([
+        crate::metadata::model::MetadataDimension::PermissionMode,
+        crate::metadata::model::MetadataDimension::Owner,
+        crate::metadata::model::MetadataDimension::Group,
+        crate::metadata::model::MetadataDimension::ModificationTime,
+        crate::metadata::model::MetadataDimension::ExtendedAttribute,
+        crate::metadata::model::MetadataDimension::AccessControlList,
+        crate::metadata::model::MetadataDimension::BsdFlags,
+    ])
+}
+
+fn transition_preflight_blockers(
+    record: &ClassificationRecord,
+    direction: MutationDirection,
+) -> Vec<PlanBlocker> {
+    use crate::metadata::model::{EndpointRole, Evidence, MetadataDimension};
+
+    if record.source_complete.is_none() && record.destination_complete.is_none() {
+        return Vec::new();
+    }
+    let target_role = match direction {
+        MutationDirection::Push => EndpointRole::Destination,
+        MutationDirection::Pull => EndpointRole::Source,
+    };
+    let paths = vec![record.source_path.clone(), record.destination_path.clone()];
+    let mut blockers = Vec::new();
+    let profile = record
+        .endpoint_capabilities
+        .iter()
+        .find(|profile| profile.endpoint == target_role);
+    let Some(profile) = profile else {
+        blockers.push(PlanBlocker {
+            reason: "target_capability_unavailable".into(),
+            paths: paths.clone(),
+        });
+        return blockers;
+    };
+    if !matches!(&profile.filesystem_type, Evidence::Observed { value } if value == "apfs") {
+        blockers.push(PlanBlocker {
+            reason: "target_filesystem_not_apfs".into(),
+            paths: paths.clone(),
+        });
+    }
+    for dimension in [
+        MetadataDimension::PermissionMode,
+        MetadataDimension::Owner,
+        MetadataDimension::Group,
+        MetadataDimension::ModificationTime,
+        MetadataDimension::ExtendedAttribute,
+        MetadataDimension::AccessControlList,
+        MetadataDimension::BsdFlags,
+    ] {
+        let capable = profile.capabilities.iter().any(|capability| {
+            capability.dimension == dimension
+                && matches!(capability.apply, Evidence::Observed { value: true })
+                && matches!(capability.verify, Evidence::Observed { value: true })
+        });
+        if !capable {
+            blockers.push(PlanBlocker {
+                reason: format!(
+                    "target_{}_capability_unavailable",
+                    metadata_dimension_reason(dimension)
+                ),
+                paths: paths.clone(),
+            });
+        }
+    }
+    blockers.extend(
+        record
+            .compatibility_findings
+            .iter()
+            .filter(|finding| finding.endpoint == target_role && finding.blocking)
+            .map(|finding| PlanBlocker {
+                reason: format!("metadata_{}", compatibility_reason(finding.reason)),
+                paths: paths.clone(),
+            }),
+    );
+    blockers.sort_by(|first, second| first.reason.cmp(&second.reason));
+    blockers.dedup_by(|first, second| first.reason == second.reason && first.paths == second.paths);
+    blockers
+}
+
+fn metadata_dimension_reason(dimension: crate::metadata::model::MetadataDimension) -> &'static str {
+    use crate::metadata::model::MetadataDimension;
+    match dimension {
+        MetadataDimension::Node => "node",
+        MetadataDimension::Content => "content",
+        MetadataDimension::PermissionMode => "permission_mode",
+        MetadataDimension::Owner => "owner",
+        MetadataDimension::Group => "group",
+        MetadataDimension::ModificationTime => "modification_time",
+        MetadataDimension::ExtendedAttribute => "extended_attribute",
+        MetadataDimension::AccessControlList => "access_control_list",
+        MetadataDimension::BsdFlags => "bsd_flags",
+        MetadataDimension::Mount => "mount",
+        MetadataDimension::Case => "case",
+        MetadataDimension::Unicode => "unicode",
+    }
+}
+
+fn compatibility_reason(reason: crate::metadata::model::CompatibilityReason) -> &'static str {
+    use crate::metadata::model::CompatibilityReason;
+    match reason {
+        CompatibilityReason::Unavailable => "unavailable",
+        CompatibilityReason::Unsupported => "unsupported",
+        CompatibilityReason::Unreadable => "unreadable",
+        CompatibilityReason::Unauthorized => "unauthorized",
+        CompatibilityReason::UnknownXattr => "unknown_xattr",
+        CompatibilityReason::ExcludedXattr => "excluded_xattr",
+        CompatibilityReason::ProtectedFlag => "protected_flag",
+        CompatibilityReason::ApfsCollision => "apfs_collision",
+        CompatibilityReason::InconclusiveComparison => "inconclusive_comparison",
+        CompatibilityReason::SparseFile => "sparse_file",
+        CompatibilityReason::HardLink => "hard_link",
+        CompatibilityReason::MountBoundary => "mount_boundary",
+    }
+}
+
+fn metadata_action_evidence(
+    record: &ClassificationRecord,
+    direction: MutationDirection,
+) -> Option<crate::mutation::model::MetadataActionEvidence> {
+    let (before, after) = match direction {
+        MutationDirection::Push => (
+            record.destination_complete.as_ref(),
+            record.source_complete.as_ref()?,
+        ),
+        MutationDirection::Pull => (
+            record.source_complete.as_ref(),
+            record.destination_complete.as_ref()?,
+        ),
+    };
+    let changed_dimensions = before.map_or_else(all_metadata_dimensions, |before| {
+        crate::classification::changed_dimensions_complete(Some(before), Some(after))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|dimension| match dimension {
+                crate::classification::model::ChangedDimension::NodeKind => {
+                    crate::metadata::model::MetadataDimension::Node
+                }
+                crate::classification::model::ChangedDimension::Content => {
+                    crate::metadata::model::MetadataDimension::Content
+                }
+                crate::classification::model::ChangedDimension::PermissionMode => {
+                    crate::metadata::model::MetadataDimension::PermissionMode
+                }
+                crate::classification::model::ChangedDimension::Owner => {
+                    crate::metadata::model::MetadataDimension::Owner
+                }
+                crate::classification::model::ChangedDimension::Group => {
+                    crate::metadata::model::MetadataDimension::Group
+                }
+                crate::classification::model::ChangedDimension::ModificationTime => {
+                    crate::metadata::model::MetadataDimension::ModificationTime
+                }
+                crate::classification::model::ChangedDimension::ExtendedAttribute => {
+                    crate::metadata::model::MetadataDimension::ExtendedAttribute
+                }
+                crate::classification::model::ChangedDimension::AccessControlList => {
+                    crate::metadata::model::MetadataDimension::AccessControlList
+                }
+                crate::classification::model::ChangedDimension::BsdFlags => {
+                    crate::metadata::model::MetadataDimension::BsdFlags
+                }
+            })
+            .collect()
+    });
+    let flags_to_clear = before.map_or_else(BTreeSet::new, |before| {
+        before
+            .metadata
+            .bsd_flags
+            .iter()
+            .filter(|flag| {
+                matches!(
+                    flag,
+                    crate::metadata::model::BsdFlag::Immutable
+                        | crate::metadata::model::BsdFlag::Append
+                )
+            })
+            .copied()
+            .collect()
+    });
+    Some(crate::mutation::model::MetadataActionEvidence {
+        expected_before: before.cloned(),
+        expected_after: after.clone(),
+        changed_dimensions,
+        flags_to_clear,
+        capability_proofs: Vec::new(),
+        recovery_schema_version: before.map(|_| 2),
+    })
 }
 
 /// Map one inherited classification to its push behavior.
@@ -385,7 +677,12 @@ pub fn disposition_for_operation(
             }
         }
         MutationOperation::Resolve => {
-            if winner.is_some() && classification == Classification::DivergentConflict {
+            if winner.is_some()
+                && matches!(
+                    classification,
+                    Classification::DivergentConflict | Classification::MetadataMigrationConflict
+                )
+            {
                 Disposition::Action
             } else {
                 Disposition::Blocked

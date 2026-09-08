@@ -184,6 +184,16 @@ impl ValidatePayload for OperationPlanPayloadV1 {
             .get("actions")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| corrupt("operation plan actions must be an array"))?;
+        if let Some(findings) = self.plan.get("compatibility_findings") {
+            let findings: Vec<crate::metadata::model::CompatibilityFinding> =
+                serde_json::from_value(findings.clone())
+                    .map_err(|_| corrupt("operation compatibility findings are invalid"))?;
+            for finding in findings {
+                finding
+                    .validate()
+                    .map_err(|_| corrupt("operation compatibility finding is invalid"))?;
+            }
+        }
         for (expected, action) in actions.iter().enumerate() {
             if action.get("index").and_then(serde_json::Value::as_u64) != Some(expected as u64) {
                 return Err(corrupt(
@@ -209,9 +219,61 @@ impl ValidatePayload for OperationPlanPayloadV1 {
                     return Err(corrupt("operation action direction is invalid"));
                 }
             }
+            validate_metadata_action_extensions(action)?;
         }
         Ok(())
     }
+}
+
+fn validate_metadata_action_extensions(action: &serde_json::Value) -> Result<(), GripError> {
+    if let Some(metadata) = action.get("expected_metadata") {
+        let state: crate::metadata::model::MetadataState = serde_json::from_value(metadata.clone())
+            .map_err(|_| corrupt("operation action expected metadata is invalid"))?;
+        let node_kind = action
+            .get("expected_node_kind")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| corrupt("operation action expected node kind is invalid"))?
+            .unwrap_or(crate::discovery::model::NodeKind::File);
+        state
+            .validate(node_kind)
+            .map_err(|_| corrupt("operation action expected metadata is invalid"))?;
+    }
+    if let Some(flags) = action.get("flag_clear_steps") {
+        let flags = flags
+            .as_array()
+            .ok_or_else(|| corrupt("metadata flag-clear steps must be an array"))?;
+        if flags
+            .iter()
+            .any(|flag| !matches!(flag.as_str(), Some("immutable" | "append")))
+        {
+            return Err(corrupt("metadata flag-clear step is unsupported"));
+        }
+    }
+    if let Some(recovery) = action.get("recovery")
+        && recovery
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(2)
+    {
+        return Err(corrupt(
+            "metadata recovery reference must use schema version 2",
+        ));
+    }
+    if let Some(verification) = action.get("verification")
+        && (verification
+            .get("full_state")
+            .and_then(serde_json::Value::as_str)
+            != Some("required")
+            || verification
+                .get("durability")
+                .and_then(serde_json::Value::as_str)
+                != Some("required"))
+    {
+        return Err(corrupt("metadata verification details are incomplete"));
+    }
+    Ok(())
 }
 
 impl ValidatePayload for OperationSummaryPayloadV1 {

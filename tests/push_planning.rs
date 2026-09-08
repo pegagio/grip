@@ -21,6 +21,117 @@ fn file_state(byte: char) -> SupportedState {
     }
 }
 
+fn complete_file(mode: &str) -> grip::metadata::model::SupportedEntryStateV3 {
+    grip::metadata::model::SupportedEntryStateV3 {
+        node_kind: NodeKind::File,
+        content: Some(ContentFingerprint {
+            algorithm: "sha256".into(),
+            digest: "a".repeat(64),
+            length: 1,
+        }),
+        metadata: grip::metadata::model::MetadataState {
+            permission_mode: mode.into(),
+            uid: 501,
+            gid: 20,
+            modified_time: grip::metadata::model::ModificationTime {
+                seconds: 1,
+                nanoseconds: 2,
+            },
+            extended_attributes: Vec::new(),
+            acl: grip::metadata::model::AclState::Absent,
+            bsd_flags: Default::default(),
+        },
+    }
+}
+
+fn destination_capability_profile() -> grip::metadata::model::EndpointCapabilityProfile {
+    use grip::metadata::model::{CapabilityEvidence, EndpointRole, Evidence, MetadataDimension};
+    grip::metadata::model::EndpointCapabilityProfile {
+        endpoint: EndpointRole::Destination,
+        root_display: "/destination-0".into(),
+        root_raw_hex: None,
+        filesystem_type: Evidence::Observed {
+            value: "apfs".into(),
+        },
+        filesystem_identity: Evidence::Observed { value: 1 },
+        mount_flags: Evidence::Observed { value: 0 },
+        volume_capability_masks: Evidence::Observed { value: vec![0; 4] },
+        case_sensitive: Evidence::Observed { value: false },
+        case_preserving: Evidence::Observed { value: true },
+        unicode_qualification: Evidence::Observed {
+            value: "corefoundation-nfd".into(),
+        },
+        mtime_precision_nanoseconds: Evidence::Observed { value: 1 },
+        capabilities: [
+            MetadataDimension::PermissionMode,
+            MetadataDimension::Owner,
+            MetadataDimension::Group,
+            MetadataDimension::ModificationTime,
+            MetadataDimension::ExtendedAttribute,
+            MetadataDimension::AccessControlList,
+            MetadataDimension::BsdFlags,
+        ]
+        .into_iter()
+        .map(|dimension| CapabilityEvidence {
+            dimension,
+            inspect: Evidence::Observed { value: true },
+            apply: Evidence::Observed { value: true },
+            verify: Evidence::Observed { value: true },
+        })
+        .collect(),
+        qualification_reference: None,
+    }
+}
+
+#[test]
+fn metadata_only_change_plans_complete_transition_and_recovery_v2() {
+    let mut record = record(0, Classification::SourceOnlyChange, false);
+    record.source = Some(file_state('a'));
+    record.destination = Some(file_state('a'));
+    record.source_complete = Some(complete_file("0644"));
+    record.destination_complete = Some(complete_file("0600"));
+    record.endpoint_capabilities = vec![destination_capability_profile()];
+    let plan = grip::push::plan::build(scope(), vec![record]).unwrap();
+    assert_eq!(plan.actions.len(), 1);
+    assert_eq!(
+        plan.actions[0].kind,
+        grip::push::model::ActionKind::ApplyMetadata
+    );
+    let evidence = plan.actions[0].metadata.as_ref().unwrap();
+    assert_eq!(evidence.recovery_schema_version, Some(2));
+    assert!(
+        evidence
+            .changed_dimensions
+            .contains(&grip::metadata::model::MetadataDimension::PermissionMode)
+    );
+    assert_eq!(evidence.expected_after.metadata.permission_mode, "0644");
+}
+
+#[test]
+fn metadata_preflight_accumulates_stable_snake_case_capability_blockers() {
+    use grip::metadata::model::{Evidence, MetadataDimension};
+    let mut record = record(0, Classification::SourceOnlyChange, false);
+    record.source_complete = Some(complete_file("0644"));
+    record.destination_complete = Some(complete_file("0600"));
+    let mut profile = destination_capability_profile();
+    let mtime = profile
+        .capabilities
+        .iter_mut()
+        .find(|capability| capability.dimension == MetadataDimension::ModificationTime)
+        .unwrap();
+    mtime.apply = Evidence::Unavailable {
+        reason: "not returned".into(),
+    };
+    record.endpoint_capabilities = vec![profile];
+    let plan = grip::push::plan::build(scope(), vec![record]).unwrap();
+    assert!(plan.actions.is_empty());
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|blocker| { blocker.reason == "target_modification_time_capability_unavailable" })
+    );
+}
+
 fn record(index: usize, classification: Classification, blocking: bool) -> ClassificationRecord {
     let source = PathBuf::from(format!("/source-{index}"));
     let destination = PathBuf::from(format!("/destination-{index}"));
@@ -44,6 +155,11 @@ fn record(index: usize, classification: Classification, blocking: bool) -> Class
         source: Some(file_state('a')),
         destination: (classification != Classification::SourceAddition).then(|| file_state('b')),
         baseline: None,
+        source_complete: None,
+        destination_complete: None,
+        baseline_complete: None,
+        compatibility_findings: Vec::new(),
+        endpoint_capabilities: Vec::new(),
         prospective_direction: Direction::None,
         changed_dimensions: ChangedDimensions {
             source_to_baseline: None,
@@ -158,6 +274,11 @@ fn tree_addition(relative: Vec<u8>, kind: NodeKind) -> ClassificationRecord {
         source: Some(state),
         destination: None,
         baseline: None,
+        source_complete: None,
+        destination_complete: None,
+        baseline_complete: None,
+        compatibility_findings: Vec::new(),
+        endpoint_capabilities: Vec::new(),
         prospective_direction: Direction::SourceToDestination,
         changed_dimensions: ChangedDimensions {
             source_to_baseline: None,
@@ -222,6 +343,11 @@ fn filesystem_plan_deduplicates_synthetic_parents_and_keeps_dependencies_acyclic
             source: Some(file_state('d')),
             destination: None,
             baseline: None,
+            source_complete: None,
+            destination_complete: None,
+            baseline_complete: None,
+            compatibility_findings: Vec::new(),
+            endpoint_capabilities: Vec::new(),
             prospective_direction: Direction::SourceToDestination,
             changed_dimensions: ChangedDimensions {
                 source_to_baseline: None,
