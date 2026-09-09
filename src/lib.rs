@@ -11,6 +11,7 @@ pub mod mutation;
 pub mod observation;
 pub mod operation;
 pub mod path_policy;
+pub mod project;
 pub mod pull;
 pub mod push;
 pub mod recovery;
@@ -53,14 +54,13 @@ pub fn run_process() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     };
-    let outcome = execute(&parsed);
+    let (outcome, render_home) = execute_with_project(&parsed);
     let exit = outcome.category.exit_code();
     let _ = result::emit_diagnostic(
         parsed.verbose,
         "command completed",
         &mut io::stderr().lock(),
     );
-    let render_home = selected_home().ok();
     if render_command_result(
         outcome,
         parsed.output.into(),
@@ -81,7 +81,7 @@ pub fn render_command_result(
     outcome: CommandOutcome,
     mode: result::OutputMode,
     writer: &mut dyn std::io::Write,
-    home: Option<&home::GripHome>,
+    home: Option<&project::ProjectPaths>,
 ) -> std::io::Result<()> {
     let operation_id = outcome
         .details
@@ -103,7 +103,101 @@ pub fn render_command_result(
 }
 
 pub fn execute(cli: &cli::Cli) -> CommandOutcome {
+    execute_with_project(cli).0
+}
+
+fn execute_with_project(cli: &cli::Cli) -> (CommandOutcome, Option<project::ProjectPaths>) {
+    if cli.project.is_some() && matches!(cli.command, cli::Command::Init(_) | cli::Command::Version)
+    {
+        let error = GripError::lifecycle(
+            "command_parse",
+            "inapplicable_project_option",
+            ResultCategory::InvalidUsage,
+            "--project is not valid with init or version",
+        );
+        return (CommandOutcome::failure(&error), None);
+    }
+    if matches!(cli.command, cli::Command::Init(_) | cli::Command::Version) {
+        return (execute_selected(cli), None);
+    }
+    let user_home = match home::select_user_home(None) {
+        Ok(value) => value,
+        Err(error) => return (CommandOutcome::failure(&error), None),
+    };
+    let selection = if let Some(path) = &cli.project {
+        project::ProjectSelection::Explicit(path.clone())
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => project::ProjectSelection::Discovered(cwd),
+            Err(error) => {
+                return (
+                    CommandOutcome::failure(&GripError::from_io(
+                        "could not read invocation directory",
+                        error,
+                    )),
+                    None,
+                );
+            }
+        }
+    };
+    let recovery_reference = match &cli.command {
+        cli::Command::Recovery(cli::RecoveryArgs {
+            command: cli::RecoveryCommand::Restore(args),
+        }) if matches!(
+            args.reference,
+            recovery::model::RecoveryRef::Registry { .. }
+        ) =>
+        {
+            Some(&args.reference)
+        }
+        _ => None,
+    };
+    let context = match project::ProjectContext::select(selection.clone(), user_home.clone()) {
+        Ok(Some(value)) => value,
+        Ok(None) => unreachable!("project-dependent command selected no project"),
+        Err(error) => {
+            let Some(reference) = recovery_reference else {
+                return (CommandOutcome::failure(&error), None);
+            };
+            match project::ProjectContext::select_for_registry_recovery(
+                selection, user_home, reference,
+            ) {
+                Ok(context) => context,
+                Err(bootstrap_error) => {
+                    return (CommandOutcome::failure(&bootstrap_error), None);
+                }
+            }
+        }
+    };
+    let selected_home = project::ProjectPaths::project_metadata(
+        context.metadata_dir.clone(),
+        context.user_home.path().to_path_buf(),
+    );
+    let outcome = SELECTED_PROJECT.with(|slot| {
+        let previous = slot.replace(Some(context.clone()));
+        let outcome = execute_selected(cli);
+        slot.replace(previous);
+        outcome
+    });
+    let assessment = state::publication::load(&selected_home)
+        .map(|snapshot| snapshot.rebinding)
+        .unwrap_or_else(|_| state::rebinding::RebindingAssessment {
+            outcome: result::RebindingOutcome::RebindBlocked,
+            prior_root: None,
+            blockers: vec!["state_unavailable".into()],
+        });
+    (
+        outcome.with_project_state(&context, &assessment),
+        Some(selected_home),
+    )
+}
+
+fn execute_selected(cli: &cli::Cli) -> CommandOutcome {
     match &cli.command {
+        cli::Command::Init(args) => match project::init::initialize(args.path.as_deref()) {
+            Ok(result) => CommandOutcome::initialization(&result),
+            Err(error) => CommandOutcome::failure(&error),
+        },
         cli::Command::Version => {
             let mut outcome =
                 CommandOutcome::success(format!("grip {}", env!("CARGO_PKG_VERSION")));
@@ -112,15 +206,15 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
                 .insert("version".into(), env!("CARGO_PKG_VERSION").into());
             outcome
         }
-        cli::Command::Validate => match validate_selected_home() {
+        cli::Command::Validate => match validate_selected_project() {
             Ok((path, state)) => {
                 let mut outcome = CommandOutcome::success(format!(
-                    "Grip home {} is valid; state is {state}",
+                    "Grip project {} is valid; state is {state}",
                     path.display()
                 ));
                 outcome
                     .details
-                    .insert("grip_home".into(), path.display().to_string().into());
+                    .insert("project_root".into(), path.display().to_string().into());
                 outcome.details.insert("registry".into(), "valid".into());
                 outcome.details.insert("state".into(), state.into());
                 outcome
@@ -171,16 +265,24 @@ pub fn execute(cli: &cli::Cli) -> CommandOutcome {
     }
 }
 
+thread_local! {
+    static SELECTED_PROJECT: std::cell::RefCell<Option<project::ProjectContext>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
 fn execute_delete(args: &cli::DeleteArgs) -> Result<CommandOutcome, GripError> {
+    let context = selected_project()?;
     let home = selected_home()?;
     let registry = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation("delete"))?;
     let state = state::publication::load(&home)?;
-    let selector = std::path::Path::new(&args.path);
+    let selector =
+        resolve_portable_selector(&context, &args.path, observation::model::PathSpace::Source)?;
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
-        Some(selector),
+        Some(&selector),
         observation::model::PathSpace::Source,
         "delete",
     )?;
@@ -200,7 +302,7 @@ fn execute_delete(args: &cli::DeleteArgs) -> Result<CommandOutcome, GripError> {
         authority,
         classification_scope(
             &selection,
-            Some(selector),
+            Some(&selector),
             observation::model::PathSpace::Source,
         ),
         records,
@@ -213,6 +315,8 @@ fn execute_delete(args: &cli::DeleteArgs) -> Result<CommandOutcome, GripError> {
             unattempted_baseline(state.accepted.generation),
         ));
     }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
     let result = delete::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::deletion(
         &result.plan,
@@ -223,6 +327,7 @@ fn execute_delete(args: &cli::DeleteArgs) -> Result<CommandOutcome, GripError> {
 }
 
 fn execute_retire(args: &cli::RetireArgs) -> Result<CommandOutcome, GripError> {
+    let context = selected_project()?;
     let home = selected_home()?;
     let registry = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation("retire"))?;
@@ -232,11 +337,14 @@ fn execute_retire(args: &cli::RetireArgs) -> Result<CommandOutcome, GripError> {
     } else {
         observation::model::PathSpace::Source
     };
-    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selector = match args.path.as_deref() {
+        Some(path) => Some(resolve_portable_selector(&context, path, path_space)?),
+        None => None,
+    };
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
-        selector,
+        selector.as_deref(),
         path_space,
         "retire",
     )?;
@@ -248,7 +356,7 @@ fn execute_retire(args: &cli::RetireArgs) -> Result<CommandOutcome, GripError> {
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
     let plan = retire::plan::build(
-        classification_scope(&selection, selector, path_space),
+        classification_scope(&selection, selector.as_deref(), path_space),
         args.force,
         records,
     )?;
@@ -260,6 +368,8 @@ fn execute_retire(args: &cli::RetireArgs) -> Result<CommandOutcome, GripError> {
             unattempted_baseline(state.accepted.generation),
         ));
     }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
     let result = retire::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::retirement(
         &result.plan,
@@ -295,11 +405,18 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     } else {
         observation::model::PathSpace::Source
     };
-    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selector = match args.path.as_deref() {
+        Some(path) => Some(resolve_portable_selector(
+            &selected_project()?,
+            path,
+            path_space,
+        )?),
+        None => None,
+    };
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
-        selector,
+        selector.as_deref(),
         path_space,
         "push",
     )?;
@@ -310,7 +427,7 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let scope = classification_scope(&selection, selector, path_space);
+    let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let plan = push::plan::build_with_parent_requirements(
         scope,
         records,
@@ -323,11 +440,14 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
             state.accepted.generation,
         ));
     }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
     let applied = push::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::push_applied(&applied))
 }
 
 fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
+    let context = selected_project()?;
     let home = selected_home()?;
     let registry = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation("pull"))?;
@@ -337,11 +457,15 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     } else {
         observation::model::PathSpace::Source
     };
-    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selector = args
+        .path
+        .as_deref()
+        .map(|path| resolve_portable_selector(&context, path, path_space))
+        .transpose()?;
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
-        selector,
+        selector.as_deref(),
         path_space,
         "pull",
     )?;
@@ -352,7 +476,7 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let scope = classification_scope(&selection, selector, path_space);
+    let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let plan = mutation::plan::build_for(mutation::model::MutationDirection::Pull, scope, records)?;
     if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
         return Ok(CommandOutcome::mutation_plan(
@@ -361,11 +485,14 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
             state.accepted.generation,
         ));
     }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
     let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::mutation_applied(&applied))
 }
 
 fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
+    let context = selected_project()?;
     let home = selected_home()?;
     let registry = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation("sync"))?;
@@ -375,11 +502,15 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
     } else {
         observation::model::PathSpace::Source
     };
-    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selector = args
+        .path
+        .as_deref()
+        .map(|path| resolve_portable_selector(&context, path, path_space))
+        .transpose()?;
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
-        selector,
+        selector.as_deref(),
         path_space,
         "sync",
     )?;
@@ -390,7 +521,7 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let scope = classification_scope(&selection, selector, path_space);
+    let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let plan = mutation::plan::build_sync_with_parent_requirements(
         scope,
         records,
@@ -406,24 +537,28 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
             state.accepted.generation,
         ));
     }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
     let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::mutation_applied(&applied))
 }
 
 fn execute_resolve(args: &cli::ResolveArgs) -> Result<CommandOutcome, GripError> {
+    let context = selected_project()?;
     let home = selected_home()?;
     let registry = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation("resolve"))?;
     let state = state::publication::load(&home)?;
-    let selector_path = std::path::Path::new(&args.path);
+    let selector_path =
+        resolve_portable_selector(&context, &args.path, observation::model::PathSpace::Source)?;
     let selected = observation::model::resolve_selection(
         &registry,
         &state.accepted,
-        Some(selector_path),
+        Some(&selector_path),
         observation::model::PathSpace::Source,
         "resolve",
     )?;
-    let selection = exact_resolution_selection(selected, &state.accepted, selector_path)?;
+    let selection = exact_resolution_selection(selected, &state.accepted, &selector_path)?;
     let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
         .map_err(|error| error.for_operation("resolve"))?;
     state::publication::revalidate(&home, &state)
@@ -434,7 +569,7 @@ fn execute_resolve(args: &cli::ResolveArgs) -> Result<CommandOutcome, GripError>
         .collect();
     let scope = classification_scope(
         &selection,
-        Some(selector_path),
+        Some(&selector_path),
         observation::model::PathSpace::Source,
     );
     let winner = if args.source {
@@ -450,6 +585,8 @@ fn execute_resolve(args: &cli::ResolveArgs) -> Result<CommandOutcome, GripError>
             state.accepted.generation,
         ));
     }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
     let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::mutation_applied(&applied))
 }
@@ -462,18 +599,13 @@ fn exact_resolution_selection(
     use observation::model::Selection;
     match selection {
         Selection::Entry(identity) => Ok(Selection::Entry(identity)),
-        Selection::Subtree(identity)
-            if accepted.baselines.contains_key(&identity)
-                || accepted.complete_baselines.contains_key(&identity) =>
-        {
+        Selection::Subtree(identity) if accepted.complete_baselines.contains_key(&identity) => {
             Ok(Selection::Entry(identity))
         }
         Selection::Mapping(mapping) => {
             let identity = observation::model::EntryIdentity::new(mapping, Vec::new())
                 .map_err(|message| GripError::InvalidConfiguration(message.into()))?;
-            if accepted.baselines.contains_key(&identity)
-                || accepted.complete_baselines.contains_key(&identity)
-            {
+            if accepted.complete_baselines.contains_key(&identity) {
                 Ok(Selection::Entry(identity))
             } else {
                 Err(resolution_selector_error(requested))
@@ -505,6 +637,7 @@ fn execute_inspection(
     operation: &str,
     args: &cli::InspectionArgs,
 ) -> Result<CommandOutcome, GripError> {
+    let context = selected_project()?;
     let home = selected_home()?;
     let registry = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation(operation))?;
@@ -514,11 +647,15 @@ fn execute_inspection(
     } else {
         observation::model::PathSpace::Source
     };
-    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selector = args
+        .path
+        .as_deref()
+        .map(|path| resolve_portable_selector(&context, path, path_space))
+        .transpose()?;
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
-        selector,
+        selector.as_deref(),
         path_space,
         operation,
     )?;
@@ -530,7 +667,7 @@ fn execute_inspection(
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let scope = classification_scope(&selection, selector, path_space);
+    let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let result = classification::model::ClassificationResult::new(operation, scope, records);
     Ok(CommandOutcome::classification(&result))
 }
@@ -561,6 +698,23 @@ fn classification_scope(
     }
 }
 
+fn resolve_portable_selector(
+    context: &project::ProjectContext,
+    selector: &std::ffi::OsStr,
+    path_space: observation::model::PathSpace,
+) -> Result<std::path::PathBuf, GripError> {
+    match path_space {
+        observation::model::PathSpace::Source => {
+            path_policy::ProjectRelativePath::parse(selector, true)
+                .map(|path| path.resolve(&context.root))
+        }
+        observation::model::PathSpace::Destination => {
+            path_policy::HomeRelativePath::parse(selector)
+                .map(|path| path.resolve(context.user_home.path()))
+        }
+    }
+}
+
 fn execute_baseline_accept(args: &cli::InspectionArgs) -> Result<CommandOutcome, GripError> {
     let home = selected_home()?;
     execute_baseline_accept_with_hook(&home, args, || {})
@@ -568,7 +722,7 @@ fn execute_baseline_accept(args: &cli::InspectionArgs) -> Result<CommandOutcome,
 
 #[doc(hidden)]
 pub fn execute_baseline_accept_with_hook<F>(
-    home: &home::GripHome,
+    home: &project::ProjectPaths,
     args: &cli::InspectionArgs,
     after_initial: F,
 ) -> Result<CommandOutcome, GripError>
@@ -583,11 +737,18 @@ where
     } else {
         observation::model::PathSpace::Source
     };
-    let selector = args.path.as_deref().map(std::path::Path::new);
+    let selector = match args.path.as_deref() {
+        Some(path) => Some(resolve_portable_selector(
+            &selected_project()?,
+            path,
+            path_space,
+        )?),
+        None => None,
+    };
     let selection = observation::model::resolve_selection(
         &expected_registry,
         &expected_state.accepted,
-        selector,
+        selector.as_deref(),
         path_space,
         "baseline_accept",
     )?;
@@ -605,7 +766,9 @@ where
         .map(|entry| classification::classify_accepted(entry, &expected_state.accepted))
         .collect::<Vec<_>>();
     let candidate = baseline::build(&expected_state.accepted, &records)?;
-    if candidate.changed_count == 0 {
+    if candidate.changed_count == 0
+        && expected_state.rebinding.outcome != result::RebindingOutcome::RebindEligible
+    {
         return Ok(CommandOutcome::baseline(
             &baseline::AcceptanceResult::already_current(
                 candidate.selected_count,
@@ -615,10 +778,13 @@ where
     }
     after_initial();
 
+    state::rebinding::require_mutation(&expected_state.rebinding)?;
+
     let _mutation_guard = state::mutation_lock::MutationLock::acquire(home, "baseline_accept")?;
+    revalidate_project_for_mutation()?;
     let _registry_guard = registry::publication::acquire_guard(home, "baseline_accept")?;
-    let state_dir = state::publication::prepare_directory(home)?;
-    let _state_guard = state::lock::PublicationLock::acquire(&state_dir.join("state.lock"))?;
+    let state_lock = state::lock::project_lock_path(home, "state.lock")?;
+    let _state_guard = state::lock::PublicationLock::acquire(&state_lock)?;
     let locked_registry = registry::publication::load(home, false)
         .map_err(|error| error.for_mapping_operation("baseline_accept"))?;
     if locked_registry.bytes != expected_registry.bytes
@@ -636,7 +802,7 @@ where
     let locked_selection = observation::model::resolve_selection(
         &locked_registry,
         &expected_state.accepted,
-        selector,
+        selector.as_deref(),
         path_space,
         "baseline_accept",
     )?;
@@ -680,10 +846,28 @@ where
     Ok(CommandOutcome::baseline(&result))
 }
 
-fn selected_home() -> Result<home::GripHome, GripError> {
-    let selected = home::select(std::env::var_os("GRIP_HOME"), ::home::home_dir())?;
-    home::validate(&selected)?;
-    Ok(selected)
+fn selected_home() -> Result<project::ProjectPaths, GripError> {
+    selected_project().map(|context| {
+        project::ProjectPaths::project_metadata(
+            context.metadata_dir,
+            context.user_home.path().to_path_buf(),
+        )
+    })
+}
+
+fn selected_project() -> Result<project::ProjectContext, GripError> {
+    SELECTED_PROJECT.with(|slot| {
+        slot.borrow().clone().ok_or_else(|| {
+            GripError::InvalidConfiguration("Grip project context is unavailable".into())
+        })
+    })
+}
+
+pub(crate) fn revalidate_project_for_mutation() -> Result<(), GripError> {
+    SELECTED_PROJECT.with(|slot| match slot.borrow().as_ref() {
+        Some(context) => context.revalidate(),
+        None => Ok(()),
+    })
 }
 
 fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, GripError> {
@@ -691,7 +875,11 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
     use mapping::{Mapping, MappingKind};
     use registry::publication;
 
-    let home = selected_home()?;
+    let context = selected_project()?;
+    let home = project::ProjectPaths::project_metadata(
+        context.metadata_dir.clone(),
+        context.user_home.path().to_path_buf(),
+    );
     match command {
         MappingCommand::Add(add) => {
             let (kind, pair) = match &add.kind {
@@ -707,15 +895,17 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                         home.path().join("config.toml").display().to_string(),
                     ])
             })?;
+            let portable = mapping::PortableMapping::parse(kind, &pair.source, &pair.destination)
+                .map_err(|error| error.for_mapping_kind(kind))?;
             let source_evidence = path_policy::inspect_endpoint(
-                std::path::Path::new(&pair.source),
+                &portable.source.resolve(&context.root),
                 kind,
                 true,
                 operation,
             )
             .map_err(|error| error.for_mapping_kind(kind))?;
             let destination_evidence = path_policy::inspect_endpoint(
-                std::path::Path::new(&pair.destination),
+                &portable.destination.resolve(context.user_home.path()),
                 kind,
                 false,
                 operation,
@@ -728,9 +918,10 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
             );
             let mut mappings = snapshot.registry.mappings().to_vec();
             mappings.push(added.clone());
-            let candidate = registry::Registry::new(mappings)
+            let candidate = registry::ResolvedRegistry::new(mappings)
                 .map_err(|error| error.for_operation(operation).for_mapping_kind(kind))?;
             let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, operation)?;
+            revalidate_project_for_mutation()?;
             publication::publish_with_evidence(
                 &home,
                 &snapshot,
@@ -748,20 +939,10 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
             Ok(CommandOutcome::mapping_success(
                 operation,
                 "Mapping recorded",
-                &added,
+                &result::MappingResultDetails::from_parts(&portable, &added),
             ))
         }
-        MappingCommand::List => {
-            let operation = "mapping_list";
-            let snapshot = publication::load(&home, false).map_err(|error| {
-                error
-                    .for_mapping_operation(operation)
-                    .with_paths_if_empty(vec![
-                        home.path().join("config.toml").display().to_string(),
-                    ])
-            })?;
-            Ok(CommandOutcome::mapping_list(snapshot.registry.mappings()))
-        }
+        MappingCommand::List => Ok(CommandOutcome::mapping_list(&context.mapping_details())),
         MappingCommand::Inspect(args) => {
             let operation = "mapping_inspect";
             let registry_path = home.path().join("config.toml").display().to_string();
@@ -789,7 +970,8 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                 .source
                 .as_ref()
                 .map(|source| {
-                    path_policy::resolve_selector(std::path::Path::new(source), operation)
+                    path_policy::ProjectRelativePath::parse(source, true)
+                        .map(|path| path.resolve(&context.root))
                 })
                 .transpose()?;
             let inventory = discovery::inspect(&home, &snapshot, selected_source)?;
@@ -805,12 +987,12 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                     ])
             })?;
             let source =
-                path_policy::resolve_selector(std::path::Path::new(&args.source), operation)?;
-            let value = snapshot
+                path_policy::ProjectRelativePath::parse(&args.source, true)?.resolve(&context.root);
+            let index = snapshot
                 .registry
                 .mappings()
                 .iter()
-                .find(|mapping| mapping.source == source)
+                .position(|mapping| mapping.source == source)
                 .ok_or_else(|| {
                     GripError::mapping(
                         operation,
@@ -819,10 +1001,11 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                         "Mapping not found",
                     )
                 })?;
+            let details = snapshot.mapping_details()?;
             Ok(CommandOutcome::mapping_success(
                 operation,
                 "Mapping found",
-                value,
+                &details[index],
             ))
         }
         MappingCommand::Remove(args) => {
@@ -835,13 +1018,12 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                     ])
             })?;
             let source =
-                path_policy::resolve_selector(std::path::Path::new(&args.source), operation)?;
-            let removed = snapshot
+                path_policy::ProjectRelativePath::parse(&args.source, true)?.resolve(&context.root);
+            let removed_index = snapshot
                 .registry
                 .mappings()
                 .iter()
-                .find(|mapping| mapping.source == source)
-                .cloned()
+                .position(|mapping| mapping.source == source)
                 .ok_or_else(|| {
                     GripError::mapping(
                         operation,
@@ -850,6 +1032,7 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                         "Mapping not found",
                     )
                 })?;
+            let removed = snapshot.mapping_details()?[removed_index].clone();
             let mappings = snapshot
                 .registry
                 .mappings()
@@ -857,9 +1040,10 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
                 .filter(|mapping| mapping.source != source)
                 .cloned()
                 .collect();
-            let candidate = registry::Registry::new(mappings)
+            let candidate = registry::ResolvedRegistry::new(mappings)
                 .map_err(|error| error.for_operation(operation))?;
             let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, operation)?;
+            revalidate_project_for_mutation()?;
             publication::publish(&home, &snapshot, &candidate).map_err(|error| {
                 error.for_operation(operation).with_paths_if_empty(vec![
                     home.path().join("config.toml").display().to_string(),
@@ -874,11 +1058,10 @@ fn execute_mapping(command: &cli::MappingCommand) -> Result<CommandOutcome, Grip
     }
 }
 
-fn validate_selected_home() -> Result<(std::path::PathBuf, &'static str), GripError> {
+fn validate_selected_project() -> Result<(std::path::PathBuf, &'static str), GripError> {
     use std::fs;
-    let selected = selected_home()?;
-    registry::publication::load(&selected, false)?;
-    let state_path = selected.path().join("state/state.json");
+    let context = selected_project()?;
+    let state_path = context.state_dir.join("state.json");
     match fs::symlink_metadata(&state_path) {
         Ok(m) => {
             if m.file_type().is_symlink() || !m.is_file() {
@@ -888,12 +1071,10 @@ fn validate_selected_home() -> Result<(std::path::PathBuf, &'static str), GripEr
             }
             let bytes = fs::read(&state_path)
                 .map_err(|e| GripError::CorruptState(format!("state.json is unreadable: {e}")))?;
-            state::decode_versioned(&bytes)?;
-            Ok((selected.path().to_owned(), "valid"))
+            state::decode_v4(&bytes)?;
+            Ok((context.root, "valid"))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok((selected.path().to_owned(), "uninitialized"))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((context.root, "uninitialized")),
         Err(e) => Err(GripError::CorruptState(format!(
             "state.json is unavailable: {e}"
         ))),

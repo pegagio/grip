@@ -1,8 +1,8 @@
 ---
 title: Deletion, retirement, and recovery
 type: component
-sources: [S011, S012]
-updated: 2026-09-08
+sources: [S011, S012, S013]
+updated: 2026-09-09
 ---
 
 # Deletion, retirement, and recovery
@@ -20,6 +20,14 @@ Directory removal requires a fresh verified-empty enumeration. Unmanaged descend
 `grip recovery remove [-n|--dry-run] --confirm RECOVERY_REF...` removes only exact confirmed recoverable bytes. Cleanup preserves immutable provenance and publishes a cleaned tombstone; partial failure distinguishes removed, failed, and unattempted entries without changing accepted registry or baseline authority. (S011)
 
 Feature 009 extends new recovery evidence to Recovery Metadata V2, binding complete prior mode, numeric ownership, mtime, xattrs, ordered ACL, BSD flags, payload reference, and preservation verification to the action. V1 remains strictly readable under its original contract but cannot authorize a new replacement under the expanded metadata promise. (S012)
+
+## Portable project recovery
+
+Feature 010 stores every operation and recovery artifact beneath the selected project's `.grip/state/`. Operation Record V2, Mutation Recovery V2, Recovery Manifest V2, and complete Recovery Metadata V3 identify entries with portable mapping and relative-path values; private payload references are project-relative. Diagnostic paths are non-authoritative. (S013)
+
+Inventory, restore, and cleanup resolve exact references only inside selected project state. A restore derives the live source or destination from portable identity and endpoint role, then revalidates the current descriptor, accepted state, target, and recorded post-state before mutation. Copied recovery can therefore operate in the copied project but cannot target the original location. (S013)
+
+> ⚠ conflict: S011 and S012 document historical absolute-target V1/V2 recovery schemas and compatibility reads; S013 defines the current strict portable schemas without backward compatibility.
 
 ## Related pages
 

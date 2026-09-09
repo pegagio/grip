@@ -1,35 +1,122 @@
 //! Verified private preservation of replacement targets.
 
 use crate::error::GripError;
-use crate::observation::model::{EntryIdentity, MappingSnapshot, SupportedState};
+use crate::observation::model::{EntryIdentity, SupportedState};
 use crate::operation::publication::OperationReceipt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Strict metadata binding one recovery payload to an operation action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RecoveryMetadataV1 {
-    pub schema_version: u8,
+pub struct MutationRecoveryPayloadV2 {
     pub operation_id: String,
     pub action_index: usize,
-    pub identity: RecoveryIdentityV1,
-    pub prior_state: SupportedState,
-    pub payload_ref: String,
-    pub payload_present: bool,
-    pub verified: bool,
+    pub identity: crate::state::EntryIdentityV4,
+    pub endpoint_role: crate::state::EndpointRoleV1,
+    pub private_ref: String,
 }
 
-/// Lossless durable projection of a managed entry identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RecoveryIdentityV1 {
-    pub mapping: MappingSnapshot,
-    pub relative_path_hex: String,
+pub struct MutationRecoveryV2 {
+    pub schema_version: u8,
+    pub payload: MutationRecoveryPayloadV2,
+    pub integrity: crate::state::IntegrityV1,
+}
+
+impl MutationRecoveryV2 {
+    pub fn new(payload: MutationRecoveryPayloadV2) -> Result<Self, GripError> {
+        validate_mutation_recovery(&payload)?;
+        Ok(Self {
+            schema_version: 2,
+            integrity: crate::state::IntegrityV1 {
+                algorithm: "sha256".into(),
+                digest: mutation_recovery_digest(&payload)?,
+            },
+            payload,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), GripError> {
+        if self.schema_version != 2 {
+            return Err(GripError::UnsupportedSchema(format!(
+                "unsupported mutation recovery schema version {}",
+                self.schema_version
+            )));
+        }
+        validate_mutation_recovery(&self.payload)?;
+        if self.integrity.algorithm != "sha256"
+            || self.integrity.digest != mutation_recovery_digest(&self.payload)?
+        {
+            return Err(GripError::CorruptState(
+                "mutation recovery integrity verification failed".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn decode_mutation_recovery_v2(bytes: &[u8]) -> Result<MutationRecoveryV2, GripError> {
+    let raw: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| GripError::CorruptState(format!("invalid mutation recovery: {error}")))?;
+    let version = raw
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            GripError::CorruptState("mutation recovery schema_version is required".into())
+        })?;
+    if version != 2 {
+        return Err(GripError::UnsupportedSchema(format!(
+            "unsupported mutation recovery schema version {version}"
+        )));
+    }
+    let value: MutationRecoveryV2 = serde_json::from_value(raw).map_err(|error| {
+        GripError::CorruptState(format!("invalid Mutation Recovery V2: {error}"))
+    })?;
+    value.validate()?;
+    Ok(value)
+}
+
+fn validate_mutation_recovery(payload: &MutationRecoveryPayloadV2) -> Result<(), GripError> {
+    if payload.operation_id.is_empty() {
+        return Err(GripError::CorruptState(
+            "mutation recovery operation identity is invalid".into(),
+        ));
+    }
+    crate::registry::ProjectDescriptorV2::new(vec![payload.identity.mapping.clone()])
+        .map_err(|_| GripError::CorruptState("mutation recovery identity is invalid".into()))?;
+    crate::state::decode_v4_identity_path(&payload.identity.relative_path_hex)?;
+    let private = Path::new(&payload.private_ref);
+    if payload.private_ref.is_empty()
+        || private.is_absolute()
+        || private
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(GripError::CorruptState(
+            "mutation recovery private reference is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn mutation_recovery_digest(payload: &MutationRecoveryPayloadV2) -> Result<String, GripError> {
+    #[derive(Serialize)]
+    struct Input<'a> {
+        schema_version: u8,
+        payload: &'a MutationRecoveryPayloadV2,
+    }
+    let bytes = serde_json::to_vec(&Input {
+        schema_version: 2,
+        payload,
+    })
+    .map_err(|error| GripError::Internal(format!("could not encode mutation recovery: {error}")))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 /// Opaque operation-local recovery result.
@@ -38,14 +125,14 @@ pub struct RecoveryEntry {
     pub relative_ref: String,
 }
 
-/// Publish verified Recovery Metadata V2 after complete payload and xattr preservation.
+/// Publish verified Recovery Metadata V3 after complete payload and xattr preservation.
 pub fn publish_complete_metadata(
     receipt: &OperationReceipt,
     action_index: usize,
     identity: &EntryIdentity,
     prior_state: &crate::metadata::model::SupportedEntryStateV3,
     payload_ref: Option<String>,
-    xattrs: Vec<crate::recovery::model::RecoveryXattrReferenceV2>,
+    endpoint_role: crate::state::EndpointRoleV1,
 ) -> Result<RecoveryEntry, GripError> {
     let directory = receipt
         .directory()
@@ -55,46 +142,34 @@ pub fn publish_complete_metadata(
         crate::mutation::filesystem::create_recovery_directory(&directory)
             .map_err(|error| recovery_failure_at("create recovery directory", error))?;
     }
-    let metadata = crate::recovery::model::RecoveryMetadataEnvelopeV2::new(
-        crate::recovery::model::RecoveryMetadataPayloadV2 {
+    let metadata = crate::recovery::model::RecoveryMetadataV3::new(
+        crate::recovery::model::RecoveryMetadataPayloadV3 {
             operation_id: receipt.operation_id().into(),
             action_index,
-            identity: crate::recovery::model::RecoveryIdentityV2 {
-                mapping: identity.mapping.clone(),
-                relative_path_hex: identity
-                    .relative_path
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect(),
-            },
+            identity: receipt.portable_identity(identity)?,
+            endpoint_role,
             prior_state: prior_state.clone(),
             payload_ref,
-            xattrs,
-            private_security: crate::recovery::model::PrivateRecoverySecurityV2 {
-                permission_mode: "0600".into(),
-                uid: rustix::process::geteuid().as_raw(),
-                gid: rustix::process::getegid().as_raw(),
-            },
             preserved: true,
             verified: true,
         },
     )?;
     let bytes = serde_json::to_vec(&metadata).map_err(|error| {
-        GripError::Internal(format!("could not encode Recovery Metadata V2: {error}"))
+        GripError::Internal(format!("could not encode Recovery Metadata V3: {error}"))
     })?;
-    crate::operation::publication::publish_new_component(&directory, "metadata-v2.json", &bytes)
-        .map_err(|error| recovery_failure_at("publish Recovery Metadata V2", error))?;
+    crate::operation::publication::publish_new_component(&directory, "metadata-v3.json", &bytes)
+        .map_err(|error| recovery_failure_at("publish Recovery Metadata V3", error))?;
     let reread =
-        crate::mutation::filesystem::read_private_file(&directory.join("metadata-v2.json"))
-            .map_err(|error| recovery_failure_at("read Recovery Metadata V2", error))?;
-    let decoded = crate::recovery::model::decode_metadata_v2(&reread)?;
+        crate::mutation::filesystem::read_private_file(&directory.join("metadata-v3.json"))
+            .map_err(|error| recovery_failure_at("read Recovery Metadata V3", error))?;
+    let decoded = crate::recovery::model::decode_metadata_v3(&reread)?;
     if decoded != metadata {
         return Err(GripError::CorruptState(
-            "Recovery Metadata V2 verification failed".into(),
+            "Recovery Metadata V3 verification failed".into(),
         ));
     }
     Ok(RecoveryEntry {
-        relative_ref: format!("recovery/{action_index:08}/metadata-v2.json"),
+        relative_ref: format!("recovery/{action_index:08}/metadata-v3.json"),
     })
 }
 
@@ -186,26 +261,24 @@ pub fn preserve_complete_with_post(
         .map_err(|error| GripError::from_io("could not open private recovery object", error))?;
     crate::metadata::macos::copy_recovery_acl(&origin, &private)
         .map_err(|error| GripError::from_io("could not preserve recovery ACL", error))?;
-    let fingerprints = crate::metadata::macos::copy_synchronized_xattrs(&origin, &private)
+    crate::metadata::macos::copy_synchronized_xattrs(&origin, &private)
         .map_err(|error| GripError::from_io("could not preserve recovery xattrs", error))?;
-    let xattrs = fingerprints
-        .into_iter()
-        .map(
-            |fingerprint| crate::recovery::model::RecoveryXattrReferenceV2 {
-                fingerprint,
-                payload_ref: payload_ref.into(),
-                preserved: true,
-                verified: true,
-            },
-        )
-        .collect();
+    let endpoint_role = if target == identity.source_path() {
+        crate::state::EndpointRoleV1::Source
+    } else if target == identity.destination_path() {
+        crate::state::EndpointRoleV1::Destination
+    } else {
+        return Err(GripError::CorruptState(
+            "recovery target is not bound to the managed identity".into(),
+        ));
+    };
     publish_complete_metadata(
         receipt,
         action_index,
         identity,
         prior_state,
         Some(payload_ref.into()),
-        xattrs,
+        endpoint_role,
     )
 }
 
@@ -253,53 +326,53 @@ pub fn preserve_with_post(
     } else {
         format!("recovery/{action_index:08}/metadata.json")
     };
-    let metadata = RecoveryMetadataV1 {
-        schema_version: 1,
-        operation_id: receipt.operation_id().into(),
-        action_index,
-        identity: RecoveryIdentityV1 {
-            mapping: identity.mapping.clone(),
-            relative_path_hex: identity
-                .relative_path
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-        },
-        prior_state: expected.clone(),
-        payload_ref: relative_ref.clone(),
-        payload_present,
-        verified: true,
-    };
-    let bytes = serde_json::to_vec(&metadata).map_err(|error| {
-        GripError::Internal(format!("could not encode recovery metadata: {error}"))
-    })?;
-    crate::operation::publication::publish_new_component(&directory, "metadata.json", &bytes)
-        .map_err(|error| recovery_failure_at("publish recovery metadata", error))?;
-    let reread = crate::mutation::filesystem::read_private_file(&directory.join("metadata.json"))
-        .map_err(|error| recovery_failure_at("read recovery metadata", error))?;
-    let decoded: RecoveryMetadataV1 = serde_json::from_slice(&reread)
-        .map_err(|error| GripError::CorruptState(format!("invalid recovery metadata: {error}")))?;
-    if decoded != metadata {
-        return Err(GripError::CorruptState(
-            "recovery metadata verification failed".into(),
-        ));
-    }
-    let bound_side = if target == identity.source_path() {
-        "source"
+    let endpoint_role = if target == identity.source_path() {
+        crate::state::EndpointRoleV1::Source
     } else if target == identity.destination_path() {
-        "destination"
+        crate::state::EndpointRoleV1::Destination
     } else {
         return Err(GripError::CorruptState(
             "recovery target is not bound to the managed identity".into(),
         ));
     };
-    let manifest = crate::recovery::model::RecoveryEnvelopeV1::new(
-        crate::recovery::model::RecoveryManifestPayloadV1 {
+    let portable_identity = receipt.portable_identity(identity)?;
+    let recovery_record = MutationRecoveryV2::new(MutationRecoveryPayloadV2 {
+        operation_id: receipt.operation_id().into(),
+        action_index,
+        identity: portable_identity.clone(),
+        endpoint_role,
+        private_ref: if payload_present {
+            "payload"
+        } else {
+            "metadata"
+        }
+        .into(),
+    })?;
+    let recovery_bytes = serde_json::to_vec(&recovery_record).map_err(|error| {
+        GripError::Internal(format!("could not encode Mutation Recovery V2: {error}"))
+    })?;
+    crate::operation::publication::publish_new_component(
+        &directory,
+        "recovery-v2.json",
+        &recovery_bytes,
+    )
+    .map_err(|error| recovery_failure_at("publish Mutation Recovery V2", error))?;
+    let manifest = crate::recovery::model::RecoveryManifestV2::new(
+        crate::recovery::model::RecoveryManifestPayloadV2 {
             reference: crate::recovery::model::RecoveryRef::Payload {
                 operation_id: receipt.operation_id().into(),
                 action_index,
             },
             kind: crate::recovery::model::RecoveryKind::Payload,
+            identity: Some(portable_identity),
+            endpoint_role: Some(endpoint_role),
+            private_ref: if payload_present {
+                "payload"
+            } else {
+                "metadata"
+            }
+            .into(),
+            diagnostic_target: Some(crate::discovery::model::SafePath::from_path(target).into()),
             created_at: unix_timestamp(),
             origin_operation: Some(receipt.operation_id().into()),
             origin_transition: if expected_post.is_some() {
@@ -308,14 +381,6 @@ pub fn preserve_with_post(
                 "deletion"
             }
             .into(),
-            managed_identity: format!(
-                "{}:{}",
-                identity.mapping.source.display(),
-                metadata.identity.relative_path_hex
-            )
-            .into(),
-            bound_side: Some(bound_side.into()),
-            bound_target: Some(target.display().to_string()),
             prior_evidence: serde_json::to_value(expected).map_err(|error| {
                 GripError::Internal(format!("could not encode recovery prior evidence: {error}"))
             })?,
@@ -329,18 +394,14 @@ pub fn preserve_with_post(
             } else {
                 0
             },
-            payload_ref: if payload_present {
-                "payload"
-            } else {
-                "metadata"
-            }
-            .into(),
         },
     )?;
     crate::operation::publication::publish_new_component(
         &directory,
         "manifest.json",
-        &crate::recovery::model::encode(&manifest)?,
+        &serde_json::to_vec(&manifest).map_err(|error| {
+            GripError::Internal(format!("could not encode Recovery Manifest V2: {error}"))
+        })?,
     )?;
     Ok(RecoveryEntry { relative_ref })
 }

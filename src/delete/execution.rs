@@ -18,7 +18,7 @@ pub enum DeletionFault {
 
 /// Execute an unchanged deletion plan under Grip's writer coordination boundary.
 pub fn execute(
-    home: &crate::home::GripHome,
+    home: &crate::project::ProjectPaths,
     expected_registry: &crate::registry::publication::RegistrySnapshot,
     expected_state: &crate::state::publication::StateSnapshot,
     selection: &Selection,
@@ -36,7 +36,7 @@ pub fn execute(
 
 #[doc(hidden)]
 pub fn execute_with_fault(
-    home: &crate::home::GripHome,
+    home: &crate::project::ProjectPaths,
     expected_registry: &crate::registry::publication::RegistrySnapshot,
     expected_state: &crate::state::publication::StateSnapshot,
     selection: &Selection,
@@ -57,7 +57,7 @@ pub fn execute_with_fault(
 /// Execute with a deterministic test hook immediately before each action revalidation.
 #[doc(hidden)]
 pub fn execute_with_hook(
-    home: &crate::home::GripHome,
+    home: &crate::project::ProjectPaths,
     expected_registry: &crate::registry::publication::RegistrySnapshot,
     expected_state: &crate::state::publication::StateSnapshot,
     selection: &Selection,
@@ -66,6 +66,7 @@ pub fn execute_with_hook(
     mut before_action: Option<&mut dyn FnMut(usize)>,
 ) -> Result<DeletionResult, GripError> {
     let _mutation_guard = crate::state::mutation_lock::MutationLock::acquire(home, "delete")?;
+    crate::revalidate_project_for_mutation()?;
     let registry = crate::registry::publication::load(home, false)
         .map_err(|error| error.for_mapping_operation("delete"))?;
     if registry.bytes != expected_registry.bytes || registry.registry != expected_registry.registry
@@ -93,12 +94,31 @@ pub fn execute_with_hook(
             "deletion plan changed before execution",
         ));
     }
-    let mut receipt = crate::operation::publication::initialize_typed(
+    let portable_actions = plan
+        .actions
+        .iter()
+        .map(|action| {
+            Ok(crate::operation::model::PortableActionV2 {
+                index: action.index,
+                identity: Some(crate::state::portable_identity_from_runtime(
+                    home,
+                    &action.identity,
+                )?),
+                endpoint_role: if action.target_side == "source" {
+                    crate::state::EndpointRoleV1::Source
+                } else {
+                    crate::state::EndpointRoleV1::Destination
+                },
+                diagnostic_path: Some(action.target_path.clone().into()),
+            })
+        })
+        .collect::<Result<Vec<_>, GripError>>()?;
+    let mut receipt = crate::operation::publication::initialize_typed_with_actions(
         home,
         "delete",
         &plan.plan_id,
         plan,
-        plan.actions.len(),
+        portable_actions,
     )?;
     let mut applied = plan.clone();
     for index in 0..applied.actions.len() {
@@ -310,10 +330,9 @@ pub fn execute_with_hook(
     }
     let mut next = expected_state.accepted.clone();
     for action in &applied.actions {
-        next.baselines.remove(&action.identity);
         next.complete_baselines.remove(&action.identity);
     }
-    let state_directory = match crate::state::publication::prepare_directory(home) {
+    let state_lock = match crate::state::lock::project_lock_path(home, "state.lock") {
         Ok(value) => value,
         Err(error) => {
             return fail(
@@ -326,20 +345,19 @@ pub fn execute_with_hook(
             );
         }
     };
-    let _state_guard =
-        match crate::state::lock::PublicationLock::acquire(&state_directory.join("state.lock")) {
-            Ok(value) => value,
-            Err(error) => {
-                return fail(
-                    &mut receipt,
-                    &mut applied,
-                    last,
-                    "state_publication",
-                    error,
-                    expected_state.accepted.generation,
-                );
-            }
-        };
+    let _state_guard = match crate::state::lock::PublicationLock::acquire(&state_lock) {
+        Ok(value) => value,
+        Err(error) => {
+            return fail(
+                &mut receipt,
+                &mut applied,
+                last,
+                "state_publication",
+                error,
+                expected_state.accepted.generation,
+            );
+        }
+    };
     if fault == Some(DeletionFault::StatePublication) {
         let last = applied.actions.len().saturating_sub(1);
         return fail(
@@ -429,7 +447,7 @@ fn fail_after_publication(
 }
 
 fn revalidate_action(
-    home: &crate::home::GripHome,
+    home: &crate::project::ProjectPaths,
     expected_registry: &crate::registry::publication::RegistrySnapshot,
     expected_state: &crate::state::publication::StateSnapshot,
     applied: &DeletionPlan,
@@ -460,16 +478,16 @@ fn revalidate_action(
         ));
     }
     crate::state::publication::revalidate(home, expected_state)?;
-    let accepted_matches = if let Some(expected_complete) = action.expected_target_complete.as_ref()
-    {
-        expected_state
-            .accepted
-            .complete_baselines
-            .get(&action.identity)
-            == Some(expected_complete)
-    } else {
-        expected_state.accepted.baselines.get(&action.identity) == Some(&action.expected_target)
-    };
+    let accepted_matches = action
+        .expected_target_complete
+        .as_ref()
+        .is_some_and(|expected| {
+            expected_state
+                .accepted
+                .complete_baselines
+                .get(&action.identity)
+                == Some(expected)
+        });
     if !accepted_matches {
         return Err(GripError::CorruptState(
             "accepted deletion membership or baseline changed".into(),
@@ -588,8 +606,8 @@ fn fail(
 
 fn checkpoint(
     action: &crate::delete::model::DeletionAction,
-) -> crate::operation::model::ActionCheckpointEvidenceV1 {
-    crate::operation::model::ActionCheckpointEvidenceV1 {
+) -> crate::operation::model::ActionCheckpointEvidenceV2 {
+    crate::operation::model::ActionCheckpointEvidenceV2 {
         revalidation: action.milestones.revalidation.clone(),
         recovery: action.milestones.recovery.clone(),
         recovery_ref: action.milestones.recovery_ref.clone(),

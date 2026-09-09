@@ -28,25 +28,42 @@ fn version_supports_human_and_json_results() {
 }
 
 #[test]
+fn global_project_option_parses_before_or_after_project_dependent_commands() {
+    let fixture = support::project::ProjectFixture::initialized();
+    let root = fixture.project_root.to_str().unwrap();
+    for arguments in [
+        vec!["--project", root, "validate"],
+        vec!["validate", "--project", root],
+    ] {
+        assert!(
+            fixture
+                .command_from(fixture.root.path(), &arguments)
+                .status
+                .success()
+        );
+    }
+}
+
+#[test]
 fn validate_reports_success_and_public_error_categories() {
-    let root = tempfile::tempdir().unwrap();
-    let grip = support::minimal_home(root.path());
-    let ok = support::command_with_grip_home(root.path(), &grip, &["--output=json", "validate"]);
+    let fixture = support::project::ProjectFixture::initialized();
+    let ok = fixture.command(&["--output=json", "validate"]);
     assert_eq!(ok.status.code(), Some(0));
     let value = serde_json::from_slice::<serde_json::Value>(&ok.stdout).unwrap();
     assert_eq!(value["code"], "ok");
-    assert_eq!(value["details"]["grip_home"], grip.display().to_string());
+    assert_eq!(
+        value["details"]["project"]["root"]["display"],
+        fixture.project_root.display().to_string()
+    );
     fs::write(
-        grip.join("config.toml"),
-        "schema_version = 2\nmappings = []\n",
+        fixture.descriptor_path(),
+        "schema_version = 42\nmappings = []\n",
     )
     .unwrap();
-    let unsupported =
-        support::command_with_grip_home(root.path(), &grip, &["--output=json", "validate"]);
+    let unsupported = fixture.command(&["--output=json", "validate"]);
     assert_eq!(unsupported.status.code(), Some(11));
-    fs::write(grip.join("config.toml"), "bad").unwrap();
-    let invalid =
-        support::command_with_grip_home(root.path(), &grip, &["--output=json", "validate"]);
+    fs::write(fixture.descriptor_path(), "bad").unwrap();
+    let invalid = fixture.command(&["--output=json", "validate"]);
     assert_eq!(invalid.status.code(), Some(10));
 }
 

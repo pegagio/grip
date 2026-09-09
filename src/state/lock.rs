@@ -1,8 +1,48 @@
 use crate::error::GripError;
 use rustix::fs::{Mode, OFlags, open};
 use std::fs::{self, File, OpenOptions};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+
+/// Create and validate the private project-local lock directory, then return one lock path.
+pub fn project_lock_path(
+    home: &crate::project::ProjectPaths,
+    name: &str,
+) -> Result<std::path::PathBuf, GripError> {
+    let state = crate::state::publication::prepare_directory(home)?;
+    let locks = state.join("locks");
+    match fs::symlink_metadata(&locks) {
+        Ok(metadata)
+            if metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && metadata.uid() == rustix::process::geteuid().as_raw()
+                && metadata.permissions().mode() & 0o7777 == 0o700 => {}
+        Ok(_) => {
+            return Err(GripError::CorruptState(
+                "unsafe project lock directory".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::DirBuilder::new()
+                .recursive(false)
+                .mode(0o700)
+                .create(&locks)
+                .map_err(|error| {
+                    GripError::from_io("could not create project lock directory", error)
+                })?;
+            fs::set_permissions(&locks, fs::Permissions::from_mode(0o700)).map_err(|error| {
+                GripError::from_io("could not secure project lock directory", error)
+            })?;
+        }
+        Err(error) => {
+            return Err(GripError::from_io(
+                "could not inspect project lock directory",
+                error,
+            ));
+        }
+    }
+    Ok(locks.join(name))
+}
 
 pub struct PublicationLock(File);
 impl PublicationLock {

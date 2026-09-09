@@ -17,7 +17,7 @@ use std::path::PathBuf;
 /// One absent parent captured while a mapping endpoint was validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParentRequirement {
-    pub mapping: crate::observation::model::MappingSnapshot,
+    pub mapping: crate::observation::model::ResolvedMapping,
     pub path: PathBuf,
 }
 

@@ -1,8 +1,8 @@
 ---
 title: Safety and recovery model
 type: decision
-sources: [S001, S002, S004, S005, S007, S008, S009, S010, S011]
-updated: 2026-09-07
+sources: [S001, S002, S004, S005, S007, S008, S009, S010, S011, S013]
+updated: 2026-09-09
 ---
 
 # Safety and recovery model
@@ -19,15 +19,13 @@ The constitution makes this safety model binding: every mutation derives from a 
 
 Concurrent external edits are handled through evidence capture, pre-action revalidation, safe publication, and explicit drift errors rather than attempts to lock whole payload trees. A short-lived per-user lock may protect Grip-owned registry or state publication, but it must remain bounded and provide actionable contention and stale-lock behavior. (S002)
 
-Feature 002 applies this boundary to registry replacement. A writer locks a stable owner-only file, rereads the accepted bytes, revalidates the exact submitted-path evidence and complete candidate, publishes and verifies a content-addressed recovery copy of the prior document, and verifies a same-directory staged candidate before rename. Failure before rename leaves the prior registry authoritative; a directory-sync failure after rename reports that visibility changed but durability was not confirmed. (S005)
+Registry replacement and payload mutation apply this same boundary with owner-only bounded locks, lock-held plan equality, same-directory staging, private recovery, checkpoints, final verification, and one accepted-state publication. Directional deletion remains separately authorized, and recovery restore and cleanup remain explicit, compatibility-gated operations. (S005) (S008) (S009) (S010) (S011)
 
-Feature 005 applies the full boundary to push: after complete preflight, an actionful command locks, rebuilds the plan, initializes durable operation evidence, and checkpoints revalidation through terminal baseline state. Replacements preserve the prior destination privately; the first failure stops without rollback, retains completed effects and recovery, leaves later actions unattempted, and does not falsely publish acceptance. (S004) (S008)
+## Project and rebinding authority
 
-Feature 006 applies the same boundary to pull with destination as origin and source as target. It preserves the prior source, never creates a missing source or parent, and accepts only a fully verified result. (S004) (S009)
+Feature 010 adds project selection to the safety boundary: root, `.grip`, descriptor, ignore file, invoking-user home, descriptor bytes, and resolved topology are retained and revalidated without rediscovery before mutation. Unsafe substitution stops the operation. (S013)
 
-Feature 007 reuses that direction-neutral pipeline for mixed sync actions and exact resolution. One outer mutation lock covers lock-held plan equality, per-action direction, operation-local recovery, final observation, and one baseline publication. Conflicts block sync completely; resolution requires an explicit whole-state winner. A result-delivery failure cannot revoke already accepted payload or baseline authority. (S004) (S010)
-
-Feature 008 keeps destructive intent separate from ordinary synchronization. Directional deletion requires an explicit source- or destination-authoritative command, revalidates every action, preserves the remaining peer before removal, verifies absence, and retires accepted evidence only after the complete selected operation succeeds. Recovery restoration is exact, compatibility-gated, and non-accepting; cleanup requires exact references plus confirmation and preserves an immutable cleaned tombstone. (S011)
+State and recovery authority is portable. A copied State V4 is not accepted merely by prefix substitution; Grip must match every portable identity to the current descriptor, reobserve required accepted entries and recovery targets, and reject missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. Recovery inventory and restore derive live targets from portable identity plus endpoint role, preventing cross-project restoration through stale absolute paths. (S013)
 
 ## Related pages
 

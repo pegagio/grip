@@ -3,6 +3,81 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use std::io::{self, Write};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RebindingOutcome {
+    Uninitialized,
+    Bound,
+    RebindEligible,
+    RebindBlocked,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectResultDetails {
+    pub root: crate::discovery::model::SafePath,
+    pub state: RebindingOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prior_root: Option<crate::discovery::model::SafePath>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredMappingDetails {
+    pub kind: crate::mapping::MappingKind,
+    pub source: String,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedMappingDetails {
+    pub source: crate::discovery::model::SafePath,
+    pub destination: crate::discovery::model::SafePath,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MappingResultDetails {
+    pub declared: DeclaredMappingDetails,
+    pub resolved: ResolvedMappingDetails,
+}
+
+impl From<&crate::mapping::ResolvedMapping> for MappingResultDetails {
+    fn from(mapping: &crate::mapping::ResolvedMapping) -> Self {
+        Self {
+            declared: DeclaredMappingDetails {
+                kind: mapping.declaration.kind,
+                source: mapping.declaration.source.as_str().into(),
+                destination: mapping.declaration.destination.as_str().into(),
+            },
+            resolved: ResolvedMappingDetails {
+                source: crate::discovery::model::SafePath::from_path(&mapping.source),
+                destination: crate::discovery::model::SafePath::from_path(&mapping.destination),
+            },
+        }
+    }
+}
+
+impl MappingResultDetails {
+    pub fn from_parts(
+        declaration: &crate::mapping::PortableMapping,
+        resolved: &crate::mapping::Mapping,
+    ) -> Self {
+        Self {
+            declared: DeclaredMappingDetails {
+                kind: declaration.kind,
+                source: declaration.source.as_str().into(),
+                destination: declaration.destination.as_str().into(),
+            },
+            resolved: ResolvedMappingDetails {
+                source: crate::discovery::model::SafePath::from_path(&resolved.source),
+                destination: crate::discovery::model::SafePath::from_path(&resolved.destination),
+            },
+        }
+    }
+}
+
 /// Safe typed projection shared by metadata-aware human and JSON results.
 #[derive(Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +112,56 @@ impl CommandOutcome {
             message: message.into(),
             details: Map::new(),
         }
+    }
+
+    pub fn initialization(result: &crate::project::init::InitializationResult) -> Self {
+        let initialization = match result.outcome {
+            crate::project::init::InitializationOutcome::Initialized => "initialized",
+            crate::project::init::InitializationOutcome::AlreadyInitialized => {
+                "already_initialized"
+            }
+        };
+        let root = crate::discovery::model::SafePath::from_path(&result.root);
+        let mut outcome = Self::success(format!(
+            "Grip project {initialization}: {}",
+            result.root.display()
+        ));
+        outcome
+            .details
+            .insert("project".into(), serde_json::json!({"root": root}));
+        outcome
+            .details
+            .insert("initialization".into(), initialization.into());
+        outcome
+    }
+
+    pub fn with_project(mut self, context: &crate::project::ProjectContext) -> Self {
+        self.details.insert(
+            "project".into(),
+            serde_json::json!({
+                "root": crate::discovery::model::SafePath::from_path(&context.root)
+            }),
+        );
+        self
+    }
+
+    pub fn with_project_state(
+        mut self,
+        context: &crate::project::ProjectContext,
+        assessment: &crate::state::rebinding::RebindingAssessment,
+    ) -> Self {
+        self.details.insert(
+            "project".into(),
+            serde_json::json!({
+                "root": crate::discovery::model::SafePath::from_path(&context.root),
+                "state": assessment.outcome,
+                "prior_root": assessment.prior_root.as_ref().map(|root| {
+                    crate::discovery::model::SafePath::from_path(std::path::Path::new(root))
+                }),
+                "blockers": assessment.blockers,
+            }),
+        );
+        self
     }
 
     /// Build a metadata-aware outcome without exposing raw extended-attribute values.
@@ -358,11 +483,7 @@ impl CommandOutcome {
         outcome
     }
 
-    pub fn mapping_success(
-        operation: &str,
-        message: &str,
-        mapping: &crate::mapping::Mapping,
-    ) -> Self {
+    pub fn mapping_success(operation: &str, message: &str, mapping: &MappingResultDetails) -> Self {
         let mut outcome = Self::success(message);
         outcome.details.insert("operation".into(), operation.into());
         outcome.details.insert(
@@ -372,7 +493,7 @@ impl CommandOutcome {
         outcome
     }
 
-    pub fn mapping_list(mappings: &[crate::mapping::Mapping]) -> Self {
+    pub fn mapping_list(mappings: &[MappingResultDetails]) -> Self {
         let mut outcome = Self::success(format!("{} mapping(s)", mappings.len()));
         outcome
             .details
@@ -1378,22 +1499,41 @@ fn render_human_discovery_record(record: &Value, writer: &mut dyn Write) -> io::
 }
 
 fn render_human_mapping(mapping: &Value, writer: &mut dyn Write) -> io::Result<()> {
+    let declared = mapping.get("declared").unwrap_or(mapping);
+    let resolved = mapping.get("resolved");
     writeln!(
         writer,
         "{} {} -> {}",
-        mapping
+        declared
             .get("kind")
             .and_then(Value::as_str)
             .unwrap_or("unknown"),
-        mapping
+        declared
             .get("source")
             .and_then(Value::as_str)
             .unwrap_or("unknown"),
-        mapping
+        declared
             .get("destination")
             .and_then(Value::as_str)
             .unwrap_or("unknown")
-    )
+    )?;
+    if let Some(resolved) = resolved {
+        writeln!(
+            writer,
+            "  resolved {} -> {}",
+            resolved
+                .get("source")
+                .and_then(|path| path.get("display"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            resolved
+                .get("destination")
+                .and_then(|path| path.get("display"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )?;
+    }
+    Ok(())
 }
 
 pub fn emit_diagnostic(verbosity: u8, event: &str, writer: &mut dyn Write) -> io::Result<()> {
@@ -1411,6 +1551,56 @@ mod tests {
         CompatibilityFinding, CompatibilityReason, EndpointRole, Evidence, MetadataDimension,
         XattrFingerprint,
     };
+
+    #[test]
+    fn project_result_exposes_safe_identity_and_each_rebinding_outcome() {
+        for state in [
+            RebindingOutcome::Uninitialized,
+            RebindingOutcome::Bound,
+            RebindingOutcome::RebindEligible,
+            RebindingOutcome::RebindBlocked,
+        ] {
+            let value = serde_json::to_value(ProjectResultDetails {
+                root: crate::discovery::model::SafePath::from_path(std::path::Path::new(
+                    "/safe/project",
+                )),
+                state,
+                prior_root: None,
+            })
+            .unwrap();
+            assert_eq!(value["root"]["display"], "/safe/project");
+            assert!(value["state"].is_string());
+        }
+    }
+
+    #[test]
+    fn mapping_result_keeps_declared_and_resolved_values_separate() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(project.join("source"), "payload").unwrap();
+        let mapping = crate::mapping::PortableMapping::parse(
+            crate::mapping::MappingKind::File,
+            std::ffi::OsStr::new("source"),
+            std::ffi::OsStr::new("~/destination"),
+        )
+        .unwrap()
+        .resolve(&project, &home, "test")
+        .unwrap();
+        let value = serde_json::to_value(MappingResultDetails::from(&mapping)).unwrap();
+        assert_eq!(value["declared"]["source"], "source");
+        assert_eq!(value["declared"]["destination"], "~/destination");
+        assert_eq!(
+            value["resolved"]["source"]["display"],
+            std::fs::canonicalize(project.join("source"))
+                .unwrap()
+                .display()
+                .to_string()
+        );
+        assert_ne!(value["declared"]["source"], value["resolved"]["source"]);
+    }
 
     #[test]
     fn metadata_result_v1_retains_evidence_and_authority_without_raw_xattr_values() {

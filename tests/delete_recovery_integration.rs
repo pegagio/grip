@@ -3,17 +3,12 @@ use std::fs;
 
 #[test]
 fn deletion_preserves_verified_bytes_before_removal() {
-    let (root, grip_home, source, _destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, _destination) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "--source", "source"],
     );
     assert!(
         output.status.success(),
@@ -22,7 +17,7 @@ fn deletion_preserves_verified_bytes_before_removal() {
     );
     let value = support::json(&output);
     let operation = value["details"]["operation_record"]["id"].as_str().unwrap();
-    let recovery = grip_home
+    let recovery = metadata_dir
         .join("state/operations")
         .join(operation)
         .join("recovery/00000000");

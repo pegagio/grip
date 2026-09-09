@@ -18,9 +18,9 @@ fn accepted_fixture() -> support::MetadataFixture {
         &source.state.metadata,
     )
     .unwrap();
-    let accepted = support::command_with_grip_home(
+    let accepted = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["baseline", "accept"],
     );
     assert!(
@@ -35,9 +35,9 @@ fn accepted_fixture() -> support::MetadataFixture {
 fn status_diff_dry_run_and_push_report_and_apply_metadata_only_changes() {
     let fixture = accepted_fixture();
     support::set_fixture_mode(&fixture.source, 0o600);
-    let status = support::command_with_grip_home(
+    let status = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output", "json", "status"],
     );
     let status_json = support::json(&status);
@@ -51,9 +51,9 @@ fn status_diff_dry_run_and_push_report_and_apply_metadata_only_changes() {
     );
 
     let before = support::snapshot(fixture.root.path());
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output", "json", "push", "--dry-run"],
     );
     assert!(preview.status.success());
@@ -63,9 +63,9 @@ fn status_diff_dry_run_and_push_report_and_apply_metadata_only_changes() {
     );
     assert_eq!(support::snapshot(fixture.root.path()), before);
 
-    let push = support::command_with_grip_home(
+    let push = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output", "json", "push"],
     );
     assert!(
@@ -91,9 +91,9 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
 
     support::set_fixture_mode(&fixture.destination, 0o600);
     let before_pull = support::snapshot(fixture.root.path());
-    let pull_preview = support::command_with_grip_home(
+    let pull_preview = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output=json", "pull", "--dry-run"],
     );
     assert!(pull_preview.status.success());
@@ -103,15 +103,15 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
     );
     assert_eq!(support::snapshot(fixture.root.path()), before_pull);
     assert!(
-        support::command_with_grip_home(fixture.root.path(), &fixture.grip_home, &["pull"])
+        support::project_command(fixture.root.path(), &fixture.metadata_dir, &["pull"])
             .status
             .success()
     );
 
     support::set_fixture_mode(&fixture.source, 0o640);
-    let sync_preview = support::command_with_grip_home(
+    let sync_preview = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output=json", "sync", "--dry-run"],
     );
     assert!(sync_preview.status.success());
@@ -120,7 +120,7 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
         "apply_metadata"
     );
     assert!(
-        support::command_with_grip_home(fixture.root.path(), &fixture.grip_home, &["sync"])
+        support::project_command(fixture.root.path(), &fixture.metadata_dir, &["sync"])
             .status
             .success()
     );
@@ -128,9 +128,9 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
     std::fs::write(&fixture.source, b"source conflict").unwrap();
     std::fs::write(&fixture.destination, b"destination conflict").unwrap();
     for command in ["status", "check", "diff"] {
-        let output = support::command_with_grip_home(
+        let output = support::project_command(
             fixture.root.path(),
-            &fixture.grip_home,
+            &fixture.metadata_dir,
             &["--output=json", command],
         );
         assert_eq!(
@@ -138,13 +138,13 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
             "divergent_conflict"
         );
     }
-    let resolve_preview = support::command_with_grip_home(
+    let resolve_preview = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &[
             "--output=json",
             "resolve",
-            fixture.source.to_str().unwrap(),
+            "source",
             "--destination",
             "--dry-run",
         ],
@@ -155,10 +155,10 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
         std::fs::read(&fixture.destination).unwrap()
     );
     assert!(
-        support::command_with_grip_home(
+        support::project_command(
             fixture.root.path(),
-            &fixture.grip_home,
-            &["resolve", fixture.source.to_str().unwrap(), "--destination",],
+            &fixture.metadata_dir,
+            &["resolve", "source", "--destination"],
         )
         .status
         .success()
@@ -187,9 +187,9 @@ fn excluded_and_unknown_xattrs_have_safe_human_json_parity_and_unknown_blocks_pr
         b"do-not-print-unknown",
     );
     let before = support::snapshot(fixture.root.path());
-    let json = support::command_with_grip_home(
+    let json = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output", "json", "status"],
     );
     let json_text = String::from_utf8_lossy(&json.stdout);
@@ -198,17 +198,16 @@ fn excluded_and_unknown_xattrs_have_safe_human_json_parity_and_unknown_blocks_pr
     assert!(json_text.contains("corrective_choice"));
     assert!(json_text.contains("remove the unknown attribute explicitly"));
     assert!(!json_text.contains("do-not-print"));
-    let human =
-        support::command_with_grip_home(fixture.root.path(), &fixture.grip_home, &["status"]);
+    let human = support::project_command(fixture.root.path(), &fixture.metadata_dir, &["status"]);
     let human_text = String::from_utf8_lossy(&human.stdout);
     assert!(human_text.contains("excluded_xattr"));
     assert!(human_text.contains("unknown_xattr"));
     assert!(human_text.contains("corrective_choice="));
     assert!(human_text.contains("remove the unknown attribute explicitly"));
     assert!(!human_text.contains("do-not-print"));
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output", "json", "push", "--dry-run"],
     );
     assert_eq!(support::json(&preview)["details"]["counts"]["blockers"], 1);
@@ -228,10 +227,10 @@ fn metadata_capability_results_are_deterministic_and_read_only_for_100_runs() {
         &["--output=json", "push", "--dry-run"][..],
     ] {
         let expected =
-            support::command_with_grip_home(fixture.root.path(), &fixture.grip_home, arguments);
+            support::project_command(fixture.root.path(), &fixture.metadata_dir, arguments);
         for _ in 0..100 {
             let observed =
-                support::command_with_grip_home(fixture.root.path(), &fixture.grip_home, arguments);
+                support::project_command(fixture.root.path(), &fixture.metadata_dir, arguments);
             assert_eq!(observed.status.code(), expected.status.code());
             assert_eq!(observed.stdout, expected.stdout);
             assert_eq!(observed.stderr, expected.stderr);
@@ -317,21 +316,21 @@ fn unsupported_filesystem_findings_have_safe_human_json_parity() {
 #[test]
 fn unsupported_link_output_never_reads_or_discloses_its_referent() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     let sentinel = root.path().join("payload-secret");
     std::fs::create_dir(&source).unwrap();
     std::fs::write(&sentinel, b"payload-secret-must-not-be-read").unwrap();
     std::os::unix::fs::symlink(&sentinel, source.join("unsafe-link")).unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let json = support::command_with_grip_home(
+    let json = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "mapping", "inspect"],
     );
-    let human = support::command_with_grip_home(root.path(), &grip_home, &["mapping", "inspect"]);
+    let human = support::project_command(root.path(), &metadata_dir, &["mapping", "inspect"]);
     let json_text = String::from_utf8(json.stdout).unwrap();
     let human_text = String::from_utf8(human.stdout).unwrap();
     for output in [&json_text, &human_text] {

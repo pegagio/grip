@@ -2,9 +2,8 @@
 
 use crate::discovery::model::NodeKind;
 use crate::error::GripError;
-use crate::home::GripHome;
-use crate::mutation::recovery::RecoveryMetadataV1;
-use crate::observation::model::{EntryIdentity, SupportedState};
+use crate::observation::model::SupportedState;
+use crate::project::ProjectPaths;
 use crate::recovery::model::{
     RecoveryAvailability, RecoveryKind, RecoveryRef, RestoreAction, RestorePlan,
 };
@@ -20,7 +19,7 @@ pub enum RestoreFault {
     Verification,
 }
 
-pub fn plan(home: &GripHome, reference: &RecoveryRef) -> Result<RestorePlan, GripError> {
+pub fn plan(home: &ProjectPaths, reference: &RecoveryRef) -> Result<RestorePlan, GripError> {
     if !reference.has_recoverable_bytes() {
         return Err(GripError::InvalidConfiguration(
             "operation recovery references cannot be restored".into(),
@@ -126,29 +125,37 @@ pub fn plan(home: &GripHome, reference: &RecoveryRef) -> Result<RestorePlan, Gri
 }
 
 fn payload_authority_evidence(
-    home: &GripHome,
+    home: &ProjectPaths,
     reference: &RecoveryRef,
     target: Option<&str>,
 ) -> Result<serde_json::Value, GripError> {
     let located = crate::recovery::inventory::locate_manifest(home, reference)?;
-    let metadata_bytes =
-        crate::mutation::filesystem::read_private_file(&located.directory.join("metadata.json"))?;
-    let metadata: RecoveryMetadataV1 = serde_json::from_slice(&metadata_bytes)
-        .map_err(|error| GripError::CorruptState(format!("invalid recovery metadata: {error}")))?;
-    let identity = EntryIdentity::new(
-        metadata.identity.mapping,
-        decode_hex(&metadata.identity.relative_path_hex)?,
-    )
-    .map_err(|message| GripError::CorruptState(message.into()))?;
-    let expected_target = match located.payload.bound_side.as_deref() {
-        Some("source") => identity.source_path(),
-        Some("destination") => identity.destination_path(),
+    let portable_identity =
+        located.payload.identity.as_ref().ok_or_else(|| {
+            GripError::CorruptState("payload recovery identity is missing".into())
+        })?;
+    let identity = crate::state::runtime_identity_from_portable(home, portable_identity)?;
+    let expected_target = match located.payload.endpoint_role {
+        Some(crate::state::EndpointRoleV1::Source) => identity.source_path(),
+        Some(crate::state::EndpointRoleV1::Destination) => identity.destination_path(),
         _ => {
             return Err(GripError::CorruptState(
                 "payload recovery has no valid bound side".into(),
             ));
         }
     };
+    let recovery_bytes = crate::mutation::filesystem::read_private_file(
+        &located.directory.join("recovery-v2.json"),
+    )?;
+    let recovery = crate::mutation::recovery::decode_mutation_recovery_v2(&recovery_bytes)?;
+    if recovery.payload.identity != *portable_identity
+        || Some(recovery.payload.endpoint_role) != located.payload.endpoint_role
+        || recovery.payload.private_ref != located.payload.private_ref
+    {
+        return Err(GripError::CorruptState(
+            "mutation recovery and manifest bindings disagree".into(),
+        ));
+    }
     if target.map(Path::new) != Some(expected_target.as_path()) {
         return Err(GripError::CorruptState(
             "payload recovery target does not match its managed identity".into(),
@@ -156,7 +163,7 @@ fn payload_authority_evidence(
     }
     let registry = crate::registry::publication::load(home, false)?;
     if !registry.registry.mappings().iter().any(|mapping| {
-        identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
+        identity.mapping == crate::observation::model::ResolvedMapping::from(mapping)
     }) {
         return Err(GripError::InvalidConfiguration(
             "payload recovery mapping is not present in the live registry".into(),
@@ -171,7 +178,7 @@ fn payload_authority_evidence(
 }
 
 fn registry_compatibility(
-    home: &GripHome,
+    home: &ProjectPaths,
     reference: &RecoveryRef,
     blockers: &mut Vec<String>,
 ) -> Result<serde_json::Value, GripError> {
@@ -185,19 +192,11 @@ fn registry_compatibility(
             "registry recovery digest mismatch".into(),
         ));
     }
-    let recovered = crate::registry::decode(
-        std::str::from_utf8(&bytes)
-            .map_err(|_| GripError::CorruptState("recovered registry is not UTF-8".into()))?,
-    )?;
+    let recovered = recovered_registry(home, &bytes)?;
     let state = crate::state::publication::load(home)?;
-    for identity in state
-        .accepted
-        .baselines
-        .keys()
-        .chain(state.accepted.complete_baselines.keys())
-    {
+    for identity in state.accepted.complete_baselines.keys() {
         if !recovered.mappings().iter().any(|mapping| {
-            identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
+            identity.mapping == crate::observation::model::ResolvedMapping::from(mapping)
         }) {
             blockers.push("recovered_registry_incompatible_with_accepted_state".into());
         }
@@ -232,31 +231,28 @@ fn registry_compatibility(
 }
 
 fn state_compatibility(
-    home: &GripHome,
+    home: &ProjectPaths,
     reference: &RecoveryRef,
     blockers: &mut Vec<String>,
 ) -> Result<serde_json::Value, GripError> {
     let located = crate::recovery::inventory::locate_manifest(home, reference)?;
     let bytes = crate::mutation::filesystem::read_private_file(&located.payload_path)?;
-    let recovered = crate::state::decode_current_accepted(&bytes)?;
+    let recovered_v4 = crate::state::decode_v4(&bytes)?;
+    let recovered_runtime = crate::state::runtime_from_accepted_v4(home, &recovered_v4)?;
+    let recovered = runtime_accepted_state(recovered_runtime);
     let RecoveryRef::AcceptedState { generation, digest } = reference else {
         unreachable!()
     };
-    if recovered.generation != Some(*generation)
-        || format!("{:x}", Sha256::digest(&bytes)) != *digest
+    if recovered_v4.generation != *generation || format!("{:x}", Sha256::digest(&bytes)) != *digest
     {
         return Err(GripError::CorruptState(
             "state recovery identity mismatch".into(),
         ));
     }
     let registry = crate::registry::publication::load(home, false)?;
-    for identity in recovered
-        .baselines
-        .keys()
-        .chain(recovered.complete_baselines.keys())
-    {
+    for identity in recovered.complete_baselines.keys() {
         if !registry.registry.mappings().iter().any(|mapping| {
-            identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
+            identity.mapping == crate::observation::model::ResolvedMapping::from(mapping)
         }) {
             blockers.push("recovered_state_references_missing_mapping".into());
         }
@@ -304,13 +300,13 @@ fn state_compatibility(
     }))
 }
 
-pub fn execute(home: &GripHome, expected: &RestorePlan) -> Result<RestorePlan, GripError> {
+pub fn execute(home: &ProjectPaths, expected: &RestorePlan) -> Result<RestorePlan, GripError> {
     execute_with_fault(home, expected, None)
 }
 
 #[doc(hidden)]
 pub fn execute_with_fault(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RestorePlan,
     fault: Option<RestoreFault>,
 ) -> Result<RestorePlan, GripError> {
@@ -330,7 +326,7 @@ pub fn execute_with_fault(
 }
 
 fn restore_registry(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RestorePlan,
     fault: Option<RestoreFault>,
 ) -> Result<RestorePlan, GripError> {
@@ -348,19 +344,11 @@ fn restore_registry(
             "registry recovery digest mismatch".into(),
         ));
     }
-    let recovered_registry = crate::registry::decode(
-        std::str::from_utf8(&bytes)
-            .map_err(|_| GripError::CorruptState("recovered registry is not UTF-8".into()))?,
-    )?;
+    let recovered_registry = recovered_registry(home, &bytes)?;
     let state = crate::state::publication::load(home)?;
-    for identity in state
-        .accepted
-        .baselines
-        .keys()
-        .chain(state.accepted.complete_baselines.keys())
-    {
+    for identity in state.accepted.complete_baselines.keys() {
         if !recovered_registry.mappings().iter().any(|mapping| {
-            identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
+            identity.mapping == crate::observation::model::ResolvedMapping::from(mapping)
         }) {
             return Err(GripError::InvalidConfiguration(
                 "recovered registry is incompatible with live accepted state".into(),
@@ -458,18 +446,19 @@ fn restore_registry(
 }
 
 fn restore_state(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RestorePlan,
     fault: Option<RestoreFault>,
 ) -> Result<RestorePlan, GripError> {
     let located = crate::recovery::inventory::locate_manifest(home, &expected.reference)?;
     let bytes = crate::mutation::filesystem::read_private_file(&located.payload_path)?;
-    let recovered = crate::state::decode_current_accepted(&bytes)?;
+    let recovered_v4 = crate::state::decode_v4(&bytes)?;
+    let recovered_runtime = crate::state::runtime_from_accepted_v4(home, &recovered_v4)?;
+    let recovered = runtime_accepted_state(recovered_runtime);
     let RecoveryRef::AcceptedState { generation, digest } = &expected.reference else {
         unreachable!()
     };
-    if recovered.generation != Some(*generation)
-        || format!("{:x}", Sha256::digest(&bytes)) != *digest
+    if recovered_v4.generation != *generation || format!("{:x}", Sha256::digest(&bytes)) != *digest
     {
         return Err(GripError::CorruptState(
             "state recovery identity mismatch".into(),
@@ -488,13 +477,9 @@ fn restore_state(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| GripError::CorruptState("state recovery lacks post digest".into()))?;
     let registry = crate::registry::publication::load(home, false)?;
-    for identity in recovered
-        .baselines
-        .keys()
-        .chain(recovered.complete_baselines.keys())
-    {
+    for identity in recovered.complete_baselines.keys() {
         if !registry.registry.mappings().iter().any(|mapping| {
-            identity.mapping == crate::observation::model::MappingSnapshot::from(mapping)
+            identity.mapping == crate::observation::model::ResolvedMapping::from(mapping)
         }) {
             return Err(GripError::InvalidConfiguration(
                 "recovered state references a mapping absent from the live registry".into(),
@@ -591,8 +576,35 @@ fn restore_state(
     Ok(result)
 }
 
+fn recovered_registry(
+    home: &ProjectPaths,
+    bytes: &[u8],
+) -> Result<crate::registry::ResolvedRegistry, GripError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| GripError::CorruptState("recovered descriptor is not UTF-8".into()))?;
+    let descriptor = crate::registry::decode_descriptor(text)?;
+    let project_root = home.project_root()?;
+    let destination_home = home.destination_home().ok_or_else(|| {
+        GripError::InvalidConfiguration("project destination home is unavailable".into())
+    })?;
+    let mappings = descriptor
+        .resolve(project_root, destination_home, "recovery_restore")?
+        .iter()
+        .map(crate::mapping::ResolvedMapping::ownership_mapping)
+        .collect();
+    crate::registry::ResolvedRegistry::new(mappings)
+}
+
+fn runtime_accepted_state(state: crate::state::AcceptedStateV3) -> crate::state::AcceptedState {
+    crate::state::AcceptedState {
+        generation: Some(state.generation),
+        complete_baselines: state.baselines,
+        accepted_bytes: state.accepted_bytes,
+    }
+}
+
 fn restore_payload(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RestorePlan,
     fault: Option<RestoreFault>,
 ) -> Result<RestorePlan, GripError> {
@@ -609,7 +621,7 @@ fn restore_payload(
     prior
         .validate()
         .map_err(|message| GripError::CorruptState(message.into()))?;
-    let complete_recovery = load_complete_recovery(&located, &expected.reference, &target)?;
+    let complete_recovery = load_complete_recovery(&located, &expected.reference, &target, home)?;
     let post = if located.payload.expected_post_evidence.is_null() {
         None
     } else {
@@ -691,41 +703,12 @@ fn restore_payload(
                 false,
             );
         }
-        let metadata_bytes = match crate::mutation::filesystem::read_private_file(
-            &located.directory.join("metadata.json"),
-        ) {
-            Ok(value) => value,
-            Err(error) => {
-                return restore_fail(
-                    &mut receipt,
-                    &mut result,
-                    "preservation",
-                    error,
-                    false,
-                    "not_attempted",
-                    false,
-                );
-            }
-        };
-        let metadata: RecoveryMetadataV1 = match serde_json::from_slice(&metadata_bytes) {
-            Ok(value) => value,
-            Err(error) => {
-                return restore_fail(
-                    &mut receipt,
-                    &mut result,
-                    "preservation",
-                    GripError::CorruptState(format!("invalid recovery metadata: {error}")),
-                    false,
-                    "not_attempted",
-                    false,
-                );
-            }
-        };
-        let identity = match EntryIdentity::new(
-            metadata.identity.mapping,
-            decode_hex(&metadata.identity.relative_path_hex)?,
-        )
-        .map_err(|message| GripError::CorruptState(message.into()))
+        let identity = match located
+            .payload
+            .identity
+            .as_ref()
+            .ok_or_else(|| GripError::CorruptState("payload recovery identity is missing".into()))
+            .and_then(|identity| crate::state::runtime_identity_from_portable(home, identity))
         {
             Ok(value) => value,
             Err(error) => {
@@ -1066,8 +1049,9 @@ fn load_complete_recovery(
     located: &crate::recovery::inventory::LocatedRecovery,
     reference: &RecoveryRef,
     target: &Path,
-) -> Result<Option<(crate::recovery::model::RecoveryMetadataEnvelopeV2, PathBuf)>, GripError> {
-    let path = located.directory.join("metadata-v2.json");
+    home: &ProjectPaths,
+) -> Result<Option<(crate::recovery::model::RecoveryMetadataV3, PathBuf)>, GripError> {
+    let path = located.directory.join("metadata-v3.json");
     match std::fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
@@ -1084,7 +1068,7 @@ fn load_complete_recovery(
         }
     }
     let bytes = crate::mutation::filesystem::read_private_file(&path)?;
-    let metadata = crate::recovery::model::decode_metadata_v2(&bytes)?;
+    let metadata = crate::recovery::model::decode_metadata_v3(&bytes)?;
     let RecoveryRef::Payload {
         operation_id,
         action_index,
@@ -1101,11 +1085,7 @@ fn load_complete_recovery(
             "complete recovery metadata does not match its public reference".into(),
         ));
     }
-    let identity = EntryIdentity::new(
-        metadata.payload.identity.mapping.clone(),
-        decode_hex(&metadata.payload.identity.relative_path_hex)?,
-    )
-    .map_err(|message| GripError::CorruptState(message.into()))?;
+    let identity = crate::state::runtime_identity_from_portable(home, &metadata.payload.identity)?;
     if target != identity.source_path() && target != identity.destination_path() {
         return Err(GripError::CorruptState(
             "complete recovery metadata does not match its bound target".into(),
@@ -1126,7 +1106,7 @@ fn load_complete_recovery(
 fn verify_restored_target(
     target: &Path,
     prior: &SupportedState,
-    complete: Option<&(crate::recovery::model::RecoveryMetadataEnvelopeV2, PathBuf)>,
+    complete: Option<&(crate::recovery::model::RecoveryMetadataV3, PathBuf)>,
 ) -> Result<(), GripError> {
     crate::mutation::filesystem::verify_target(target, prior)?;
     if let Some((metadata, _)) = complete {
@@ -1166,24 +1146,11 @@ fn validate_target(path: &Path) -> Result<(), GripError> {
     Ok(())
 }
 
-fn decode_hex(value: &str) -> Result<Vec<u8>, GripError> {
-    if !value.len().is_multiple_of(2) {
-        return Err(GripError::CorruptState("invalid recovery identity".into()));
-    }
-    (0..value.len())
-        .step_by(2)
-        .map(|index| {
-            u8::from_str_radix(&value[index..index + 2], 16)
-                .map_err(|_| GripError::CorruptState("invalid recovery identity".into()))
-        })
-        .collect()
-}
-
 fn checkpoint(
     publication: &str,
     durable: bool,
-) -> crate::operation::model::ActionCheckpointEvidenceV1 {
-    crate::operation::model::ActionCheckpointEvidenceV1 {
+) -> crate::operation::model::ActionCheckpointEvidenceV2 {
+    crate::operation::model::ActionCheckpointEvidenceV2 {
         revalidation: "passed".into(),
         recovery: "preserved".into(),
         recovery_ref: None,

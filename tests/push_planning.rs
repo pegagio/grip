@@ -4,7 +4,7 @@ use grip::classification::model::{
 use grip::discovery::model::{NodeKind, SafePath};
 use grip::mapping::MappingKind;
 use grip::observation::model::{
-    ContentFingerprint, EntryIdentity, MappingSnapshot, PathSpace, SupportedState,
+    ContentFingerprint, EntryIdentity, PathSpace, ResolvedMapping, SupportedState,
 };
 use grip::push::model::Disposition;
 use std::path::PathBuf;
@@ -136,7 +136,7 @@ fn record(index: usize, classification: Classification, blocking: bool) -> Class
     let source = PathBuf::from(format!("/source-{index}"));
     let destination = PathBuf::from(format!("/destination-{index}"));
     let identity = EntryIdentity::new(
-        MappingSnapshot {
+        ResolvedMapping {
             kind: MappingKind::File,
             source: source.clone(),
             destination: destination.clone(),
@@ -252,7 +252,7 @@ fn build_is_deterministic_when_input_order_changes() {
 }
 
 fn tree_addition(relative: Vec<u8>, kind: NodeKind) -> ClassificationRecord {
-    let mapping = MappingSnapshot {
+    let mapping = ResolvedMapping {
         kind: MappingKind::Tree,
         source: PathBuf::from("/tree-source"),
         destination: PathBuf::from("/tree-destination"),
@@ -325,7 +325,7 @@ fn build_orders_parent_before_shared_children_and_uses_raw_identity_order() {
 #[test]
 fn filesystem_plan_deduplicates_synthetic_parents_and_keeps_dependencies_acyclic() {
     let root = tempfile::tempdir().unwrap();
-    let mapping = MappingSnapshot {
+    let mapping = ResolvedMapping {
         kind: MappingKind::Tree,
         source: root.path().join("source"),
         destination: root.path().join("destination"),

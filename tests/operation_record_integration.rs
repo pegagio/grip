@@ -1,68 +1,72 @@
 mod support;
 
-use grip::operation::model::{
-    ActionCheckpointPayloadV1, OperationPlanEnvelopeV1, OperationPlanPayloadV1,
-    OperationSummaryPayloadV1,
-};
+use grip::operation::model::{ActionCheckpointPayloadV2, OperationSummaryPayloadV2};
 
 #[test]
-fn operation_record_v1_preserves_complete_metadata_plan_extensions() {
-    let plan_id = "e".repeat(64);
-    let complete_metadata = serde_json::json!({
-        "permission_mode":"0644",
-        "uid":501,
-        "gid":20,
-        "modified_time":{"seconds":1700000000,"nanoseconds":99},
-        "extended_attributes":[{"name":[117,115,101,114,46,116,101,115,116],"length":3,"algorithm":"sha256","digest":"a".repeat(64)}],
-        "acl":{"state":"absent"},
-        "bsd_flags":["hidden"]
-    });
-    let payload = OperationPlanPayloadV1 {
-        operation_id: "push-metadata".into(),
-        operation: "push".into(),
-        plan_id: plan_id.clone(),
-        plan: serde_json::json!({
-            "operation":"push",
-            "direction":"push",
-            "plan_id":plan_id,
-            "compatibility_findings":[{
-                "endpoint":"destination",
-                "path_display":"/safe/path",
-                "path_raw_hex":null,
-                "field":"bsd_flags",
-                "required":"immutable",
-                "evidence_state":"observed",
-                "reason":"protected_flag",
-                "message":"flag must be cleared before replacement",
-                "corrective_choice":"align or remove the protected flag before retrying",
-                "blocking":false
-            }],
-            "actions":[{
-                "index":0,
-                "direction":"push",
-                "expected_metadata":complete_metadata,
-                "flag_clear_steps":["immutable"],
-                "recovery":{"schema_version":2,"reference":"recovery/00000000/metadata.json"},
-                "verification":{"full_state":"required","durability":"required"}
-            }]
-        }),
+fn operation_record_v2_round_trips_portable_actions_and_diagnostic_paths() {
+    let identity = grip::state::EntryIdentityV4 {
+        mapping: grip::mapping::PortableMapping::parse(
+            grip::mapping::MappingKind::File,
+            std::ffi::OsStr::new("source"),
+            std::ffi::OsStr::new("~/destination"),
+        )
+        .unwrap(),
+        relative_path_hex: String::new(),
     };
-    let envelope = OperationPlanEnvelopeV1::new(payload).unwrap();
-    let bytes = grip::operation::model::encode(&envelope).unwrap();
-    let decoded: OperationPlanEnvelopeV1 = grip::operation::model::decode(&bytes).unwrap();
-    assert_eq!(decoded, envelope);
+    let record = grip::operation::model::OperationRecordV2::new(
+        grip::operation::model::OperationRecordPayloadV2 {
+            operation_id: "push-1".into(),
+            operation: "push".into(),
+            plan_id: "a".repeat(64),
+            actions: vec![grip::operation::model::PortableActionV2 {
+                index: 0,
+                identity: Some(identity),
+                endpoint_role: grip::state::EndpointRoleV1::Destination,
+                diagnostic_path: Some(
+                    grip::discovery::model::SafePath::from_path(std::path::Path::new(
+                        "/diagnostic/only",
+                    ))
+                    .into(),
+                ),
+            }],
+        },
+    )
+    .unwrap();
+    let bytes = grip::operation::model::encode_operation_v2(&record).unwrap();
     assert_eq!(
-        decoded.payload.plan["actions"][0]["recovery"]["schema_version"],
-        2
-    );
-    assert_eq!(
-        decoded.payload.plan["actions"][0]["verification"]["durability"],
-        "required"
+        grip::operation::model::decode_operation_v2(&bytes).unwrap(),
+        record
     );
 }
 
 #[test]
-fn operation_record_v1_accepts_all_mutation_operations_but_rejects_unknown_operations() {
+fn operation_record_v2_rejects_v1_unknown_fields_and_tampering() {
+    assert_eq!(
+        grip::operation::model::decode_operation_v2(br#"{"schema_version":1}"#)
+            .unwrap_err()
+            .category(),
+        grip::ResultCategory::UnsupportedSchema
+    );
+    let payload = grip::operation::model::OperationRecordPayloadV2 {
+        operation_id: "push-1".into(),
+        operation: "push".into(),
+        plan_id: "a".repeat(64),
+        actions: Vec::new(),
+    };
+    let record = grip::operation::model::OperationRecordV2::new(payload).unwrap();
+    let mut unknown = serde_json::to_value(&record).unwrap();
+    unknown["unknown"] = true.into();
+    assert!(
+        grip::operation::model::decode_operation_v2(&serde_json::to_vec(&unknown).unwrap())
+            .is_err()
+    );
+    let mut tampered = record;
+    tampered.payload.operation = "pull".into();
+    assert!(tampered.validate().is_err());
+}
+
+#[test]
+fn operation_record_v2_accepts_all_mutation_operations() {
     for operation in ["push", "pull"] {
         let mut plan = support::test_push_plan(0);
         plan.operation = if operation == "push" {
@@ -76,46 +80,23 @@ fn operation_record_v1_accepts_all_mutation_operations_but_rejects_unknown_opera
             grip::mutation::model::MutationDirection::Pull
         });
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
-        let grip_home = support::minimal_home(root.path());
-        let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+        let metadata_dir = support::initialize_project_metadata(root.path());
+        let home = support::project_home(&metadata_dir);
         let receipt = grip::operation::publication::initialize(&home, &plan).unwrap();
         assert!(receipt.operation_id().starts_with(&format!("{operation}-")));
-        let stored = support::read_operation_component::<OperationPlanPayloadV1>(
-            &receipt.directory().join("plan.json"),
-        );
+        let stored = grip::operation::model::decode_operation_v2(
+            &std::fs::read(receipt.directory().join("record.json")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(stored.payload.operation, operation);
     }
-
-    let payload = OperationSummaryPayloadV1 {
-        operation_id: "unknown-1".into(),
-        operation: "unknown".into(),
-        state: "executing".into(),
-        plan_id: "a".repeat(64),
-        plan_ref: "plan.json".into(),
-        baseline: serde_json::json!({"outcome":"not_attempted"}),
-        result_delivery: "not_attempted".into(),
-        failure: None,
-    };
-    assert!(grip::operation::model::OperationSummaryEnvelopeV1::new(payload).is_err());
-
-    let mismatch = OperationPlanPayloadV1 {
-        operation_id: "pull-1".into(),
-        operation: "pull".into(),
-        plan_id: "a".repeat(64),
-        plan: serde_json::json!({
-            "direction":"push",
-            "plan_id":"a".repeat(64),
-            "actions":[]
-        }),
-    };
-    assert!(grip::operation::model::OperationPlanEnvelopeV1::new(mismatch).is_err());
 }
 
 #[test]
 fn feature_eight_nonterminal_records_are_immutable_and_do_not_block_fresh_operations() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     for operation in ["delete", "retire", "recovery_restore", "recovery_remove"] {
         let plan_id = "a".repeat(64);
         let plan = serde_json::json!({
@@ -140,16 +121,21 @@ fn sync_operation_record_carries_operation_and_action_direction() {
     let (_root, home, registry, state, selection, plan) = support::sync_execution_fixture();
     let success =
         grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
-    let stored = support::read_operation_component::<OperationPlanPayloadV1>(
-        &home
-            .path()
-            .join("state/operations")
-            .join(&success.operation_id)
-            .join("plan.json"),
-    );
+    let stored = grip::operation::model::decode_operation_v2(
+        &std::fs::read(
+            home.path()
+                .join("state/operations")
+                .join(&success.operation_id)
+                .join("record.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(stored.payload.operation, "sync");
-    assert_eq!(stored.payload.plan["operation"], "sync");
-    assert_eq!(stored.payload.plan["actions"][0]["direction"], "push");
+    assert_eq!(
+        stored.payload.actions[0].endpoint_role,
+        grip::state::EndpointRoleV1::Destination
+    );
 }
 
 #[test]
@@ -157,7 +143,7 @@ fn pull_result_delivery_finalizes_only_its_operation_record() {
     let (_root, home, registry, state, selection, plan) = support::pull_execution_fixture();
     let success =
         grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
-    let completed = support::read_operation_component::<OperationSummaryPayloadV1>(
+    let completed = support::read_operation_component::<OperationSummaryPayloadV2>(
         &home
             .path()
             .join("state/operations")
@@ -167,7 +153,7 @@ fn pull_result_delivery_finalizes_only_its_operation_record() {
     assert_eq!(completed.payload.operation, "pull");
     assert_eq!(completed.payload.state, "completed");
     assert_eq!(completed.payload.result_delivery, "prepared");
-    let action = support::read_operation_component::<ActionCheckpointPayloadV1>(
+    let action = support::read_operation_component::<ActionCheckpointPayloadV2>(
         &home
             .path()
             .join("state/operations")
@@ -189,7 +175,7 @@ fn pull_result_delivery_finalizes_only_its_operation_record() {
         )
         .is_err()
     );
-    let summary = support::read_operation_component::<OperationSummaryPayloadV1>(
+    let summary = support::read_operation_component::<OperationSummaryPayloadV2>(
         &home
             .path()
             .join("state/operations")
@@ -309,12 +295,20 @@ fn mixed_sync_checkpoints_each_direction_and_terminal_baseline_once() {
         .path()
         .join("state/operations")
         .join(&success.operation_id);
-    let stored_plan =
-        support::read_operation_component::<OperationPlanPayloadV1>(&directory.join("plan.json"));
-    assert_eq!(stored_plan.payload.plan["actions"][0]["direction"], "push");
-    assert_eq!(stored_plan.payload.plan["actions"][1]["direction"], "pull");
+    let stored_plan = grip::operation::model::decode_operation_v2(
+        &std::fs::read(directory.join("record.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        stored_plan.payload.actions[0].endpoint_role,
+        grip::state::EndpointRoleV1::Destination
+    );
+    assert_eq!(
+        stored_plan.payload.actions[1].endpoint_role,
+        grip::state::EndpointRoleV1::Source
+    );
     for index in 0..2 {
-        let action = support::read_operation_component::<ActionCheckpointPayloadV1>(
+        let action = support::read_operation_component::<ActionCheckpointPayloadV2>(
             &directory.join(format!("actions/{index:08}.json")),
         );
         assert_eq!(action.payload.status, "completed");
@@ -324,7 +318,7 @@ fn mixed_sync_checkpoints_each_direction_and_terminal_baseline_once() {
         assert_eq!(action.payload.milestones.verification, "verified");
         assert!(action.payload.milestones.durability_confirmed);
     }
-    let summary = support::read_operation_component::<OperationSummaryPayloadV1>(
+    let summary = support::read_operation_component::<OperationSummaryPayloadV2>(
         &directory.join("operation.json"),
     );
     assert_eq!(summary.payload.state, "completed");

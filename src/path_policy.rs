@@ -7,6 +7,128 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
+/// A canonical path declaration resolved beneath a Grip project root.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct ProjectRelativePath(String);
+
+impl ProjectRelativePath {
+    /// Parse a portable project-relative source declaration.
+    pub fn parse(value: &std::ffi::OsStr, allow_tree_root: bool) -> Result<Self, GripError> {
+        let value = value.to_str().ok_or_else(|| {
+            portable_path_error("non_utf8_path", value, "portable paths must be valid UTF-8")
+        })?;
+        if value == "." && allow_tree_root {
+            return Ok(Self(value.to_owned()));
+        }
+        if !valid_relative_components(value)
+            || value.starts_with('~')
+            || value.contains('$')
+            || value.split('/').next() == Some(".grip")
+        {
+            return Err(portable_path_error(
+                "invalid_project_relative_path",
+                std::ffi::OsStr::new(value),
+                "source must be a normalized project-relative path outside .grip",
+            ));
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn resolve(&self, root: &Path) -> PathBuf {
+        if self.0 == "." {
+            root.to_path_buf()
+        } else {
+            root.join(&self.0)
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ProjectRelativePath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(std::ffi::OsStr::new(&value), true).map_err(serde::de::Error::custom)
+    }
+}
+
+/// A canonical destination declaration resolved beneath the invoking user's home.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct HomeRelativePath(String);
+
+impl HomeRelativePath {
+    /// Parse exact `~` or a normalized `~/...` destination declaration.
+    pub fn parse(value: &std::ffi::OsStr) -> Result<Self, GripError> {
+        let value = value.to_str().ok_or_else(|| {
+            portable_path_error("non_utf8_path", value, "portable paths must be valid UTF-8")
+        })?;
+        if value == "~" {
+            return Ok(Self(value.to_owned()));
+        }
+        let suffix = value.strip_prefix("~/").ok_or_else(|| {
+            portable_path_error(
+                "invalid_home_relative_path",
+                std::ffi::OsStr::new(value),
+                "destination must be ~ or a normalized ~/ path",
+            )
+        })?;
+        if !valid_relative_components(suffix) || value.contains('$') {
+            return Err(portable_path_error(
+                "invalid_home_relative_path",
+                std::ffi::OsStr::new(value),
+                "destination must be ~ or a normalized ~/ path",
+            ));
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn resolve(&self, home: &Path) -> PathBuf {
+        match self.0.strip_prefix("~/") {
+            Some(suffix) => home.join(suffix),
+            None => home.to_path_buf(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for HomeRelativePath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(std::ffi::OsStr::new(&value)).map_err(serde::de::Error::custom)
+    }
+}
+
+fn valid_relative_components(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && value
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+fn portable_path_error(reason: &str, value: &std::ffi::OsStr, message: &str) -> GripError {
+    GripError::mapping(
+        "portable_path_parse",
+        reason,
+        vec![value.to_string_lossy().into_owned()],
+        message,
+    )
+}
+
 #[cfg(test)]
 thread_local! {
     static METADATA_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

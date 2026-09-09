@@ -13,20 +13,20 @@ fn retire_requires_path_or_all_and_rejects_ambiguous_scope() {
 
 #[test]
 fn retirement_preview_is_deterministic_and_non_mutating_for_100_runs_per_output() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::remove_file(source).unwrap();
     fs::remove_file(destination).unwrap();
     let before = support::snapshot(root.path());
     for output in ["human", "json"] {
-        let expected = support::command_with_grip_home(
+        let expected = support::project_command(
             root.path(),
-            &grip_home,
+            &metadata_dir,
             &["--output", output, "retire", "-n", "--all"],
         );
         for _ in 0..100 {
-            let actual = support::command_with_grip_home(
+            let actual = support::project_command(
                 root.path(),
-                &grip_home,
+                &metadata_dir,
                 &["--output", output, "retire", "-n", "--all"],
             );
             assert_eq!(actual.status.code(), expected.status.code());
@@ -39,15 +39,15 @@ fn retirement_preview_is_deterministic_and_non_mutating_for_100_runs_per_output(
 
 #[test]
 fn retirement_noop_force_and_output_parity_are_explicit() {
-    let (root, grip_home, _, _) = support::accepted_file_fixture();
-    let json = support::command_with_grip_home(
+    let (root, metadata_dir, _, _) = support::accepted_file_fixture();
+    let json = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "retire", "-n", "--all"],
     );
-    let human = support::command_with_grip_home(
+    let human = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["retire", "-n", "--all", "--force"],
     );
     assert_eq!(support::json(&json)["details"]["result"], "blocked");

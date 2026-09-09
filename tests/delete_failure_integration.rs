@@ -3,13 +3,13 @@ use std::fs;
 
 #[test]
 fn changed_surviving_peer_blocks_before_recovery_removal_or_state_retirement() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
     fs::write(&destination, "changed").unwrap();
     let before = support::snapshot(root.path());
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["delete", "--source", source.to_str().unwrap()],
     );
     assert!(!output.status.success());
@@ -98,7 +98,7 @@ fn deletion_result_delivery_failure_does_not_revoke_visible_payload_or_state() {
     );
     assert!(!target.exists());
     let summary =
-        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV1>(
+        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV2>(
             &home
                 .path()
                 .join("state/operations")

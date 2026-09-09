@@ -20,19 +20,14 @@ fn deletion_classifies_a_cross_device_directory_as_a_mount_boundary() {
 
 #[test]
 fn deletion_removes_only_the_authorized_unchanged_peer() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     let neighbor = destination.with_extension("neighbor");
     fs::write(&neighbor, "keep").unwrap();
     fs::remove_file(&source).unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "--source", "source"],
     );
     assert!(
         output.status.success(),
@@ -46,33 +41,23 @@ fn deletion_removes_only_the_authorized_unchanged_peer() {
 
 #[test]
 fn directory_deletion_blocks_unmanaged_descendants_then_removes_child_first() {
-    let (root, grip_home, source, destination) = support::accepted_tree_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_tree_fixture();
     fs::remove_dir_all(&source).unwrap();
     let unmanaged = destination.join("unmanaged");
     fs::write(&unmanaged, "keep").unwrap();
     let before = support::snapshot(root.path());
-    let blocked = support::command_with_grip_home(
+    let blocked = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "--source", "source"],
     );
     assert!(!blocked.status.success());
     support::assert_snapshot_unchanged(&before, root.path());
     fs::remove_file(unmanaged).unwrap();
-    let applied = support::command_with_grip_home(
+    let applied = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "--source", "source"],
     );
     assert!(
         applied.status.success(),
@@ -90,7 +75,7 @@ fn directory_deletion_blocks_unmanaged_descendants_then_removes_child_first() {
         .as_str()
         .unwrap()
         .to_owned();
-    let recovery = grip_home
+    let recovery = metadata_dir
         .join("state/operations")
         .join(operation)
         .join("recovery");

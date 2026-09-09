@@ -3,14 +3,14 @@ use std::fs;
 
 #[test]
 fn converged_deletion_retirement_changes_state_only() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
     fs::remove_file(&destination).unwrap();
-    let before_registry = fs::read(grip_home.join("config.toml")).unwrap();
-    let output = support::command_with_grip_home(
+    let before_registry = fs::read(metadata_dir.join("config.toml")).unwrap();
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &["--output=json", "retire", source.to_str().unwrap()],
+        &metadata_dir,
+        &["--output=json", "retire", "source"],
     );
     assert!(
         output.status.success(),
@@ -19,10 +19,10 @@ fn converged_deletion_retirement_changes_state_only() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        fs::read(grip_home.join("config.toml")).unwrap(),
+        fs::read(metadata_dir.join("config.toml")).unwrap(),
         before_registry
     );
-    let state = fs::read_to_string(grip_home.join("state/state.json")).unwrap();
+    let state = fs::read_to_string(metadata_dir.join("state/state.json")).unwrap();
     assert!(!state.contains("relative_path_hex"));
 }
 
@@ -70,12 +70,12 @@ fn retirement_publication_failure_preserves_payloads_and_authoritative_generatio
 
 #[test]
 fn removed_mapping_retirement_preserves_both_payloads_and_delivers_record() {
-    let (root, grip_home, source, destination) = support::untracked_file_fixture();
+    let (root, metadata_dir, source, destination) = support::untracked_file_fixture();
     let source_bytes = fs::read(&source).unwrap();
     let destination_bytes = fs::read(&destination).unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "retire", "--all"],
     );
     assert!(
@@ -90,8 +90,8 @@ fn removed_mapping_retirement_preserves_both_payloads_and_delivers_record() {
         .unwrap()
         .to_owned();
     let summary =
-        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV1>(
-            &grip_home
+        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV2>(
+            &metadata_dir
                 .join("state/operations")
                 .join(operation)
                 .join("operation.json"),
@@ -101,13 +101,12 @@ fn removed_mapping_retirement_preserves_both_payloads_and_delivers_record() {
 
 #[test]
 fn retirement_execute_reports_contention_while_preview_remains_lock_free() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::remove_file(source).unwrap();
     fs::remove_file(destination).unwrap();
-    let home = grip::home::select(Some(grip_home.clone().into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let guard = grip::state::mutation_lock::MutationLock::acquire(&home, "test-owner").unwrap();
-    let preview =
-        support::command_with_grip_home(root.path(), &grip_home, &["retire", "-n", "--all"]);
+    let preview = support::project_command(root.path(), &metadata_dir, &["retire", "-n", "--all"]);
     assert!(
         preview.status.success(),
         "stdout={} stderr={}",
@@ -115,7 +114,7 @@ fn retirement_execute_reports_contention_while_preview_remains_lock_free() {
         String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(
-        support::command_with_grip_home(root.path(), &grip_home, &["retire", "--all"])
+        support::project_command(root.path(), &metadata_dir, &["retire", "--all"])
             .status
             .code(),
         Some(13)
@@ -125,13 +124,13 @@ fn retirement_execute_reports_contention_while_preview_remains_lock_free() {
 
 #[test]
 fn differing_untracked_survivors_require_force_and_force_changes_only_state() {
-    let (root, grip_home, source, destination) = support::untracked_file_fixture();
+    let (root, metadata_dir, source, destination) = support::untracked_file_fixture();
     fs::write(&source, "changed-source").unwrap();
     let source_before = fs::read(&source).unwrap();
     let destination_before = fs::read(&destination).unwrap();
-    let blocked = support::command_with_grip_home(
+    let blocked = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "retire", "--all"],
     );
     assert_eq!(blocked.status.code(), Some(10));
@@ -139,9 +138,9 @@ fn differing_untracked_survivors_require_force_and_force_changes_only_state() {
         support::json(&blocked)["details"]["blockers"][0]["reason"],
         "force_required"
     );
-    let forced = support::command_with_grip_home(
+    let forced = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "retire", "--force", "--all"],
     );
     assert!(forced.status.success());
@@ -152,15 +151,14 @@ fn differing_untracked_survivors_require_force_and_force_changes_only_state() {
 
 #[test]
 fn newly_ignored_entry_retires_without_mutating_either_payload() {
-    let (root, grip_home, source, destination) = support::accepted_tree_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_tree_fixture();
     fs::write(source.join(".gripignore"), "nested/file\n").unwrap();
     let source_before = fs::read(source.join("nested/file")).unwrap();
     let destination_before = fs::read(destination.join("nested/file")).unwrap();
-    let ignored = source.join("nested/file");
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &["--output=json", "retire", ignored.to_str().unwrap()],
+        &metadata_dir,
+        &["--output=json", "retire", "source/nested/file"],
     );
     assert!(
         output.status.success(),

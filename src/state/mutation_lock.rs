@@ -1,7 +1,7 @@
 //! Persistent owner-aware advisory coordination for Grip writers.
 
 use crate::error::GripError;
-use crate::home::GripHome;
+use crate::project::ProjectPaths;
 use rustix::fs::{Mode, OFlags, open};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -27,8 +27,8 @@ pub struct MutationLock {
 
 impl MutationLock {
     /// Acquire the stable lock without waiting and publish current owner metadata.
-    pub fn acquire(home: &GripHome, operation: &str) -> Result<Self, GripError> {
-        let path = home.path().join(".mutation.lock");
+    pub fn acquire(home: &ProjectPaths, operation: &str) -> Result<Self, GripError> {
+        let path = crate::state::lock::project_lock_path(home, "mutation.lock")?;
         let descriptor = open(
             &path,
             OFlags::RDWR | OFlags::CREATE | OFlags::CLOEXEC | OFlags::NOFOLLOW,
@@ -79,9 +79,9 @@ impl MutationLock {
             .and_then(|_| file.write_all(&bytes))
             .and_then(|_| file.sync_all())
             .map_err(|error| GripError::from_io("could not publish mutation lock owner", error))?;
-        File::open(home.path())
+        File::open(path.parent().expect("lock path has a parent"))
             .and_then(|directory| directory.sync_all())
-            .map_err(|error| GripError::from_io("could not sync Grip home", error))?;
+            .map_err(|error| GripError::from_io("could not sync project lock directory", error))?;
         Ok(Self { file })
     }
 }
@@ -109,15 +109,18 @@ fn unix_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::home::GripHome;
+    use crate::project::ProjectPaths;
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use tempfile::tempdir;
 
-    fn home() -> (tempfile::TempDir, GripHome) {
+    fn home() -> (tempfile::TempDir, ProjectPaths) {
         let root = tempdir().unwrap();
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let home = crate::home::select(Some(root.path().as_os_str().to_owned()), None).unwrap();
+        let home = crate::project::ProjectPaths::project_metadata(
+            root.path().to_path_buf(),
+            root.path().parent().unwrap().to_path_buf(),
+        );
         (root, home)
     }
 
@@ -142,8 +145,8 @@ mod tests {
         let (_root, home) = home();
         drop(MutationLock::acquire(&home, "push").unwrap());
         let _next = MutationLock::acquire(&home, "baseline_accept").unwrap();
-        let owner: MutationLockOwner =
-            serde_json::from_slice(&fs::read(home.path().join(".mutation.lock")).unwrap()).unwrap();
+        let path = crate::state::lock::project_lock_path(&home, "mutation.lock").unwrap();
+        let owner: MutationLockOwner = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(owner.operation, "baseline_accept");
     }
 
@@ -152,7 +155,8 @@ mod tests {
         let (_root, home) = home();
         let target = home.path().join("target");
         fs::write(&target, b"").unwrap();
-        symlink(&target, home.path().join(".mutation.lock")).unwrap();
+        let path = crate::state::lock::project_lock_path(&home, "mutation.lock").unwrap();
+        symlink(&target, path).unwrap();
         assert!(matches!(
             MutationLock::acquire(&home, "push"),
             Err(GripError::CorruptState(_))
@@ -162,7 +166,7 @@ mod tests {
     #[test]
     fn acquire_overwrites_malformed_stale_metadata() {
         let (_root, home) = home();
-        let path = home.path().join(".mutation.lock");
+        let path = crate::state::lock::project_lock_path(&home, "mutation.lock").unwrap();
         fs::write(&path, b"not-json").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         let _lock = MutationLock::acquire(&home, "push").unwrap();

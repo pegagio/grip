@@ -5,21 +5,14 @@ use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn source_winner_preserves_destination_and_publishes_complete_state() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source wins").unwrap();
     fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).unwrap();
     fs::write(&destination, "destination loses").unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output",
-            "json",
-            "resolve",
-            "--source",
-            "--",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output", "json", "resolve", "--source", "--", "source"],
     );
     assert!(
         output.status.success(),
@@ -38,10 +31,10 @@ fn source_winner_preserves_destination_and_publishes_complete_state() {
         .as_str()
         .unwrap();
     let operation = value["details"]["operation_record"]["id"].as_str().unwrap();
-    assert!(recovery.ends_with("metadata-v2.json"));
+    assert!(recovery.ends_with("metadata-v3.json"));
     assert_eq!(
         fs::read_to_string(
-            grip_home
+            metadata_dir
                 .join("state/operations")
                 .join(operation)
                 .join("recovery/00000000/payload")
@@ -53,20 +46,20 @@ fn source_winner_preserves_destination_and_publishes_complete_state() {
 
 #[test]
 fn destination_winner_symmetrically_replaces_source() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source loses").unwrap();
     fs::write(&destination, "destination wins").unwrap();
     fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output",
             "json",
             "resolve",
             "--destination",
             "--",
-            source.to_str().unwrap(),
+            "source",
         ],
     );
     assert!(
@@ -129,13 +122,15 @@ fn changed_destination_or_accepted_baseline_rejects_the_stale_resolution() {
                 .unwrap()
                 .state,
             );
-            let envelope = grip::state::StateEnvelopeV3::new(
-                state.accepted.generation.unwrap_or(0) + 1,
-                &baselines,
-            );
+            let mut envelope =
+                grip::state::decode_v4(&fs::read(home.path().join("state/state.json")).unwrap())
+                    .unwrap();
+            envelope.generation = state.accepted.generation.unwrap_or(0) + 1;
+            let replacement = baselines.values().next().unwrap().clone();
+            *envelope.baselines.values_mut().next().unwrap() = replacement;
             fs::write(
                 home.path().join("state/state.json"),
-                serde_json::to_vec(&envelope).unwrap(),
+                grip::state::encode_v4(&envelope).unwrap(),
             )
             .unwrap();
         }
@@ -153,30 +148,30 @@ fn changed_destination_or_accepted_baseline_rejects_the_stale_resolution() {
 
 #[test]
 fn resolution_treats_opposing_content_and_metadata_changes_as_one_winner_state() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source content").unwrap();
     fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
 
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output=json",
             "resolve",
             "--dry-run",
             "--source",
             "--",
-            source.to_str().unwrap(),
+            "source",
         ],
     );
     assert!(preview.status.success());
     let entry = &support::json(&preview)["details"]["entries"][0];
     assert_eq!(entry["classification"], "divergent_conflict");
 
-    let applied = support::command_with_grip_home(
+    let applied = support::project_command(
         root.path(),
-        &grip_home,
-        &["resolve", "--source", "--", source.to_str().unwrap()],
+        &metadata_dir,
+        &["resolve", "--source", "--", "source"],
     );
     assert!(applied.status.success());
     assert_eq!(fs::read_to_string(&destination).unwrap(), "source content");
@@ -189,23 +184,17 @@ fn resolution_treats_opposing_content_and_metadata_changes_as_one_winner_state()
 #[test]
 fn resolution_rejects_deletions_and_pending_retirement_without_mutation() {
     for deleted_side in ["source", "destination"] {
-        let (root, grip_home, source, destination) = support::accepted_file_fixture();
+        let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
         if deleted_side == "source" {
             fs::remove_file(&source).unwrap();
         } else {
             fs::remove_file(&destination).unwrap();
         }
         let before = support::snapshot(root.path());
-        let output = support::command_with_grip_home(
+        let output = support::project_command(
             root.path(),
-            &grip_home,
-            &[
-                "--output=json",
-                "resolve",
-                "--source",
-                "--",
-                source.to_str().unwrap(),
-            ],
+            &metadata_dir,
+            &["--output=json", "resolve", "--source", "--", "source"],
         );
         assert_eq!(output.status.code(), Some(10));
         assert_eq!(support::json(&output)["details"]["result"], "blocked");
@@ -213,28 +202,28 @@ fn resolution_rejects_deletions_and_pending_retirement_without_mutation() {
     }
 
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
     let destination = root.path().join("destination-tree");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("retired"), "accepted").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(source.join(".gripignore"), "retired\n").unwrap();
     let before = support::snapshot(root.path());
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output=json",
             "resolve",
             "--source",
             "--",
-            source.join("retired").to_str().unwrap(),
+            "source-tree/retired",
         ],
     );
     assert_eq!(output.status.code(), Some(10));

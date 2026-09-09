@@ -1,24 +1,151 @@
-//! Strict envelopes for the partitioned Operation Record V1.
+//! Strict schemas for portable Operation Record V2 authority and lifecycle evidence.
 
 use crate::error::GripError;
 use crate::state::IntegrityV1;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 
-/// Immutable plan payload written once before payload mutation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OperationPlanPayloadV1 {
+pub struct PortableActionV2 {
+    pub index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<crate::state::EntryIdentityV4>,
+    pub endpoint_role: crate::state::EndpointRoleV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_path: Option<DiagnosticPathV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticPathV1 {
+    pub display: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_hex: Option<String>,
+}
+
+impl From<crate::discovery::model::SafePath> for DiagnosticPathV1 {
+    fn from(value: crate::discovery::model::SafePath) -> Self {
+        Self {
+            display: value.display,
+            raw_hex: value.raw_hex,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperationRecordPayloadV2 {
     pub operation_id: String,
     pub operation: String,
     pub plan_id: String,
-    pub plan: serde_json::Value,
+    pub actions: Vec<PortableActionV2>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperationRecordV2 {
+    pub schema_version: u8,
+    pub payload: OperationRecordPayloadV2,
+    pub integrity: IntegrityV1,
+}
+
+impl OperationRecordV2 {
+    pub fn new(payload: OperationRecordPayloadV2) -> Result<Self, GripError> {
+        validate_operation_v2(&payload)?;
+        let digest = digest_v2(&payload)?;
+        Ok(Self {
+            schema_version: 2,
+            payload,
+            integrity: IntegrityV1 {
+                algorithm: "sha256".into(),
+                digest,
+            },
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), GripError> {
+        if self.schema_version != 2 {
+            return Err(GripError::UnsupportedSchema(format!(
+                "unsupported operation record schema version {}",
+                self.schema_version
+            )));
+        }
+        if self.integrity.algorithm != "sha256"
+            || self.integrity.digest != digest_v2(&self.payload)?
+        {
+            return Err(corrupt("operation record integrity verification failed"));
+        }
+        validate_operation_v2(&self.payload)
+    }
+}
+
+pub fn encode_operation_v2(value: &OperationRecordV2) -> Result<Vec<u8>, GripError> {
+    serde_json::to_vec(value).map_err(|error| {
+        GripError::Internal(format!("could not encode Operation Record V2: {error}"))
+    })
+}
+
+pub fn decode_operation_v2(bytes: &[u8]) -> Result<OperationRecordV2, GripError> {
+    let raw: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| GripError::CorruptState(format!("invalid operation record: {error}")))?;
+    let version = raw
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| corrupt("operation record schema_version is required"))?;
+    if version != 2 {
+        return Err(GripError::UnsupportedSchema(format!(
+            "unsupported operation record schema version {version}"
+        )));
+    }
+    let value: OperationRecordV2 = serde_json::from_value(raw).map_err(|error| {
+        GripError::CorruptState(format!("invalid Operation Record V2: {error}"))
+    })?;
+    value.validate()?;
+    Ok(value)
+}
+
+fn validate_operation_v2(payload: &OperationRecordPayloadV2) -> Result<(), GripError> {
+    validate_common(
+        &payload.operation_id,
+        Some(&payload.operation),
+        &payload.plan_id,
+    )?;
+    for (index, action) in payload.actions.iter().enumerate() {
+        if action.index != index {
+            return Err(corrupt(
+                "Operation Record V2 actions must be dense and ordered",
+            ));
+        }
+        if let Some(identity) = &action.identity {
+            crate::registry::ProjectDescriptorV2::new(vec![identity.mapping.clone()])
+                .map_err(|_| corrupt("operation action portable identity is invalid"))?;
+            crate::state::decode_v4_identity_path(&identity.relative_path_hex)?;
+        }
+    }
+    Ok(())
+}
+
+fn digest_v2(payload: &OperationRecordPayloadV2) -> Result<String, GripError> {
+    #[derive(Serialize)]
+    struct Input<'a> {
+        schema_version: u8,
+        payload: &'a OperationRecordPayloadV2,
+    }
+    let bytes = serde_json::to_vec(&Input {
+        schema_version: 2,
+        payload,
+    })
+    .map_err(|error| {
+        GripError::Internal(format!("could not encode operation integrity: {error}"))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 /// Bounded operation-level state changed at terminal milestones.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OperationSummaryPayloadV1 {
+pub struct OperationSummaryPayloadV2 {
     pub operation_id: String,
     pub operation: String,
     pub state: String,
@@ -33,12 +160,12 @@ pub struct OperationSummaryPayloadV1 {
 /// Latest bounded evidence for one started action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ActionCheckpointPayloadV1 {
+pub struct ActionCheckpointPayloadV2 {
     pub operation_id: String,
     pub plan_id: String,
     pub action_index: usize,
     pub status: String,
-    pub milestones: ActionCheckpointEvidenceV1,
+    pub milestones: ActionCheckpointEvidenceV2,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
 }
@@ -46,7 +173,7 @@ pub struct ActionCheckpointPayloadV1 {
 /// Strict last-known evidence for one started action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ActionCheckpointEvidenceV1 {
+pub struct ActionCheckpointEvidenceV2 {
     pub revalidation: String,
     pub recovery: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,17 +184,15 @@ pub struct ActionCheckpointEvidenceV1 {
     pub durability_confirmed: bool,
 }
 
-/// Integrity-protected immutable plan envelope.
-pub type OperationPlanEnvelopeV1 = EnvelopeV1<OperationPlanPayloadV1>;
 /// Integrity-protected bounded summary envelope.
-pub type OperationSummaryEnvelopeV1 = EnvelopeV1<OperationSummaryPayloadV1>;
+pub type OperationSummaryEnvelopeV2 = LifecycleEnvelopeV2<OperationSummaryPayloadV2>;
 /// Integrity-protected bounded action checkpoint envelope.
-pub type ActionCheckpointEnvelopeV1 = EnvelopeV1<ActionCheckpointPayloadV1>;
+pub type ActionCheckpointEnvelopeV2 = LifecycleEnvelopeV2<ActionCheckpointPayloadV2>;
 
 /// Common strict envelope used by each partitioned component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EnvelopeV1<T> {
+pub struct LifecycleEnvelopeV2<T> {
     pub schema_version: u8,
     pub payload: T,
     pub integrity: IntegrityV1,
@@ -79,16 +204,16 @@ struct IntegrityInput<'a, T> {
     payload: &'a T,
 }
 
-impl<T> EnvelopeV1<T>
+impl<T> LifecycleEnvelopeV2<T>
 where
     T: Clone + Serialize + DeserializeOwned + ValidatePayload,
 {
-    /// Construct a V1 envelope with canonical SHA-256 integrity.
+    /// Construct a V2 envelope with canonical SHA-256 integrity.
     pub fn new(payload: T) -> Result<Self, GripError> {
         payload.validate_payload()?;
         let digest = digest(&payload)?;
         Ok(Self {
-            schema_version: 1,
+            schema_version: 2,
             payload,
             integrity: IntegrityV1 {
                 algorithm: "sha256".into(),
@@ -99,7 +224,7 @@ where
 
     /// Validate schema and canonical integrity.
     pub fn validate(&self) -> Result<(), GripError> {
-        if self.schema_version != 1 {
+        if self.schema_version != 2 {
             return Err(GripError::UnsupportedSchema(format!(
                 "unsupported operation record schema version {}",
                 self.schema_version
@@ -116,17 +241,17 @@ where
 }
 
 /// Encode one partitioned record component deterministically.
-pub fn encode<T: Serialize>(value: &EnvelopeV1<T>) -> Result<Vec<u8>, GripError> {
+pub fn encode<T: Serialize>(value: &LifecycleEnvelopeV2<T>) -> Result<Vec<u8>, GripError> {
     serde_json::to_vec(value)
         .map_err(|error| GripError::Internal(format!("could not encode operation record: {error}")))
 }
 
 /// Strictly decode and validate one partitioned record component.
-pub fn decode<T>(bytes: &[u8]) -> Result<EnvelopeV1<T>, GripError>
+pub fn decode<T>(bytes: &[u8]) -> Result<LifecycleEnvelopeV2<T>, GripError>
 where
     T: Clone + Serialize + DeserializeOwned + ValidatePayload,
 {
-    let value: EnvelopeV1<T> = serde_json::from_slice(bytes)
+    let value: LifecycleEnvelopeV2<T> = serde_json::from_slice(bytes)
         .map_err(|error| GripError::CorruptState(format!("invalid operation record: {error}")))?;
     value.validate()?;
     Ok(value)
@@ -137,149 +262,10 @@ pub trait ValidatePayload {
     fn validate_payload(&self) -> Result<(), GripError>;
 }
 
-impl ValidatePayload for OperationPlanPayloadV1 {
+impl ValidatePayload for OperationSummaryPayloadV2 {
     fn validate_payload(&self) -> Result<(), GripError> {
         validate_common(&self.operation_id, Some(&self.operation), &self.plan_id)?;
-        if !self.plan.is_object() {
-            return Err(corrupt("operation plan must be an object"));
-        }
-        if self.plan.get("plan_id").and_then(serde_json::Value::as_str)
-            != Some(self.plan_id.as_str())
-        {
-            return Err(corrupt(
-                "operation plan identity does not match its payload",
-            ));
-        }
-        let embedded_operation = self
-            .plan
-            .get("operation")
-            .and_then(serde_json::Value::as_str);
-        if embedded_operation.is_some_and(|value| value != self.operation)
-            || embedded_operation.is_none() && !matches!(self.operation.as_str(), "push" | "pull")
-        {
-            return Err(corrupt("operation plan command does not match its payload"));
-        }
-        let direction = self
-            .plan
-            .get("direction")
-            .and_then(serde_json::Value::as_str);
-        if matches!(self.operation.as_str(), "push" | "pull")
-            && direction != Some(self.operation.as_str())
-            || matches!(self.operation.as_str(), "sync" | "resolve") && direction.is_some()
-            || matches!(
-                self.operation.as_str(),
-                "delete" | "retire" | "recovery_restore" | "recovery_remove"
-            ) && direction.is_some()
-        {
-            return Err(corrupt("operation plan direction is invalid"));
-        }
-        let winner = self.plan.get("winner").and_then(serde_json::Value::as_str);
-        if self.operation == "resolve" && !matches!(winner, Some("source" | "destination"))
-            || self.operation != "resolve" && winner.is_some()
-        {
-            return Err(corrupt("operation plan winner is invalid"));
-        }
-        let actions = self
-            .plan
-            .get("actions")
-            .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| corrupt("operation plan actions must be an array"))?;
-        if let Some(findings) = self.plan.get("compatibility_findings") {
-            let findings: Vec<crate::metadata::model::CompatibilityFinding> =
-                serde_json::from_value(findings.clone())
-                    .map_err(|_| corrupt("operation compatibility findings are invalid"))?;
-            for finding in findings {
-                finding
-                    .validate()
-                    .map_err(|_| corrupt("operation compatibility finding is invalid"))?;
-            }
-        }
-        for (expected, action) in actions.iter().enumerate() {
-            if action.get("index").and_then(serde_json::Value::as_u64) != Some(expected as u64) {
-                return Err(corrupt(
-                    "operation plan actions must be dense and canonically ordered",
-                ));
-            }
-            if embedded_operation.is_some()
-                && matches!(
-                    self.operation.as_str(),
-                    "push" | "pull" | "sync" | "resolve"
-                )
-            {
-                let action_direction = action.get("direction").and_then(serde_json::Value::as_str);
-                let direction_valid = match self.operation.as_str() {
-                    "push" => action_direction == Some("push"),
-                    "pull" => action_direction == Some("pull"),
-                    "sync" => matches!(action_direction, Some("push" | "pull")),
-                    "resolve" if winner == Some("source") => action_direction == Some("push"),
-                    "resolve" if winner == Some("destination") => action_direction == Some("pull"),
-                    _ => false,
-                };
-                if !direction_valid {
-                    return Err(corrupt("operation action direction is invalid"));
-                }
-            }
-            validate_metadata_action_extensions(action)?;
-        }
-        Ok(())
-    }
-}
-
-fn validate_metadata_action_extensions(action: &serde_json::Value) -> Result<(), GripError> {
-    if let Some(metadata) = action.get("expected_metadata") {
-        let state: crate::metadata::model::MetadataState = serde_json::from_value(metadata.clone())
-            .map_err(|_| corrupt("operation action expected metadata is invalid"))?;
-        let node_kind = action
-            .get("expected_node_kind")
-            .cloned()
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|_| corrupt("operation action expected node kind is invalid"))?
-            .unwrap_or(crate::discovery::model::NodeKind::File);
-        state
-            .validate(node_kind)
-            .map_err(|_| corrupt("operation action expected metadata is invalid"))?;
-    }
-    if let Some(flags) = action.get("flag_clear_steps") {
-        let flags = flags
-            .as_array()
-            .ok_or_else(|| corrupt("metadata flag-clear steps must be an array"))?;
-        if flags
-            .iter()
-            .any(|flag| !matches!(flag.as_str(), Some("immutable" | "append")))
-        {
-            return Err(corrupt("metadata flag-clear step is unsupported"));
-        }
-    }
-    if let Some(recovery) = action.get("recovery")
-        && recovery
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-            != Some(2)
-    {
-        return Err(corrupt(
-            "metadata recovery reference must use schema version 2",
-        ));
-    }
-    if let Some(verification) = action.get("verification")
-        && (verification
-            .get("full_state")
-            .and_then(serde_json::Value::as_str)
-            != Some("required")
-            || verification
-                .get("durability")
-                .and_then(serde_json::Value::as_str)
-                != Some("required"))
-    {
-        return Err(corrupt("metadata verification details are incomplete"));
-    }
-    Ok(())
-}
-
-impl ValidatePayload for OperationSummaryPayloadV1 {
-    fn validate_payload(&self) -> Result<(), GripError> {
-        validate_common(&self.operation_id, Some(&self.operation), &self.plan_id)?;
-        if self.plan_ref != "plan.json"
+        if self.plan_ref != "record.json"
             || !matches!(self.state.as_str(), "executing" | "completed" | "failed")
             || !matches!(
                 self.result_delivery.as_str(),
@@ -295,7 +281,7 @@ impl ValidatePayload for OperationSummaryPayloadV1 {
     }
 }
 
-impl ValidatePayload for ActionCheckpointPayloadV1 {
+impl ValidatePayload for ActionCheckpointPayloadV2 {
     fn validate_payload(&self) -> Result<(), GripError> {
         validate_common(&self.operation_id, None, &self.plan_id)?;
         if !matches!(self.status.as_str(), "in_progress" | "completed" | "failed")
@@ -309,7 +295,7 @@ impl ValidatePayload for ActionCheckpointPayloadV1 {
     }
 }
 
-impl ActionCheckpointEvidenceV1 {
+impl ActionCheckpointEvidenceV2 {
     fn validate(&self) -> Result<(), GripError> {
         if !matches!(
             self.revalidation.as_str(),
@@ -346,8 +332,8 @@ impl ActionCheckpointEvidenceV1 {
 
 /// Validate a monotonic operation-summary transition.
 pub fn validate_summary_transition(
-    previous: &OperationSummaryPayloadV1,
-    next: &OperationSummaryPayloadV1,
+    previous: &OperationSummaryPayloadV2,
+    next: &OperationSummaryPayloadV2,
 ) -> Result<(), GripError> {
     if previous.operation_id != next.operation_id || previous.plan_id != next.plan_id {
         return Err(corrupt(
@@ -365,8 +351,8 @@ pub fn validate_summary_transition(
 
 /// Validate a monotonic checkpoint transition for one action.
 pub fn validate_action_transition(
-    previous: &ActionCheckpointPayloadV1,
-    next: &ActionCheckpointPayloadV1,
+    previous: &ActionCheckpointPayloadV2,
+    next: &ActionCheckpointPayloadV2,
 ) -> Result<(), GripError> {
     if previous.operation_id != next.operation_id
         || previous.plan_id != next.plan_id
@@ -421,7 +407,7 @@ fn corrupt(message: &str) -> GripError {
 
 fn digest<T: Serialize>(payload: &T) -> Result<String, GripError> {
     let bytes = serde_json::to_vec(&IntegrityInput {
-        schema_version: 1,
+        schema_version: 2,
         payload,
     })
     .map_err(|error| GripError::Internal(format!("could not encode integrity input: {error}")))?;
@@ -430,7 +416,7 @@ fn digest<T: Serialize>(payload: &T) -> Result<String, GripError> {
 
 /// Validate one action checkpoint against immutable operation identity and bounds.
 pub fn validate_checkpoint_binding(
-    checkpoint: &ActionCheckpointPayloadV1,
+    checkpoint: &ActionCheckpointPayloadV2,
     operation_id: &str,
     plan_id: &str,
     action_count: usize,
@@ -450,21 +436,21 @@ pub fn validate_checkpoint_binding(
 mod tests {
     use super::*;
 
-    fn summary() -> OperationSummaryPayloadV1 {
-        OperationSummaryPayloadV1 {
+    fn summary() -> OperationSummaryPayloadV2 {
+        OperationSummaryPayloadV2 {
             operation_id: "operation-1".into(),
             operation: "push".into(),
             state: "executing".into(),
             plan_id: "a".repeat(64),
-            plan_ref: "plan.json".into(),
+            plan_ref: "record.json".into(),
             baseline: serde_json::json!({"outcome":"not_attempted"}),
             result_delivery: "not_attempted".into(),
             failure: None,
         }
     }
 
-    fn evidence() -> ActionCheckpointEvidenceV1 {
-        ActionCheckpointEvidenceV1 {
+    fn evidence() -> ActionCheckpointEvidenceV2 {
+        ActionCheckpointEvidenceV2 {
             revalidation: "passed".into(),
             recovery: "not_required".into(),
             recovery_ref: None,
@@ -477,32 +463,32 @@ mod tests {
 
     #[test]
     fn encode_expected_round_trip_when_summary_is_valid() {
-        let envelope = OperationSummaryEnvelopeV1::new(summary()).unwrap();
+        let envelope = OperationSummaryEnvelopeV2::new(summary()).unwrap();
         let bytes = encode(&envelope).unwrap();
         assert_eq!(
-            decode::<OperationSummaryPayloadV1>(&bytes).unwrap(),
+            decode::<OperationSummaryPayloadV2>(&bytes).unwrap(),
             envelope
         );
     }
 
     #[test]
     fn decode_expected_failure_when_unknown_field_is_present() {
-        let envelope = OperationSummaryEnvelopeV1::new(summary()).unwrap();
+        let envelope = OperationSummaryEnvelopeV2::new(summary()).unwrap();
         let mut value = serde_json::to_value(envelope).unwrap();
         value["payload"]["unknown"] = true.into();
-        assert!(decode::<OperationSummaryPayloadV1>(&serde_json::to_vec(&value).unwrap()).is_err());
+        assert!(decode::<OperationSummaryPayloadV2>(&serde_json::to_vec(&value).unwrap()).is_err());
     }
 
     #[test]
     fn validate_expected_failure_when_payload_changes_after_digest() {
-        let mut envelope = OperationSummaryEnvelopeV1::new(summary()).unwrap();
+        let mut envelope = OperationSummaryEnvelopeV2::new(summary()).unwrap();
         envelope.payload.state = "completed".into();
         assert!(envelope.validate().is_err());
     }
 
     #[test]
     fn validate_checkpoint_binding_expected_failure_when_index_is_outside_plan() {
-        let checkpoint = ActionCheckpointPayloadV1 {
+        let checkpoint = ActionCheckpointPayloadV2 {
             operation_id: "operation-1".into(),
             plan_id: "a".repeat(64),
             action_index: 2,
@@ -526,83 +512,28 @@ mod tests {
     #[test]
     fn decode_rejects_duplicate_fields() {
         let bytes = br#"{"schema_version":1,"schema_version":1,"payload":{},"integrity":{"algorithm":"sha256","digest":"x"}}"#;
-        assert!(decode::<OperationSummaryPayloadV1>(bytes).is_err());
-    }
-
-    #[test]
-    fn validate_plan_rejects_non_dense_action_order() {
-        let plan_id = "a".repeat(64);
-        let payload = OperationPlanPayloadV1 {
-            operation_id: "operation-1".into(),
-            operation: "push".into(),
-            plan_id: plan_id.clone(),
-            plan: serde_json::json!({"direction":"push","plan_id":plan_id,"actions":[{"index":1}]}),
-        };
-        assert!(OperationPlanEnvelopeV1::new(payload).is_err());
-    }
-
-    #[test]
-    fn validate_plan_rejects_winner_direction_mismatch() {
-        let plan_id = "a".repeat(64);
-        let payload = OperationPlanPayloadV1 {
-            operation_id: "resolve-1".into(),
-            operation: "resolve".into(),
-            plan_id: plan_id.clone(),
-            plan: serde_json::json!({
-                "operation":"resolve",
-                "winner":"source",
-                "plan_id":plan_id,
-                "actions":[{"index":0,"direction":"pull"}]
-            }),
-        };
-        assert!(OperationPlanEnvelopeV1::new(payload).is_err());
-    }
-
-    #[test]
-    fn validate_plan_accepts_each_feature_eight_operation() {
-        for operation in ["delete", "retire", "recovery_restore", "recovery_remove"] {
-            let plan_id = "a".repeat(64);
-            let payload = OperationPlanPayloadV1 {
-                operation_id: format!("{operation}-1"),
-                operation: operation.into(),
-                plan_id: plan_id.clone(),
-                plan: serde_json::json!({
-                    "operation": operation,
-                    "plan_id": plan_id,
-                    "actions": [{"index": 0}]
-                }),
-            };
-            assert!(OperationPlanEnvelopeV1::new(payload).is_ok(), "{operation}");
-        }
+        assert!(decode::<OperationSummaryPayloadV2>(bytes).is_err());
     }
 
     #[test]
     fn validate_checkpoint_rejects_escaping_recovery_reference() {
-        let payload = ActionCheckpointPayloadV1 {
+        let payload = ActionCheckpointPayloadV2 {
             operation_id: "operation-1".into(),
             plan_id: "a".repeat(64),
             action_index: 0,
             status: "in_progress".into(),
-            milestones: ActionCheckpointEvidenceV1 {
+            milestones: ActionCheckpointEvidenceV2 {
                 recovery_ref: Some("../outside".into()),
                 ..evidence()
             },
             failure: None,
         };
-        assert!(ActionCheckpointEnvelopeV1::new(payload).is_err());
+        assert!(ActionCheckpointEnvelopeV2::new(payload).is_err());
     }
 
     #[test]
-    fn encode_round_trips_plan_and_action_envelopes() {
-        let plan_id = "a".repeat(64);
-        let plan = OperationPlanEnvelopeV1::new(OperationPlanPayloadV1 {
-            operation_id: "operation-1".into(),
-            operation: "push".into(),
-            plan_id: plan_id.clone(),
-            plan: serde_json::json!({"direction":"push","plan_id":plan_id,"actions":[{"index":0}]}),
-        })
-        .unwrap();
-        let action = ActionCheckpointEnvelopeV1::new(ActionCheckpointPayloadV1 {
+    fn encode_round_trips_action_envelope() {
+        let action = ActionCheckpointEnvelopeV2::new(ActionCheckpointPayloadV2 {
             operation_id: "operation-1".into(),
             plan_id: "a".repeat(64),
             action_index: 0,
@@ -612,11 +543,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            decode::<OperationPlanPayloadV1>(&encode(&plan).unwrap()).unwrap(),
-            plan
-        );
-        assert_eq!(
-            decode::<ActionCheckpointPayloadV1>(&encode(&action).unwrap()).unwrap(),
+            decode::<ActionCheckpointPayloadV2>(&encode(&action).unwrap()).unwrap(),
             action
         );
     }

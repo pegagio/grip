@@ -1,132 +1,75 @@
-use grip::mapping::{Mapping, MappingKind, validate_ownership};
-use std::path::PathBuf;
+mod support;
 
-fn mapping(kind: MappingKind, source: &str, destination: &str) -> Mapping {
-    Mapping::new(kind, PathBuf::from(source), PathBuf::from(destination))
+use std::fs;
+use support::project::ProjectFixture;
+
+fn add(fixture: &ProjectFixture, kind: &str, source: &str, destination: &str) -> bool {
+    fixture
+        .command(&["mapping", "add", kind, source, destination])
+        .status
+        .success()
 }
 
 #[test]
-fn rejects_equal_nested_overlapping_and_cross_side_ownership() {
-    let cases = [
-        vec![mapping(MappingKind::File, "/source/a", "/source/a")],
-        vec![mapping(MappingKind::Tree, "/source/a", "/source/a/child")],
-        vec![
-            mapping(MappingKind::Tree, "/source/a", "/destination/a"),
-            mapping(MappingKind::File, "/source/a/child", "/destination/b"),
-        ],
-        vec![
-            mapping(MappingKind::Tree, "/source/a", "/destination/a"),
-            mapping(MappingKind::Tree, "/destination", "/backup"),
-        ],
-    ];
-    for mappings in cases {
-        assert!(!validate_ownership(&mappings).is_empty(), "{mappings:?}");
+fn complete_registry_rejects_duplicate_nested_and_cross_recursive_ownership() {
+    for (first, second) in [
+        (("tree", "a", "~/x"), ("tree", "a/b", "~/y")),
+        (("tree", "a", "~/x"), ("tree", "b", "~/x/y")),
+        (("tree", "a", "~/x"), ("tree", "a", "~/y")),
+        (("tree", "a", "~/x"), ("tree", "a", "~/x")),
+    ] {
+        let fixture = ProjectFixture::initialized();
+        fs::create_dir_all(fixture.project_root.join("a")).unwrap();
+        fs::create_dir_all(fixture.project_root.join("a/b")).unwrap();
+        fs::create_dir_all(fixture.project_root.join("b")).unwrap();
+        assert!(add(&fixture, first.0, first.1, first.2));
+        let before = fs::read(fixture.descriptor_path()).unwrap();
+        assert!(!add(&fixture, second.0, second.1, second.2));
+        assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
     }
 }
 
 #[test]
-fn permits_disjoint_component_boundary_namespaces() {
-    let mappings = vec![
-        mapping(MappingKind::Tree, "/source/a", "/destination/a"),
-        mapping(MappingKind::Tree, "/source/ab", "/destination/ab"),
-    ];
-    assert!(validate_ownership(&mappings).is_empty());
+fn cross_recursive_ownership_is_rejected_when_home_and_project_spaces_overlap() {
+    let fixture = ProjectFixture::initialized();
+    fs::create_dir(fixture.project_root.join("a")).unwrap();
+    fs::create_dir(fixture.project_root.join("b")).unwrap();
+    let first = fixture
+        .command_builder(&fixture.project_root)
+        .env("HOME", &fixture.project_root)
+        .args(["mapping", "add", "tree", "a", "~/b"])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let before = fs::read(fixture.descriptor_path()).unwrap();
+    let second = fixture
+        .command_builder(&fixture.project_root)
+        .env("HOME", &fixture.project_root)
+        .args(["mapping", "add", "tree", "b", "~/a"])
+        .output()
+        .unwrap();
+    assert!(!second.status.success());
+    assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
 }
 
 #[test]
-fn conflict_order_is_deterministic() {
-    let mappings = vec![
-        mapping(MappingKind::Tree, "/source/a", "/destination/a"),
-        mapping(MappingKind::File, "/source/a/y", "/destination/a/y"),
-        mapping(MappingKind::File, "/source/a/x", "/destination/a/x"),
-    ];
-    let first = validate_ownership(&mappings);
-    let second = validate_ownership(&mappings);
-    assert_eq!(first, second);
-    assert!(first.windows(2).all(|pair| pair[0] <= pair[1]));
+fn equal_resolved_endpoints_are_rejected() {
+    let fixture = ProjectFixture::initialized();
+    fs::create_dir(fixture.project_root.join("a")).unwrap();
+    let output = fixture
+        .command_builder(&fixture.project_root)
+        .env("HOME", &fixture.project_root)
+        .args(["mapping", "add", "tree", "a", "~/a"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
 }
 
 #[test]
-fn rejection_matrix_covers_duplicate_source_destination_and_cross_relations() {
-    let cases = [
-        (
-            vec![
-                mapping(MappingKind::File, "/source/a", "/destination/a"),
-                mapping(MappingKind::File, "/source/a", "/destination/a"),
-            ],
-            "duplicate_tuple",
-        ),
-        (
-            vec![
-                mapping(MappingKind::File, "/source/a", "/destination/a"),
-                mapping(MappingKind::File, "/source/a", "/destination/b"),
-            ],
-            "duplicate_source",
-        ),
-        (
-            vec![
-                mapping(MappingKind::Tree, "/source/a", "/destination/a"),
-                mapping(MappingKind::File, "/source/b", "/destination/a/child"),
-            ],
-            "destination_overlap",
-        ),
-        (
-            vec![
-                mapping(MappingKind::File, "/source/a", "/destination/a"),
-                mapping(MappingKind::Tree, "/destination", "/backup"),
-            ],
-            "cross_mapping_recursion",
-        ),
-    ];
-    for (mappings, expected) in cases {
-        assert!(
-            validate_ownership(&mappings)
-                .iter()
-                .any(|conflict| conflict.reason == expected),
-            "missing {expected} in {mappings:?}"
-        );
-    }
-}
-
-#[test]
-fn containment_matrix_rejects_both_operand_orders_and_mapping_kind_combinations() {
-    for nested_kind in [MappingKind::File, MappingKind::Tree] {
-        let source_tree = mapping(MappingKind::Tree, "/source/root", "/destination/a");
-        let nested_source = mapping(nested_kind, "/source/root/child", "/destination/b");
-        let destination_tree = mapping(MappingKind::Tree, "/source/a", "/destination/root");
-        let nested_destination = mapping(nested_kind, "/source/b", "/destination/root/child");
-        for mappings in [
-            vec![source_tree.clone(), nested_source.clone()],
-            vec![nested_source.clone(), source_tree.clone()],
-        ] {
-            assert!(
-                validate_ownership(&mappings)
-                    .iter()
-                    .any(|conflict| conflict.reason == "source_overlap")
-            );
-        }
-        for mappings in [
-            vec![destination_tree.clone(), nested_destination.clone()],
-            vec![nested_destination.clone(), destination_tree.clone()],
-        ] {
-            assert!(
-                validate_ownership(&mappings)
-                    .iter()
-                    .any(|conflict| conflict.reason == "destination_overlap")
-            );
-        }
-    }
-}
-
-#[test]
-fn cross_mapping_recursion_is_rejected_in_both_operand_orders() {
-    let first = mapping(MappingKind::Tree, "/source/root", "/destination/root");
-    let second = mapping(MappingKind::Tree, "/destination/root/child", "/backup/root");
-    for mappings in [vec![first.clone(), second.clone()], vec![second, first]] {
-        assert!(
-            validate_ownership(&mappings)
-                .iter()
-                .any(|conflict| conflict.reason == "cross_mapping_recursion")
-        );
-    }
+fn component_boundary_siblings_are_disjoint() {
+    let fixture = ProjectFixture::initialized();
+    fs::create_dir(fixture.project_root.join("a")).unwrap();
+    fs::create_dir(fixture.project_root.join("ab")).unwrap();
+    assert!(add(&fixture, "tree", "a", "~/x"));
+    assert!(add(&fixture, "tree", "ab", "~/xy"));
 }

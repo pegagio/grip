@@ -211,9 +211,9 @@ fn complete_metadata_application_reproduces_exact_supported_state() {
 fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() {
     let fixture = support::MetadataFixture::file(b"same-content");
     support::copy_complete_metadata(&fixture.source, &fixture.destination, NodeKind::File);
-    let accepted = support::command_with_grip_home(
+    let accepted = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["baseline", "accept"],
     );
     assert!(accepted.status.success());
@@ -229,9 +229,9 @@ fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() 
         grip::observation::fingerprint::inspect_complete(&fixture.destination, NodeKind::File)
             .unwrap()
             .state;
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output=json", "pull", "--dry-run"],
     );
     assert!(preview.status.success());
@@ -239,9 +239,9 @@ fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() 
         support::json(&preview)["details"]["actions"][0]["kind"],
         "apply_metadata"
     );
-    let pull = support::command_with_grip_home(
+    let pull = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output=json", "pull"],
     );
     assert!(
@@ -255,9 +255,9 @@ fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() 
             .state,
         destination_before
     );
-    let status = support::command_with_grip_home(
+    let status = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output=json", "status"],
     );
     assert_eq!(
@@ -271,9 +271,9 @@ fn directory_metadata_pull_runs_after_child_transfer_and_preserves_neighbors() {
     let fixture = support::MetadataFixture::tree();
     support::copy_tree_entry_metadata(&fixture.source, &fixture.destination);
     support::copy_complete_metadata(&fixture.source, &fixture.destination, NodeKind::Directory);
-    let accepted = support::command_with_grip_home(
+    let accepted = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["baseline", "accept"],
     );
     assert!(accepted.status.success());
@@ -284,9 +284,9 @@ fn directory_metadata_pull_runs_after_child_transfer_and_preserves_neighbors() {
     std::fs::write(destination_directory.join("file"), b"destination child").unwrap();
     let neighbor = fixture.source.join("empty");
     let neighbor_before = support::snapshot(&neighbor);
-    let pull = support::command_with_grip_home(
+    let pull = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output=json", "pull"],
     );
     assert!(
@@ -316,7 +316,7 @@ fn directory_metadata_pull_runs_after_child_transfer_and_preserves_neighbors() {
 }
 
 #[test]
-fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v3() {
+fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v4() {
     let fixture = support::MetadataFixture::tree();
     for relative in ["nested/file", "nested", "empty", ""] {
         let source = fixture.source.join(relative);
@@ -335,9 +335,9 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v3()
         )
         .unwrap();
     }
-    let accepted = support::command_with_grip_home(
+    let accepted = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["baseline", "accept"],
     );
     assert!(
@@ -347,9 +347,9 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v3()
     );
     support::set_fixture_mode(&fixture.source.join("nested"), 0o711);
     support::set_fixture_modified_time(&fixture.source.join("nested"), 1_234_567_890, 999);
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output", "json", "push", "--dry-run"],
     );
     assert!(preview.status.success());
@@ -357,7 +357,7 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v3()
         support::json(&preview)["details"]["actions"][0]["kind"],
         "finalize_directory_metadata"
     );
-    let push = support::command_with_grip_home(fixture.root.path(), &fixture.grip_home, &["push"]);
+    let push = support::project_command(fixture.root.path(), &fixture.metadata_dir, &["push"]);
     assert!(
         push.status.success(),
         "{}",
@@ -374,25 +374,32 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v3()
     )
     .unwrap();
     assert_eq!(source.state, destination.state);
-    let state = std::fs::read(fixture.grip_home.join("state/state.json")).unwrap();
+    let state = grip::state::decode_v4(
+        &std::fs::read(fixture.metadata_dir.join("state/state.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&state).unwrap()["schema_version"],
-        3
+        state.binding.project_root,
+        std::fs::canonicalize(fixture.root.path())
+            .unwrap()
+            .display()
+            .to_string()
     );
+    assert!(!state.baselines.is_empty());
 }
 
 #[test]
-fn file_addition_applies_complete_metadata_before_state_v3_publication() {
+fn file_addition_applies_complete_metadata_before_state_v4_publication() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     std::fs::write(&source, b"payload").unwrap();
     support::set_fixture_mode(&source, 0o751);
     support::set_fixture_modified_time(&source, 1_600_000_001, 456);
     support::set_fixture_xattr(&source, "com.apple.TextEncoding", b"utf-8");
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
-    let push = support::command_with_grip_home(root.path(), &grip_home, &["push"]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    let push = support::project_command(root.path(), &metadata_dir, &["push"]);
     assert!(
         push.status.success(),
         "{}",
@@ -403,23 +410,29 @@ fn file_addition_applies_complete_metadata_before_state_v3_publication() {
     let destination_state =
         grip::observation::fingerprint::inspect_complete(&destination, NodeKind::File).unwrap();
     assert_eq!(source_state.state, destination_state.state);
-    let state = std::fs::read(grip_home.join("state/state.json")).unwrap();
+    let state =
+        grip::state::decode_v4(&std::fs::read(metadata_dir.join("state/state.json")).unwrap())
+            .unwrap();
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&state).unwrap()["schema_version"],
-        3
+        state.binding.project_root,
+        std::fs::canonicalize(root.path())
+            .unwrap()
+            .display()
+            .to_string()
     );
+    assert_eq!(state.baselines.len(), 1);
 }
 
 #[test]
 fn full_replacement_transfers_content_and_metadata_as_one_complete_entry() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     std::fs::write(&source, b"accepted").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
@@ -431,7 +444,7 @@ fn full_replacement_transfers_content_and_metadata_as_one_complete_entry() {
     let expected = grip::observation::fingerprint::inspect_complete(&source, NodeKind::File)
         .unwrap()
         .state;
-    let push = support::command_with_grip_home(root.path(), &grip_home, &["push"]);
+    let push = support::project_command(root.path(), &metadata_dir, &["push"]);
     assert!(
         push.status.success(),
         "{}",
@@ -448,7 +461,7 @@ fn full_replacement_transfers_content_and_metadata_as_one_complete_entry() {
 #[test]
 fn tree_addition_finalizes_directories_deepest_first_after_child_creation() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     std::fs::create_dir_all(source.join("nested/deep")).unwrap();
@@ -456,10 +469,10 @@ fn tree_addition_finalizes_directories_deepest_first_after_child_creation() {
     support::set_fixture_mode(&source, 0o751);
     support::set_fixture_mode(&source.join("nested"), 0o711);
     support::set_fixture_mode(&source.join("nested/deep"), 0o700);
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
-    let preview = support::command_with_grip_home(
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    let preview = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "push", "--dry-run"],
     );
     assert!(
@@ -480,7 +493,7 @@ fn tree_addition_finalizes_directories_deepest_first_after_child_creation() {
             .unwrap()
             .ends_with("nested/deep")
     );
-    let push = support::command_with_grip_home(root.path(), &grip_home, &["push"]);
+    let push = support::project_command(root.path(), &metadata_dir, &["push"]);
     assert!(
         push.status.success(),
         "{}",

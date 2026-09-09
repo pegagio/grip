@@ -14,13 +14,19 @@ fn pull_recovery_metadata_binds_verified_prior_source_to_action() {
         .join("state/operations")
         .join(&success.operation_id)
         .join("recovery/00000000");
-    let metadata: grip::mutation::recovery::RecoveryMetadataV1 =
-        serde_json::from_slice(&fs::read(directory.join("metadata.json")).unwrap()).unwrap();
-    assert_eq!(metadata.operation_id, success.operation_id);
-    assert_eq!(metadata.action_index, 0);
-    assert_eq!(metadata.prior_state, expected_prior);
-    assert!(metadata.payload_present);
-    assert!(metadata.verified);
+    let manifest = grip::recovery::model::decode_manifest_v2(
+        &fs::read(directory.join("manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        manifest.payload.origin_operation.as_deref(),
+        Some(success.operation_id.as_str())
+    );
+    assert_eq!(
+        manifest.payload.prior_evidence,
+        serde_json::to_value(expected_prior).unwrap()
+    );
+    assert_eq!(manifest.payload.private_ref, "payload");
     assert_eq!(
         fs::read_to_string(directory.join("payload")).unwrap(),
         "accepted"

@@ -4,17 +4,17 @@ use std::fs;
 
 #[test]
 fn sync_parses_execute_selectors_and_preview_aliases() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
 
     for preview in [["sync", "-n"], ["sync", "--dry-run"]] {
-        let output = support::command_with_grip_home(root.path(), &grip_home, &preview);
+        let output = support::project_command(root.path(), &metadata_dir, &preview);
         assert!(output.status.success());
     }
-    let selected = support::command_with_grip_home(
+    let selected = support::project_command(
         root.path(),
-        &grip_home,
-        &["sync", "--destination", "--", destination.to_str().unwrap()],
+        &metadata_dir,
+        &["sync", "--destination", "--", "~/destination"],
     );
     assert!(selected.status.success());
     assert_eq!(fs::read_to_string(source).unwrap(), "source change");
@@ -23,12 +23,12 @@ fn sync_parses_execute_selectors_and_preview_aliases() {
 
 #[test]
 fn sync_preview_reports_operation_and_per_action_direction_without_mutation() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
     let before = support::snapshot(root.path());
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "sync", "--dry-run"],
     );
     assert!(output.status.success());
@@ -50,9 +50,9 @@ fn sync_rejects_extra_selectors() {
 
 #[test]
 fn sync_human_output_uses_each_actions_direction() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&destination, "destination change").unwrap();
-    let output = support::command_with_grip_home(root.path(), &grip_home, &["sync", "-n"]);
+    let output = support::project_command(root.path(), &metadata_dir, &["sync", "-n"]);
     assert!(output.status.success());
     let human = String::from_utf8(output.stdout).unwrap();
     assert!(human.contains(&format!(
@@ -79,7 +79,7 @@ fn sync_output_failure_finalizes_only_its_operation_record() {
         .is_err()
     );
     let summary =
-        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV1>(
+        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV2>(
             &home
                 .path()
                 .join("state/operations")
@@ -95,7 +95,7 @@ fn sync_human_and_json_blocked_results_expose_equivalent_evidence() {
     fs::write(&json_source, "source conflict").unwrap();
     fs::write(&json_destination, "destination conflict").unwrap();
     let json_output =
-        support::command_with_grip_home(json_root.path(), &json_home, &["--output=json", "sync"]);
+        support::project_command(json_root.path(), &json_home, &["--output=json", "sync"]);
     assert_eq!(json_output.status.code(), Some(10));
     let json = support::json(&json_output);
     assert_eq!(json["details"]["operation"], "sync");
@@ -106,7 +106,7 @@ fn sync_human_and_json_blocked_results_expose_equivalent_evidence() {
         support::accepted_file_fixture();
     fs::write(&human_source, "source conflict").unwrap();
     fs::write(&human_destination, "destination conflict").unwrap();
-    let human_output = support::command_with_grip_home(human_root.path(), &human_home, &["sync"]);
+    let human_output = support::project_command(human_root.path(), &human_home, &["sync"]);
     assert_eq!(human_output.status.code(), Some(10));
     let human = String::from_utf8(human_output.stdout).unwrap();
     for evidence in ["Sync blocked", "1 blocker(s)", "divergent_change"] {
@@ -134,16 +134,16 @@ fn sync_and_resolve_use_stable_terminal_exit_categories() {
     fs::write(&source, "source conflict").unwrap();
     fs::write(&destination, "destination conflict").unwrap();
     assert_eq!(
-        support::command_with_grip_home(blocked_root.path(), &blocked_home, &["sync"])
+        support::project_command(blocked_root.path(), &blocked_home, &["sync"])
             .status
             .code(),
         Some(10)
     );
     assert_eq!(
-        support::command_with_grip_home(
+        support::project_command(
             blocked_root.path(),
             &blocked_home,
-            &["resolve", "--source", "--", source.to_str().unwrap()],
+            &["resolve", "--source", "--", "source"],
         )
         .status
         .code(),

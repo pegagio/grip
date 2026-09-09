@@ -40,7 +40,7 @@ The important terms in that statement are:
 - **Overlay**: A tree mapping owns only the namespace discovered from its source. Unrelated destination content remains unmanaged.
 - **Local**: The first version operates between paths visible to one local user account. It is not a daemon, privileged system service, or remote replication system.
 
-Grip has no inherent concept of a repository side, deployed side, home directory, or preferred editing surface. The terms `source` and `destination` identify how a mapping is established and how new tree members enter management; after that, established entries may synchronize in either direction.
+Each Grip project has a source root: the directory initialized with `grip init`. Mapping sources are portable paths relative to that root, while destinations are portable `~`-relative paths resolved against the invoking user's canonical home. The terms `source` and `destination` identify how a mapping is established and how new tree members enter management; after that, established entries may synchronize in either direction.
 
 `rsync` is useful inspiration and conversational shorthand, but Grip should not be positioned primarily as “stateful rsync.” That phrase creates expectations of stateless mirroring, broad ownership of directory trees, and a direction chosen independently on every invocation. Grip's distinct value is selective membership plus baseline-informed bidirectional synchronization.
 
@@ -65,7 +65,7 @@ Grip should:
 - Provide `-n` and `--dry-run` options that preview action commands without mutation.
 - Require additional explicit authorization for deletions.
 - Preserve replaced or deleted entries for recovery.
-- Maintain configuration and synchronization state per user.
+- Keep portable configuration in one initialized project and mutable synchronization state in that project's ignored `.grip/state/` directory.
 - Provide precise output suitable for both humans and automation.
 
 ### Non-Goals for the Initial Release
@@ -112,7 +112,7 @@ A plan is the complete, deterministic set of proposed actions produced from one 
 
 ### Registry and State
 
-The registry expresses durable user intent: mappings, paired paths, kinds, and options. Machine-owned state contains changing operational evidence: discovered members, baselines, fingerprints, pending retirement information, and backup references.
+The project descriptor expresses durable user intent: portable mappings, kinds, and options. Machine-owned state contains changing operational evidence: discovered members, baselines, fingerprints, pending retirement information, operation records, and recovery references. The descriptor may be committed with the project; `.grip/state/` is local and ignored.
 
 Users should not need to maintain the derived member inventory by hand.
 
@@ -124,34 +124,36 @@ Grip supports two foundational mapping kinds.
 
 A file mapping pairs one exact source path with one exact destination path.
 
-```yaml
-mappings:
-  - kind: file
-    source: /Users/pegagio/GripSource/git/.gitconfig
-    destination: /Users/pegagio/.gitconfig
+```toml
+schema_version = 2
+
+[[mappings]]
+kind = "file"
+source = "git/.gitconfig"
+destination = "~/.gitconfig"
 ```
 
-The exact syntax and storage format remain open, but the semantic relationship is one source, one destination, and one managed entry.
+The source resolves below the selected project root and the destination resolves below the invoking user's home. The semantic relationship is one source, one destination, and one managed entry.
 
 ### Tree Mapping
 
 A tree mapping pairs a source directory with a destination directory. Relative paths below the source map to the same relative paths below the destination.
 
-```yaml
-mappings:
-  - kind: tree
-    source: /Users/pegagio/GripSource/editor
-    destination: /Users/pegagio/.config/editor
+```toml
+[[mappings]]
+kind = "tree"
+source = "editor"
+destination = "~/.config/editor"
 ```
 
 For example:
 
 ```text
-/Users/pegagio/GripSource/editor/config.yaml
-    <-> /Users/pegagio/.config/editor/config.yaml
+<project>/editor/config.yaml
+    <-> ~/.config/editor/config.yaml
 
-/Users/pegagio/GripSource/editor/themes/dark.json
-    <-> /Users/pegagio/.config/editor/themes/dark.json
+<project>/editor/themes/dark.json
+    <-> ~/.config/editor/themes/dark.json
 ```
 
 The destination may also contain entries such as caches, application databases, local workspaces, or unrelated configuration. Those entries are ignored unless their relative paths previously became managed through the source.
@@ -160,7 +162,7 @@ The destination may also contain entries such as caches, application databases, 
 
 Grip should reject mappings that make ownership ambiguous. Two mappings must not own the same source path, the same destination path, or overlapping tree regions that could resolve to the same entry. Ownership validation should occur before discovery or mutation so adding a new source file cannot make an unchanged registry ambiguous.
 
-The canonical source path identifies a mapping. Grip does not add a separate user-assigned mapping ID because the ownership model already permits only one mapping for a source path. Commands may accept a relative source path and resolve it canonically, but stored state must retain and verify the complete mapping kind, source, and destination. An internal hash of that tuple may organize state on disk but is not a user-facing identity.
+The normalized project-relative source path identifies a mapping. Grip does not add a separate user-assigned mapping or project ID because the ownership model already permits only one mapping for a source path and project identity comes from explicit selection or upward discovery. Durable identity stores the portable mapping tuple and entry-relative bytes; resolved absolute endpoints are runtime evidence only.
 
 ### Tracking and Untracking
 
@@ -397,12 +399,13 @@ Grip may operate on paths inside Git repositories, but it does not stage, commit
 
 ## Command-Line Experience
 
-The command vocabulary remains provisional, but the following surface expresses the intended workflows:
+The command surface begins by selecting one Grip project:
 
 ```text
-grip track
-grip untrack
-grip list
+grip init [PATH]
+grip [--project PATH] mapping add file SOURCE DESTINATION
+grip [--project PATH] mapping add tree SOURCE DESTINATION
+grip [--project PATH] mapping list|show|remove|inspect
 grip status
 grip check
 grip diff
@@ -414,9 +417,10 @@ grip sync
 
 ### Working Command Meanings
 
-- **`track`**: Create a file or tree mapping, inspect its initial scope, and report any initial synchronization or collision work.
-- **`untrack`**: Retire a mapping or managed tree entry without deleting either copy unless a separate deletion action is explicitly requested.
-- **`list`**: Display mappings and their paired paths.
+- **`init [PATH]`**: Atomically initialize `.grip/config.toml` and `.grip/.gitignore` in the current or named directory without creating state or invoking Git.
+- **`mapping add`**: Create one portable file or tree mapping after resolving and validating its concrete endpoints.
+- **`mapping remove`**: Remove mapping intent without deleting either payload copy.
+- **`mapping list|show|inspect`**: Display declared and resolved mappings or inspect current managed membership.
 - **`status [PATH]`**: Produce a complete human-readable classification without mutation and return success when inspection itself succeeds. An optional path narrows the classification.
 - **`check [PATH]`**: Produce the same or equivalent classification but return a nonzero drift status when attention is required, allowing automation to distinguish drift from inspection failure. An optional path narrows the check.
 - **`diff [PATH]`**: Explain content and supported metadata differences without mutation. An optional path narrows the output.
@@ -443,13 +447,13 @@ Positional selectors are interpreted in source-path space by default, including 
 The conventional `--` delimiter terminates option parsing and identifies all remaining arguments as paths. It is useful even with the initial single-selector limit because it handles paths beginning with a hyphen and makes the option/path boundary explicit:
 
 ```bash
-grip status -- /Users/pegagio/GripSource/editor/config.yaml
-grip status --destination -- /Users/pegagio/.config/editor/config.yaml
-grip sync --dry-run -- /Users/pegagio/GripSource/editor/themes
-grip pull --destination -- /Users/pegagio/.config/editor/themes/dark.json
+grip status -- editor/config.yaml
+grip status --destination -- ~/.config/editor/config.yaml
+grip sync --dry-run -- editor/themes
+grip pull --destination -- ~/.config/editor/themes/dark.json
 ```
 
-Grip resolves relative selectors against the invocation directory, normalizes them without requiring the selected entry to exist, and compares them with stored mapping and baseline paths. This permits inspection of a managed source that has been deleted. An ignored or unmanaged selector is reported explicitly, and a selector outside every mapping is an error rather than an empty successful result.
+Grip resolves source selectors in project-relative source space and destination selectors against the selected destination-home binding without requiring the selected entry to exist. This permits inspection of a managed source that has been deleted. An ignored or unmanaged selector is reported explicitly, and a selector outside every mapping is an error rather than an empty successful result.
 
 A scoped mutating command still validates the complete registry for structural safety, including overlapping mappings. Payload drift and conflicts outside the selected scope do not block the scoped operation. Applicable `.gripignore` rules inherited from ancestors of a selected tree entry remain in force.
 
@@ -459,33 +463,27 @@ Machine-readable output should use stable field names and distinguish synchroniz
 
 ## Configuration and State
 
-Grip is a per-user tool. Its registry, baselines, locks, and backups belong to the invoking user's state namespace rather than a machine-wide service.
-
-Grip stores its per-user configuration and machine-owned state beneath a single Grip home. The default is `~/.grip/`. When the `GRIP_HOME` environment variable is set to a non-empty absolute path, that path becomes the exact Grip home for both the registry and state; Grip does not append another `grip` component. A relative or otherwise invalid `GRIP_HOME` is an error rather than a reason to silently use the default.
-
-The Grip home and sensitive contents use owner-only permissions. Exact internal filenames and serialization formats remain open, but the layout preserves a clear logical separation:
+Grip is project-scoped. `grip init [PATH]` establishes the source root and atomically creates the portable descriptor plus the ignore rule that keeps mutable state out of version control:
 
 ```text
-<grip-home>/
-├── registry
-│   └── mappings
-│       ├── mapping kinds
-│       ├── canonical source paths
-│       ├── destination paths
-│       └── explicit mapping options
-└── state
-    ├── derived tree-member inventory
-    ├── accepted baselines
-    ├── operation locks
-    ├── recovery backups
-    └── operation evidence
+<project>/.grip/
+├── config.toml
+├── .gitignore        # exactly /state/
+└── state/            # created lazily by the first actual writer
+    ├── state.json
+    ├── locks/
+    ├── staging/
+    ├── operations/
+    └── recovery/
 ```
 
-The registry should be inspectable and stable enough to move deliberately, but state is local operational evidence and should not be treated as portable configuration by default.
+Descriptor V2 contains normalized project-relative sources and literal `~` or `~/...` destinations. It is stable and portable enough to commit with the surrounding project. State V4, Operation Record V2, recovery metadata, locks, and recovery payloads are owner-only local operational evidence beneath `.grip/state/` and are ignored by the initialized `.grip/.gitignore`.
 
-Grip does not use `/etc/grip/` as a registry or state location. System-wide administrator policy or defaults would be a distinct future capability with an explicit precedence model; it would not replace or merge the invoking user's Grip home implicitly.
+Project-dependent commands use an explicit `--project PATH` or discover exactly one `.grip` boundary by walking upward from the invocation directory. They fail rather than fall back when no project exists, when nested boundaries make selection ambiguous, or when any selected metadata node is unsafe. There is no global configuration root, global state fallback, environment-selected installation, generated project ID, or persistent project index.
 
-Configuration parsing should reject ambiguous or unsafe input, including duplicate or overlapping mapping paths, unknown fields, unsupported schema versions, path traversal, and malformed ignore or mapping options. A schema version should be explicit from the beginning.
+A copied descriptor resolves against the copied project root and current invoking-user home. Copied state retains its bytes but is untrusted until Grip completely rebinds every portable identity and reobserves the required accepted and recovery evidence. Read-only commands report eligibility without rewriting state; a successful state-writing command persists the current binding atomically.
+
+Configuration parsing rejects duplicate or overlapping mappings, unknown fields, unsupported schema versions, path traversal, malformed portable paths, and topology that overlaps `.grip` or another mapping. Read-only and dry-run commands do not create state or acquire writer locks.
 
 ## Implementation Direction
 
@@ -662,10 +660,6 @@ All selectors in one invocation would use the same path space: source by default
 
 The following decisions are intentionally deferred until the relevant implementation is specified. They should remain explicit rather than being resolved accidentally while coding:
 
-- What is the final package identity? `Grip` is the project title and `grip` is the prospective executable name.
-- What exact command syntax creates file and tree mappings?
-- Does `track` create only the mapping, or does it also perform the initial synchronization? If it performs both, what exactly does `track --dry-run` preview?
-- What serialization formats should the human-managed registry and machine-owned state use?
 - Which Gitignore specification and edge cases define `.gripignore` compatibility?
 - Are `.gripignore` files always implicitly excluded, or can a user explicitly opt into synchronizing one as ordinary content?
 - Are empty directories managed in the first release?
@@ -688,13 +682,15 @@ The conversation has established the following working decisions:
 
 - Grip is a standalone, general-purpose synchronization utility.
 - The project title is `Grip`, with `grip` as the prospective executable name.
-- Grip is a local per-user CLI with per-user configuration and state.
-- Grip defaults its per-user registry and machine-owned state to `~/.grip/`; a non-empty absolute `GRIP_HOME` selects an alternate exact root for both.
-- `/etc/grip/` is not a registry or state location; system-wide policy would be a separate future capability.
+- Grip is a local CLI whose configuration and mutable state are scoped to one initialized project.
+- `grip init [PATH]` establishes the project source root and creates `.grip/config.toml` plus `.grip/.gitignore`.
+- Project commands accept an exact `--project PATH` or discover one project by walking upward; they never fall back to global configuration.
+- Descriptor V2 stores portable project-relative sources and `~`-relative destinations and may be committed with the project.
+- Mutable State V4, operations, locks, staging, and recovery live beneath ignored `.grip/state/`; no generated project-instance key is required.
 - Remote or cross-machine synchronization is outside the initial scope.
 - Rust is the preferred implementation language.
 - Rust tooling and library selections are advisory and reversible; `clap` is the leading CLI-framework candidate, not a committed product dependency.
-- Mappings have no separate user-assigned IDs; the canonical source path identifies each mapping.
+- Mappings have no separate user-assigned IDs; the normalized project-relative source path identifies each mapping.
 - File mappings pair exact paths.
 - Tree mappings pair roots and dynamically discover non-ignored source entries.
 - Tree mappings do not require users to enumerate every member.

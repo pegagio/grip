@@ -1,14 +1,14 @@
 use super::lock::PublicationLock;
 use super::{
-    AcceptedState, AcceptedStateV3, DecodedAcceptedState, StateEnvelopeV1, decode,
-    decode_versioned, encode, encode_v2, encode_v3,
+    AcceptedState, AcceptedStateV3, AcceptedStateV4, accepted_v4_from_runtime, decode_v4,
+    encode_v4, runtime_from_accepted_v4,
 };
 use crate::error::GripError;
-use crate::home::GripHome;
+use crate::project::ProjectPaths;
 use sha2::Digest;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -26,6 +26,8 @@ struct StateFileIdentity {
 pub struct StateSnapshot {
     pub accepted: AcceptedState,
     pub complete: Option<AcceptedStateV3>,
+    pub portable: Option<AcceptedStateV4>,
+    pub rebinding: crate::state::rebinding::RebindingAssessment,
     pub bytes: Option<Vec<u8>>,
     identity: Option<StateFileIdentity>,
 }
@@ -33,13 +35,9 @@ pub struct StateSnapshot {
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicationFault {
-    BeforeRecoveryRename,
-    BeforeStateRename,
     CorruptV2Staging,
     BeforeV2StateRename,
     AfterV2StateRename,
-    SubstituteV2StagingFile,
-    SubstituteV2StagingSymlink,
 }
 
 fn ensure_dir(path: &Path) -> Result<(), GripError> {
@@ -75,29 +73,10 @@ fn ensure_dir(path: &Path) -> Result<(), GripError> {
 }
 
 /// Prepare the private state directory before acquiring its stable lock.
-pub fn prepare_directory(home: &GripHome) -> Result<std::path::PathBuf, GripError> {
+pub fn prepare_directory(home: &ProjectPaths) -> Result<std::path::PathBuf, GripError> {
     let state_dir = home.path().join("state");
     ensure_dir(&state_dir)?;
     Ok(state_dir)
-}
-
-fn read_valid(path: &Path) -> Result<(StateEnvelopeV1, Vec<u8>), GripError> {
-    let m = fs::symlink_metadata(path)
-        .map_err(|e| GripError::CorruptState(format!("state is unavailable: {e}")))?;
-    if m.file_type().is_symlink()
-        || !m.is_file()
-        || m.uid() != rustix::process::geteuid().as_raw()
-        || m.permissions().mode() & 0o7777 != 0o600
-    {
-        return Err(GripError::CorruptState("unsafe state file".into()));
-    }
-    let mut bytes = Vec::new();
-    File::open(path)
-        .and_then(|mut f| f.read_to_end(&mut bytes))
-        .map_err(|e| GripError::from_io("could not read state", e))?;
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|_| GripError::CorruptState("state must be UTF-8 JSON".into()))?;
-    Ok((decode(text)?, bytes))
 }
 
 fn state_identity(metadata: &fs::Metadata) -> StateFileIdentity {
@@ -109,7 +88,7 @@ fn state_identity(metadata: &fs::Metadata) -> StateFileIdentity {
 }
 
 /// Load absent, V1, or V2 accepted state without creating state artifacts.
-pub fn load(home: &GripHome) -> Result<StateSnapshot, GripError> {
+pub fn load(home: &ProjectPaths) -> Result<StateSnapshot, GripError> {
     let state_dir = home.path().join("state");
     let state_dir_metadata = match fs::symlink_metadata(&state_dir) {
         Ok(metadata)
@@ -129,6 +108,12 @@ pub fn load(home: &GripHome) -> Result<StateSnapshot, GripError> {
             return Ok(StateSnapshot {
                 accepted: AcceptedState::uninitialized(),
                 complete: None,
+                portable: None,
+                rebinding: crate::state::rebinding::RebindingAssessment {
+                    outcome: crate::result::RebindingOutcome::Uninitialized,
+                    prior_root: None,
+                    blockers: Vec::new(),
+                },
                 bytes: None,
                 identity: None,
             });
@@ -174,6 +159,12 @@ pub fn load(home: &GripHome) -> Result<StateSnapshot, GripError> {
             return Ok(StateSnapshot {
                 accepted: AcceptedState::uninitialized(),
                 complete: None,
+                portable: None,
+                rebinding: crate::state::rebinding::RebindingAssessment {
+                    outcome: crate::result::RebindingOutcome::Uninitialized,
+                    prior_root: None,
+                    blockers: Vec::new(),
+                },
                 bytes: None,
                 identity: None,
             });
@@ -205,32 +196,35 @@ pub fn load(home: &GripHome) -> Result<StateSnapshot, GripError> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|error| GripError::from_io("could not read accepted state", error))?;
-    let decoded = decode_versioned(&bytes)?;
-    let (mut accepted, complete) = match decoded {
-        DecodedAcceptedState::Legacy(accepted) => (accepted, None),
-        DecodedAcceptedState::Complete(complete) => (
-            AcceptedState {
-                generation: Some(complete.generation),
-                baselines: Default::default(),
-                complete_baselines: complete.baselines.clone(),
-                schema_version: Some(3),
-                accepted_bytes: Some(bytes.clone()),
-            },
-            Some(complete),
-        ),
+    let portable = decode_v4(&bytes)?;
+    let rebinding = crate::state::rebinding::assess(home, &portable)?;
+    let complete = runtime_from_accepted_v4(home, &portable)?;
+    let mut accepted = AcceptedState {
+        generation: Some(complete.generation),
+        complete_baselines: complete.baselines.clone(),
+        accepted_bytes: Some(bytes.clone()),
     };
     accepted.accepted_bytes = Some(bytes.clone());
     Ok(StateSnapshot {
         accepted,
-        complete,
+        complete: Some(complete),
+        portable: Some(portable),
+        rebinding,
         bytes: Some(bytes),
         identity: Some(state_identity(&metadata)),
     })
 }
 
 /// Reject drift from a previously loaded accepted-state snapshot.
-pub fn revalidate(home: &GripHome, expected: &StateSnapshot) -> Result<(), GripError> {
-    let current = load(home)?;
+pub fn revalidate(home: &ProjectPaths, expected: &StateSnapshot) -> Result<(), GripError> {
+    let current = load(home).map_err(|error| {
+        GripError::discovery_operational(
+            "state_revalidate",
+            "stale_state_evidence",
+            vec![home.path().join("state/state.json").display().to_string()],
+            &format!("accepted state changed during operation: {error}"),
+        )
+    })?;
     if current.bytes != expected.bytes || current.identity != expected.identity {
         return Err(GripError::discovery_operational(
             "state_revalidate",
@@ -243,40 +237,22 @@ pub fn revalidate(home: &GripHome, expected: &StateSnapshot) -> Result<(), GripE
 }
 
 /// Publish a V2 baseline map while the caller holds the state publication lock.
-pub fn publish_accepted_locked(
-    home: &GripHome,
-    expected: &StateSnapshot,
-    next: &AcceptedState,
-) -> Result<Option<u64>, GripError> {
-    publish_accepted_locked_with_fault(home, expected, next, None)
-}
-
-/// Publish a version-neutral candidate without downgrading complete State V3.
 pub fn publish_current_locked(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &StateSnapshot,
     next: &AcceptedState,
 ) -> Result<Option<u64>, GripError> {
-    if expected.complete.is_some() || next.schema_version == Some(3) {
-        publish_complete_locked(home, expected, &next.complete_baselines)
-    } else {
-        publish_accepted_locked(home, expected, next)
-    }
+    publish_complete_locked(home, expected, &next.complete_baselines)
 }
 
 /// Restore exact, integrity-valid State V2 bytes while the caller holds the mutation lock.
 pub(crate) fn restore_exact(
-    home: &GripHome,
+    home: &ProjectPaths,
     bytes: &[u8],
     expected_post_generation: u64,
     expected_post_digest: &str,
 ) -> Result<(), GripError> {
-    let recovered = super::decode_current_accepted(bytes)?;
-    if recovered.generation.is_none() {
-        return Err(GripError::CorruptState(
-            "recovered state has no generation".into(),
-        ));
-    }
+    let recovered = decode_v4(bytes)?;
     if let Ok(current) = load(home)
         && let Some(current_bytes) = current.bytes.as_deref()
     {
@@ -290,16 +266,19 @@ pub(crate) fn restore_exact(
         }
     }
     let directory = prepare_directory(home)?;
-    let _lock = PublicationLock::acquire(&directory.join("state.lock"))?;
-    write_v2_atomic(
+    let lock_path = super::lock::project_lock_path(home, "state.lock")?;
+    let _lock = PublicationLock::acquire(&lock_path)?;
+    let runtime = runtime_from_accepted_v4(home, &recovered)?;
+    write_v3_atomic(
+        home,
         &directory,
         &directory.join("state.json"),
         bytes,
-        Some(&recovered),
+        &runtime.baselines,
         None,
     )?;
     let reread = read_private_file(&directory.join("state.json"))?;
-    if reread != bytes || super::decode_current_accepted(&reread)? != recovered {
+    if reread != bytes || decode_v4(&reread)? != recovered {
         return Err(GripError::CorruptState(
             "restored state verification failed".into(),
         ));
@@ -308,92 +287,8 @@ pub(crate) fn restore_exact(
 }
 
 #[doc(hidden)]
-pub fn publish_accepted_locked_with_fault(
-    home: &GripHome,
-    expected: &StateSnapshot,
-    next: &AcceptedState,
-    fault: Option<PublicationFault>,
-) -> Result<Option<u64>, GripError> {
-    if expected.complete.is_some() {
-        return Err(GripError::UnsupportedSchema(
-            "State V3 cannot be downgraded through legacy publication".into(),
-        ));
-    }
-    revalidate(home, expected)?;
-    if expected.accepted.baselines == next.baselines {
-        return Ok(None);
-    }
-    let generation = match expected.accepted.generation {
-        None => 0,
-        Some(value) => value.checked_add(1).ok_or_else(|| {
-            GripError::discovery_operational(
-                "baseline_accept",
-                "generation_exhausted",
-                vec![home.path().join("state/state.json").display().to_string()],
-                "accepted state generation cannot be advanced",
-            )
-        })?,
-    };
-    let state_dir = home.path().join("state");
-    ensure_dir(&state_dir)?;
-    let target = state_dir.join("state.json");
-    let next_bytes = encode_v2(next, generation)?;
-    if let Some(bytes) = expected.bytes.as_deref() {
-        let recovery_root = state_dir.join("recovery");
-        ensure_dir(&recovery_root)?;
-        let prior_generation = expected.accepted.generation.ok_or_else(|| {
-            GripError::CorruptState("accepted state bytes require a generation".into())
-        })?;
-        let generation_dir = recovery_root.join(format!("generation-{prior_generation}"));
-        ensure_dir(&generation_dir)?;
-        let recovery = generation_dir.join("state.json");
-        let created = !recovery.exists();
-        if recovery.exists() {
-            if read_private_file(&recovery)? != bytes {
-                return Err(GripError::CorruptState(
-                    "recovery generation collision".into(),
-                ));
-            }
-        } else {
-            write_v2_atomic(&generation_dir, &recovery, bytes, None, None)?;
-        }
-        let manifest_path = generation_dir.join("manifest.json");
-        if created && !manifest_path.exists() {
-            let prior_digest = format!("{:x}", sha2::Sha256::digest(bytes));
-            let next_digest = format!("{:x}", sha2::Sha256::digest(&next_bytes));
-            let manifest = crate::recovery::model::RecoveryEnvelopeV1::new(
-                crate::recovery::model::RecoveryManifestPayloadV1 {
-                    reference: crate::recovery::model::RecoveryRef::AcceptedState {
-                        generation: prior_generation,
-                        digest: prior_digest.clone(),
-                    },
-                    kind: crate::recovery::model::RecoveryKind::AcceptedState,
-                    created_at: recovery_timestamp(),
-                    origin_operation: None,
-                    origin_transition: "state_publication".into(),
-                    managed_identity: None,
-                    bound_side: None,
-                    bound_target: None,
-                    prior_evidence: serde_json::json!({"generation": prior_generation, "sha256": prior_digest}),
-                    expected_post_evidence: serde_json::json!({"generation": generation, "sha256": next_digest}),
-                    byte_count: bytes.len() as u64,
-                    payload_ref: "state.json".into(),
-                },
-            )?;
-            crate::operation::publication::publish_new_component(
-                &generation_dir,
-                "manifest.json",
-                &crate::recovery::model::encode(&manifest)?,
-            )?;
-        }
-    }
-    write_v2_atomic(&state_dir, &target, &next_bytes, Some(next), fault)?;
-    Ok(Some(generation))
-}
-
-/// Publish complete State V3 after caller-controlled full-state verification.
 pub fn publish_complete_locked(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &StateSnapshot,
     next_baselines: &std::collections::BTreeMap<
         crate::observation::model::EntryIdentity,
@@ -405,7 +300,7 @@ pub fn publish_complete_locked(
 
 #[doc(hidden)]
 pub fn publish_complete_locked_with_fault(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &StateSnapshot,
     next_baselines: &std::collections::BTreeMap<
         crate::observation::model::EntryIdentity,
@@ -418,6 +313,7 @@ pub fn publish_complete_locked_with_fault(
         .complete
         .as_ref()
         .is_some_and(|state| &state.baselines == next_baselines)
+        && expected.rebinding.outcome != crate::result::RebindingOutcome::RebindEligible
     {
         return Ok(None);
     }
@@ -425,17 +321,21 @@ pub fn publish_complete_locked_with_fault(
         .accepted
         .generation
         .map_or(Some(0), |value| value.checked_add(1))
-        .ok_or_else(|| GripError::CorruptState("accepted state generation is exhausted".into()))?;
+        .ok_or_else(|| {
+            GripError::discovery_operational(
+                "baseline_accept",
+                "generation_exhausted",
+                vec![home.path().join("state/state.json").display().to_string()],
+                "accepted state generation cannot be advanced",
+            )
+        })?;
     let state_dir = home.path().join("state");
     ensure_dir(&state_dir)?;
-    let next = AcceptedStateV3 {
-        generation,
-        baselines: next_baselines.clone(),
-        accepted_bytes: None,
-    };
-    let bytes = encode_v3(&next)?;
+    let next = accepted_v4_from_runtime(home, generation, next_baselines)?;
+    let bytes = encode_v4(&next)?;
     preserve_prior_for_complete_publication(&state_dir, expected, generation, &bytes)?;
     write_v3_atomic(
+        home,
         &state_dir,
         &state_dir.join("state.json"),
         &bytes,
@@ -462,48 +362,51 @@ fn preserve_prior_for_complete_publication(
     let generation_dir = recovery_root.join(format!("generation-{prior_generation}"));
     ensure_dir(&generation_dir)?;
     let recovery = generation_dir.join("state.json");
-    if recovery.exists() {
+    if fs::symlink_metadata(&recovery).is_ok() {
         if read_private_file(&recovery)? != prior_bytes {
             return Err(GripError::CorruptState(
                 "recovery generation collision".into(),
             ));
         }
     } else {
-        write_v2_atomic(&generation_dir, &recovery, prior_bytes, None, None)?;
+        write_recovery_atomic(&generation_dir, &recovery, prior_bytes)?;
     }
     let manifest_path = generation_dir.join("manifest.json");
-    if !manifest_path.exists() {
+    if fs::symlink_metadata(&manifest_path).is_err() {
         let prior_digest = format!("{:x}", sha2::Sha256::digest(prior_bytes));
         let next_digest = format!("{:x}", sha2::Sha256::digest(next_bytes));
-        let manifest = crate::recovery::model::RecoveryEnvelopeV1::new(
-            crate::recovery::model::RecoveryManifestPayloadV1 {
+        let manifest = crate::recovery::model::RecoveryManifestV2::new(
+            crate::recovery::model::RecoveryManifestPayloadV2 {
                 reference: crate::recovery::model::RecoveryRef::AcceptedState {
                     generation: prior_generation,
                     digest: prior_digest.clone(),
                 },
                 kind: crate::recovery::model::RecoveryKind::AcceptedState,
+                identity: None,
+                endpoint_role: None,
+                private_ref: "state.json".into(),
+                diagnostic_target: None,
                 created_at: recovery_timestamp(),
                 origin_operation: None,
-                origin_transition: "state_v3_publication".into(),
-                managed_identity: None,
-                bound_side: None,
-                bound_target: None,
+                origin_transition: "state_v4_publication".into(),
                 prior_evidence: serde_json::json!({"generation":prior_generation,"sha256":prior_digest}),
                 expected_post_evidence: serde_json::json!({"generation":next_generation,"sha256":next_digest}),
                 byte_count: prior_bytes.len() as u64,
-                payload_ref: "state.json".into(),
             },
         )?;
         crate::operation::publication::publish_new_component(
             &generation_dir,
             "manifest.json",
-            &crate::recovery::model::encode(&manifest)?,
+            &serde_json::to_vec(&manifest).map_err(|error| {
+                GripError::Internal(format!("could not encode Recovery Manifest V2: {error}"))
+            })?,
         )?;
     }
     Ok(())
 }
 
 fn write_v3_atomic(
+    home: &ProjectPaths,
     directory: &Path,
     target: &Path,
     bytes: &[u8],
@@ -542,11 +445,8 @@ fn write_v3_atomic(
         let mut reread = Vec::new();
         file.read_to_end(&mut reread)
             .map_err(|error| GripError::from_io("could not reread staged State V3", error))?;
-        let DecodedAcceptedState::Complete(decoded) = decode_versioned(&reread)? else {
-            return Err(GripError::CorruptState(
-                "staged State V3 decoded as legacy".into(),
-            ));
-        };
+        let portable = decode_v4(&reread)?;
+        let decoded = runtime_from_accepted_v4(home, &portable)?;
         if reread != bytes || &decoded.baselines != expected {
             return Err(GripError::CorruptState(
                 "staged State V3 verification failed".into(),
@@ -585,13 +485,7 @@ fn recovery_timestamp() -> String {
         .unwrap_or_else(|_| "0Z".into())
 }
 
-fn write_v2_atomic(
-    directory: &Path,
-    target: &Path,
-    bytes: &[u8],
-    expected_state: Option<&AcceptedState>,
-    fault: Option<PublicationFault>,
-) -> Result<(), GripError> {
+fn write_recovery_atomic(directory: &Path, target: &Path, bytes: &[u8]) -> Result<(), GripError> {
     let temp = directory.join(format!(
         ".state.tmp-{}-{}",
         std::process::id(),
@@ -614,36 +508,6 @@ fn write_v2_atomic(
             .map_err(|error| GripError::from_io("could not sync staged accepted state", error))?;
         file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|error| GripError::from_io("could not secure staged accepted state", error))?;
-        match fault {
-            Some(PublicationFault::SubstituteV2StagingFile) => {
-                fs::remove_file(&temp).map_err(|error| {
-                    GripError::from_io("could not inject staged file substitution", error)
-                })?;
-                fs::write(&temp, b"substituted").map_err(|error| {
-                    GripError::from_io("could not inject staged file substitution", error)
-                })?;
-                fs::set_permissions(&temp, fs::Permissions::from_mode(0o600)).map_err(|error| {
-                    GripError::from_io("could not secure substituted staged file", error)
-                })?;
-            }
-            Some(PublicationFault::SubstituteV2StagingSymlink) => {
-                fs::remove_file(&temp).map_err(|error| {
-                    GripError::from_io("could not inject staged symlink substitution", error)
-                })?;
-                symlink("state.json", &temp).map_err(|error| {
-                    GripError::from_io("could not inject staged symlink substitution", error)
-                })?;
-            }
-            _ => {}
-        }
-        if fault == Some(PublicationFault::CorruptV2Staging) {
-            file.write_all(b"corrupt").map_err(|error| {
-                GripError::from_io("could not inject staged state corruption", error)
-            })?;
-            file.sync_all().map_err(|error| {
-                GripError::from_io("could not sync injected staged state corruption", error)
-            })?;
-        }
         verify_staged_path(&file, &temp)?;
         file.seek(SeekFrom::Start(0))
             .map_err(|error| GripError::from_io("could not rewind staged accepted state", error))?;
@@ -655,46 +519,15 @@ fn write_v2_atomic(
                 "staged state bytes changed before publication".into(),
             ));
         }
-        if let Some(expected) = expected_state {
-            let decoded = super::decode_current_accepted(&staged)?;
-            if decoded.baselines != expected.baselines
-                || decoded.complete_baselines != expected.complete_baselines
-            {
-                return Err(GripError::CorruptState(
-                    "staged state semantic verification failed".into(),
-                ));
-            }
-        }
         verify_staged_path(&file, &temp)?;
-        if expected_state.is_none() {
-            rustix::fs::renameat_with(
-                rustix::fs::CWD,
-                &temp,
-                rustix::fs::CWD,
-                target,
-                rustix::fs::RenameFlags::NOREPLACE,
-            )
-            .map_err(|error| {
-                GripError::from_io("could not publish state recovery", error.into())
-            })?;
-        } else {
-            if fault == Some(PublicationFault::BeforeV2StateRename) {
-                return Err(GripError::Internal(
-                    "injected pre-rename accepted-state failure".into(),
-                ));
-            }
-            fs::rename(&temp, target)
-                .map_err(|error| GripError::from_io("could not publish accepted state", error))?;
-        }
-        if fault == Some(PublicationFault::AfterV2StateRename) {
-            return Err(GripError::discovery_operational(
-                "baseline_accept",
-                "publication_failure",
-                Vec::new(),
-                "accepted state is visible but directory durability could not be confirmed",
-            )
-            .with_publication_visible(true));
-        }
+        rustix::fs::renameat_with(
+            rustix::fs::CWD,
+            &temp,
+            rustix::fs::CWD,
+            target,
+            rustix::fs::RenameFlags::NOREPLACE,
+        )
+        .map_err(|error| GripError::from_io("could not publish state recovery", error.into()))?;
         File::open(directory)
             .and_then(|file| file.sync_all())
             .map_err(|error| GripError::from_io("could not sync state directory", error))
@@ -751,102 +584,4 @@ fn read_private_file(path: &Path) -> Result<Vec<u8>, GripError> {
     file.read_to_end(&mut bytes)
         .map_err(|error| GripError::from_io("could not read state recovery", error))?;
     Ok(bytes)
-}
-
-fn write_atomic(
-    directory: &Path,
-    target: &Path,
-    bytes: &[u8],
-    fail_before_rename: bool,
-) -> Result<(), GripError> {
-    let temp = directory.join(format!(
-        ".state.tmp-{}-{}",
-        std::process::id(),
-        TEMP_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| {
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)
-            .map_err(|e| GripError::from_io("could not stage state", e))?;
-        f.write_all(bytes)
-            .and_then(|_| f.sync_all())
-            .map_err(|e| GripError::from_io("could not sync staged state", e))?;
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))
-            .map_err(|e| GripError::from_io("could not secure staged state", e))?;
-        let staged =
-            fs::read(&temp).map_err(|e| GripError::from_io("could not reread staged state", e))?;
-        let text = std::str::from_utf8(&staged)
-            .map_err(|_| GripError::CorruptState("staged state is not UTF-8".into()))?;
-        decode(text)?;
-        if fail_before_rename {
-            return Err(GripError::Internal(
-                "injected pre-rename publication failure".into(),
-            ));
-        }
-        fs::rename(&temp, target).map_err(|e| GripError::from_io("could not publish state", e))?;
-        File::open(directory)
-            .and_then(|d| d.sync_all())
-            .map_err(|e| GripError::from_io("could not sync state directory", e))
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
-}
-
-pub fn publish(home: &GripHome, next: &StateEnvelopeV1) -> Result<(), GripError> {
-    publish_with_fault(home, next, None)
-}
-
-#[doc(hidden)]
-pub fn publish_with_fault(
-    home: &GripHome,
-    next: &StateEnvelopeV1,
-    fault: Option<PublicationFault>,
-) -> Result<(), GripError> {
-    next.validate()?;
-    let state_dir = home.path().join("state");
-    ensure_dir(&state_dir)?;
-    let _lock = PublicationLock::acquire(&state_dir.join("state.lock"))?;
-    ensure_dir(&state_dir)?;
-    let target = state_dir.join("state.json");
-    if target.exists() {
-        let (prior, bytes) = read_valid(&target)?;
-        if next.payload.generation <= prior.payload.generation {
-            return Err(GripError::CorruptState(
-                "state generation must increase".into(),
-            ));
-        }
-        let recovery_root = state_dir.join("recovery");
-        ensure_dir(&recovery_root)?;
-        let generation_dir = recovery_root.join(format!("generation-{}", prior.payload.generation));
-        ensure_dir(&generation_dir)?;
-        let recovery = generation_dir.join("state.json");
-        if recovery.exists() {
-            if fs::read(&recovery)
-                .map_err(|e| GripError::from_io("could not read recovery state", e))?
-                != bytes
-            {
-                return Err(GripError::CorruptState(
-                    "recovery generation collision".into(),
-                ));
-            }
-        } else {
-            write_atomic(
-                &generation_dir,
-                &recovery,
-                &bytes,
-                fault == Some(PublicationFault::BeforeRecoveryRename),
-            )?;
-        }
-    }
-    write_atomic(
-        &state_dir,
-        &target,
-        &encode(next)?,
-        fault == Some(PublicationFault::BeforeStateRename),
-    )
 }

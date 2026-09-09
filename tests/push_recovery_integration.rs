@@ -4,10 +4,9 @@ use grip::classification::model::ClassificationScope;
 use grip::discovery::model::SafePath;
 use grip::mapping::MappingKind;
 use grip::observation::model::PathSpace;
-use grip::observation::model::{EntryIdentity, MappingSnapshot};
+use grip::observation::model::{EntryIdentity, ResolvedMapping};
 use grip::operation::model::{
-    ActionCheckpointEvidenceV1, ActionCheckpointPayloadV1, OperationPlanPayloadV1,
-    OperationSummaryPayloadV1, decode,
+    ActionCheckpointEvidenceV2, ActionCheckpointPayloadV2, OperationSummaryPayloadV2, decode,
 };
 use grip::push::model::{
     ActionEvidence, ActionKind, ActionStatus, PushAction, PushCounts, PushPlan,
@@ -59,8 +58,8 @@ fn plan(action_count: usize) -> PushPlan {
     }
 }
 
-fn evidence() -> ActionCheckpointEvidenceV1 {
-    ActionCheckpointEvidenceV1 {
+fn evidence() -> ActionCheckpointEvidenceV2 {
+    ActionCheckpointEvidenceV2 {
         revalidation: "passed".into(),
         recovery: "not_required".into(),
         recovery_ref: None,
@@ -74,8 +73,8 @@ fn evidence() -> ActionCheckpointEvidenceV1 {
 #[test]
 fn operation_initialization_is_private_strict_and_sparse() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     let receipt = grip::operation::publication::initialize(&home, &plan(100)).unwrap();
 
     assert_eq!(
@@ -86,7 +85,7 @@ fn operation_initialization_is_private_strict_and_sparse() {
             & 0o7777,
         0o700
     );
-    for name in ["plan.json", "operation.json"] {
+    for name in ["record.json", "operation.json"] {
         let metadata = fs::symlink_metadata(receipt.directory().join(name)).unwrap();
         assert!(metadata.is_file());
         assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
@@ -97,9 +96,11 @@ fn operation_initialization_is_private_strict_and_sparse() {
             .count(),
         0
     );
-    decode::<OperationPlanPayloadV1>(&fs::read(receipt.directory().join("plan.json")).unwrap())
-        .unwrap();
-    decode::<OperationSummaryPayloadV1>(
+    grip::operation::model::decode_operation_v2(
+        &fs::read(receipt.directory().join("record.json")).unwrap(),
+    )
+    .unwrap();
+    decode::<OperationSummaryPayloadV2>(
         &fs::read(receipt.directory().join("operation.json")).unwrap(),
     )
     .unwrap();
@@ -108,8 +109,8 @@ fn operation_initialization_is_private_strict_and_sparse() {
 #[test]
 fn action_checkpoint_is_atomic_and_bounded_by_one_action() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     let receipt = grip::operation::publication::initialize(&home, &plan(1_000)).unwrap();
     receipt
         .checkpoint_action(999, "in_progress", evidence(), None)
@@ -119,7 +120,7 @@ fn action_checkpoint_is_atomic_and_bounded_by_one_action() {
         .unwrap();
     let checkpoint = receipt.directory().join("actions/00000999.json");
     let bytes = fs::read(&checkpoint).unwrap();
-    let decoded = decode::<ActionCheckpointPayloadV1>(&bytes).unwrap();
+    let decoded = decode::<ActionCheckpointPayloadV2>(&bytes).unwrap();
     assert_eq!(decoded.payload.action_index, 999);
     assert!(bytes.len() < 2_000);
     assert!(
@@ -136,8 +137,8 @@ fn action_checkpoint_is_atomic_and_bounded_by_one_action() {
 #[test]
 fn checkpoint_rejects_an_index_outside_the_immutable_plan() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     let receipt = grip::operation::publication::initialize(&home, &plan(1)).unwrap();
     assert!(
         receipt
@@ -149,7 +150,7 @@ fn checkpoint_rejects_an_index_outside_the_immutable_plan() {
 #[test]
 fn recovery_is_private_verified_contained_and_collision_safe() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     let outside = root.path().join("outside");
@@ -159,7 +160,7 @@ fn recovery_is_private_verified_contained_and_collision_safe() {
     fs::set_permissions(&destination, fs::Permissions::from_mode(0o640)).unwrap();
     let expected = support::supported_file_state(&destination);
     let identity = EntryIdentity::new(
-        MappingSnapshot {
+        ResolvedMapping {
             kind: MappingKind::File,
             source,
             destination: destination.clone(),
@@ -167,7 +168,7 @@ fn recovery_is_private_verified_contained_and_collision_safe() {
         Vec::new(),
     )
     .unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let receipt = grip::operation::publication::initialize(&home, &plan(1)).unwrap();
     let entry =
         grip::push::recovery::preserve(&receipt, 0, &identity, &destination, &expected).unwrap();
@@ -190,11 +191,13 @@ fn recovery_is_private_verified_contained_and_collision_safe() {
         fs::metadata(&recovery).unwrap().permissions().mode() & 0o7777,
         0o700
     );
-    let metadata: grip::push::recovery::RecoveryMetadataV1 =
-        serde_json::from_slice(&fs::read(recovery.join("metadata.json")).unwrap()).unwrap();
-    assert_eq!(metadata.identity.mapping, identity.mapping);
-    assert_eq!(metadata.identity.relative_path_hex, "");
-    assert!(metadata.payload_present && metadata.verified);
+    let metadata = grip::mutation::recovery::decode_mutation_recovery_v2(
+        &fs::read(recovery.join("recovery-v2.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(metadata.payload.identity.mapping.source.as_str(), "source");
+    assert_eq!(metadata.payload.identity.relative_path_hex, "");
+    assert_eq!(metadata.payload.private_ref, "payload");
     assert!(matches!(
         grip::push::recovery::preserve(&receipt, 0, &identity, &destination, &expected,),
         Err(grip::GripError::CorruptState(_))
@@ -205,12 +208,12 @@ fn recovery_is_private_verified_contained_and_collision_safe() {
 #[test]
 fn interrupted_operation_is_immutable_while_a_fresh_record_is_allocated() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     let first = grip::operation::publication::initialize(&home, &plan(1)).unwrap();
     let sentinel = first.directory().join("recovery/sentinel");
     fs::write(&sentinel, "preserved").unwrap();
-    let first_plan = fs::read(first.directory().join("plan.json")).unwrap();
+    let first_plan = fs::read(first.directory().join("record.json")).unwrap();
     let first_summary = fs::read(first.directory().join("operation.json")).unwrap();
     fs::write(
         home.path()
@@ -221,7 +224,7 @@ fn interrupted_operation_is_immutable_while_a_fresh_record_is_allocated() {
     let second = grip::operation::publication::initialize(&home, &plan(1)).unwrap();
     assert_ne!(first.operation_id(), second.operation_id());
     assert_eq!(
-        fs::read(first.directory().join("plan.json")).unwrap(),
+        fs::read(first.directory().join("record.json")).unwrap(),
         first_plan
     );
     assert_eq!(
@@ -239,8 +242,8 @@ fn operation_finalization_rejects_corrupt_unsupported_and_inconsistent_component
             .to_vec(),
     ] {
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
-        let grip_home = support::minimal_home(root.path());
-        let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+        let metadata_dir = support::initialize_project_metadata(root.path());
+        let home = support::project_home(&metadata_dir);
         let receipt = grip::operation::publication::initialize(&home, &plan(0)).unwrap();
         fs::write(receipt.directory().join("operation.json"), replacement).unwrap();
         assert!(
@@ -254,8 +257,8 @@ fn operation_finalization_rejects_corrupt_unsupported_and_inconsistent_component
     }
 
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     assert!(
         grip::operation::publication::finalize_result_delivery(
             &home,
@@ -271,8 +274,8 @@ fn action_checkpoint_rejects_symlink_substitution_without_touching_the_target() 
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     let receipt = grip::operation::publication::initialize(&home, &plan(1)).unwrap();
     let outside = root.path().join("outside.json");
     fs::write(&outside, b"outside").unwrap();
@@ -282,7 +285,7 @@ fn action_checkpoint_rejects_symlink_substitution_without_touching_the_target() 
     let result = receipt.checkpoint_action(
         0,
         "in_progress",
-        grip::operation::model::ActionCheckpointEvidenceV1 {
+        grip::operation::model::ActionCheckpointEvidenceV2 {
             revalidation: "not_attempted".into(),
             recovery: "not_required".into(),
             recovery_ref: None,

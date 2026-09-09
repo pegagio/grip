@@ -1,4 +1,6 @@
 #![allow(dead_code, clippy::result_large_err)]
+pub mod project;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -25,18 +27,26 @@ pub fn command(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_grip"))
         .env_clear()
         .env("HOME", home)
+        .current_dir(home)
         .args(args)
         .output()
         .unwrap()
 }
-pub fn command_with_grip_home(home: &Path, grip_home: &Path, args: &[&str]) -> Output {
+pub fn project_command(home: &Path, metadata_dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_grip"))
         .env_clear()
         .env("HOME", home)
-        .env("GRIP_HOME", grip_home)
+        .current_dir(metadata_dir.parent().unwrap())
         .args(args)
         .output()
         .unwrap()
+}
+
+pub fn project_home(metadata: &Path) -> grip::project::ProjectPaths {
+    grip::project::ProjectPaths::project_metadata(
+        metadata.to_path_buf(),
+        metadata.parent().unwrap().to_path_buf(),
+    )
 }
 
 fn qualification_command(program: &str, arguments: &[&str]) -> String {
@@ -99,21 +109,22 @@ pub fn qualification_record(
         performance_host_description: qualification_command("uname", &["-m"]),
     }
 }
-pub fn minimal_home(root: &Path) -> PathBuf {
+pub fn initialize_project_metadata(root: &Path) -> PathBuf {
     let grip = root.join(".grip");
     fs::create_dir(&grip).unwrap();
     fs::write(
         grip.join("config.toml"),
-        "schema_version = 1\nmappings = []\n",
+        "schema_version = 2\nmappings = []\n",
     )
     .unwrap();
+    fs::write(grip.join(".gitignore"), "/state/\n").unwrap();
     grip
 }
 
 #[derive(Debug)]
 pub struct MetadataFixture {
     pub root: tempfile::TempDir,
-    pub grip_home: PathBuf,
+    pub metadata_dir: PathBuf,
     pub source: PathBuf,
     pub destination: PathBuf,
 }
@@ -121,15 +132,15 @@ pub struct MetadataFixture {
 impl MetadataFixture {
     pub fn file(contents: &[u8]) -> Self {
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
-        let grip_home = minimal_home(root.path());
+        let metadata_dir = initialize_project_metadata(root.path());
         let source = root.path().join("source");
         let destination = root.path().join("destination");
         fs::write(&source, contents).unwrap();
         fs::write(&destination, contents).unwrap();
-        write_registry(&grip_home, &[("file", &source, &destination)]);
+        write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
         Self {
             root,
-            grip_home,
+            metadata_dir,
             source,
             destination,
         }
@@ -137,7 +148,7 @@ impl MetadataFixture {
 
     pub fn tree() -> Self {
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
-        let grip_home = minimal_home(root.path());
+        let metadata_dir = initialize_project_metadata(root.path());
         let source = root.path().join("source");
         let destination = root.path().join("destination");
         for tree in [&source, &destination] {
@@ -146,10 +157,10 @@ impl MetadataFixture {
             fs::write(tree.join("nested/file"), b"accepted").unwrap();
             fs::create_dir(tree.join("empty")).unwrap();
         }
-        write_registry(&grip_home, &[("tree", &source, &destination)]);
+        write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
         Self {
             root,
-            grip_home,
+            metadata_dir,
             source,
             destination,
         }
@@ -439,7 +450,15 @@ pub fn raw_metadata_snapshot(root: &Path) -> BTreeMap<Vec<u8>, RawMetadataSnapsh
     value
 }
 
-pub fn write_registry(grip_home: &Path, mappings: &[(&str, &Path, &Path)]) {
+pub fn write_descriptor(metadata_dir: &Path, mappings: &[(&str, &Path, &Path)]) {
+    write_descriptor_for_home(metadata_dir, metadata_dir.parent().unwrap(), mappings);
+}
+
+pub fn write_descriptor_for_home(
+    metadata_dir: &Path,
+    destination_home: &Path,
+    mappings: &[(&str, &Path, &Path)],
+) {
     fn canonical(path: &Path) -> PathBuf {
         if path.exists() {
             return fs::canonicalize(path).unwrap();
@@ -456,21 +475,34 @@ pub fn write_registry(grip_home: &Path, mappings: &[(&str, &Path, &Path)]) {
         }
         result
     }
-    let mut document = String::from("schema_version = 1\n");
+    let project_root = fs::canonicalize(metadata_dir.parent().unwrap()).unwrap();
+    let destination_home = fs::canonicalize(destination_home).unwrap();
+    let mut document = String::from("schema_version = 2\n");
     if mappings.is_empty() {
         document.push_str("mappings = []\n");
     } else {
         for (kind, source, destination) in mappings {
             let source = canonical(source);
             let destination = canonical(destination);
+            let source = source.strip_prefix(&project_root).unwrap();
+            let source = if source.as_os_str().is_empty() {
+                ".".to_owned()
+            } else {
+                source.display().to_string()
+            };
+            let destination = destination.strip_prefix(&destination_home).unwrap();
+            let destination = if destination.as_os_str().is_empty() {
+                "~".to_owned()
+            } else {
+                format!("~/{}", destination.display())
+            };
             document.push_str(&format!(
                 "\n[[mappings]]\nkind = \"{kind}\"\nsource = {:?}\ndestination = {:?}\n",
-                source.display().to_string(),
-                destination.display().to_string()
+                source, destination
             ));
         }
     }
-    fs::write(grip_home.join("config.toml"), document).unwrap();
+    fs::write(metadata_dir.join("config.toml"), document).unwrap();
 }
 
 pub fn json(output: &Output) -> serde_json::Value {
@@ -483,22 +515,8 @@ pub fn json(output: &Output) -> serde_json::Value {
     })
 }
 
-pub fn write_v2_state(
-    grip_home: &Path,
-    generation: u64,
-    baselines: BTreeMap<
-        grip::observation::model::EntryIdentity,
-        grip::observation::model::SupportedState,
-    >,
-) {
-    let state = grip::state::AcceptedState {
-        generation: Some(generation),
-        baselines,
-        complete_baselines: BTreeMap::new(),
-        schema_version: Some(2),
-        accepted_bytes: None,
-    };
-    let directory = grip_home.join("state");
+pub fn write_unsupported_state_v2(metadata_dir: &Path) {
+    let directory = metadata_dir.join("state");
     fs::create_dir_all(&directory).unwrap();
     fs::set_permissions(
         &directory,
@@ -506,7 +524,7 @@ pub fn write_v2_state(
     )
     .unwrap();
     let path = directory.join("state.json");
-    fs::write(&path, grip::state::encode_v2(&state, generation).unwrap()).unwrap();
+    fs::write(&path, br#"{"schema_version":2}"#).unwrap();
     fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
 }
 
@@ -518,57 +536,53 @@ pub fn supported_file_state(path: &Path) -> grip::observation::model::SupportedS
 
 pub fn accepted_file_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = minimal_home(root.path());
+    let metadata_dir = initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
-    write_registry(&grip_home, &[("file", &source, &destination)]);
-    let output = command_with_grip_home(root.path(), &grip_home, &["push"]);
+    write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    let output = project_command(root.path(), &metadata_dir, &["push"]);
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    (root, grip_home, source, destination)
+    (root, metadata_dir, source, destination)
 }
 
 pub fn accepted_tree_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = minimal_home(root.path());
+    let metadata_dir = initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
     fs::create_dir(source.join("nested")).unwrap();
     fs::write(source.join("nested/file"), "accepted").unwrap();
-    write_registry(&grip_home, &[("tree", &source, &destination)]);
-    let output = command_with_grip_home(root.path(), &grip_home, &["push"]);
+    write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    let output = project_command(root.path(), &metadata_dir, &["push"]);
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    (root, grip_home, source, destination)
+    (root, metadata_dir, source, destination)
 }
 
 pub fn untracked_file_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
-    let (root, grip_home, source, destination) = accepted_file_fixture();
-    let output = command_with_grip_home(
-        root.path(),
-        &grip_home,
-        &["mapping", "remove", source.to_str().unwrap()],
-    );
+    let (root, metadata_dir, source, destination) = accepted_file_fixture();
+    let output = project_command(root.path(), &metadata_dir, &["mapping", "remove", "source"]);
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    (root, grip_home, source, destination)
+    (root, metadata_dir, source, destination)
 }
 
 pub fn payload_recovery_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf, String) {
-    let (root, grip_home, source, destination) = accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = accepted_file_fixture();
     fs::write(&destination, "replacement").unwrap();
-    let output = command_with_grip_home(root.path(), &grip_home, &["--output=json", "pull"]);
+    let output = project_command(root.path(), &metadata_dir, &["--output=json", "pull"]);
     assert!(
         output.status.success(),
         "{}",
@@ -577,7 +591,7 @@ pub fn payload_recovery_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathB
     let value = json(&output);
     let operation = value["details"]["operation_record"]["id"].as_str().unwrap();
     let reference = format!("payload:{operation}:0");
-    (root, grip_home, source, destination, reference)
+    (root, metadata_dir, source, destination, reference)
 }
 
 pub fn assert_snapshot_unchanged(expected: &BTreeMap<PathBuf, EntrySnapshot>, root: &Path) {
@@ -661,25 +675,25 @@ pub fn test_pull_plan(action_count: usize) -> grip::mutation::model::MutationPla
 
 pub fn pull_execution_fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     grip::observation::model::Selection,
     grip::mutation::model::MutationPlan,
 ) {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = minimal_home(root.path());
+    let metadata_dir = initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
-    write_registry(&grip_home, &[("file", &source, &destination)]);
+    write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        command_with_grip_home(root.path(), &grip_home, &["push"])
+        project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&destination, "destination change").unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;
@@ -705,15 +719,15 @@ pub fn pull_execution_fixture() -> (
 
 pub fn deletion_execution_fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     grip::observation::model::Selection,
     grip::delete::model::DeletionPlan,
 ) {
-    let (root, grip_home, source, _) = accepted_file_fixture();
+    let (root, metadata_dir, source, _) = accepted_file_fixture();
     fs::remove_file(source).unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;
@@ -739,15 +753,15 @@ pub fn deletion_execution_fixture() -> (
 
 pub fn sync_execution_fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     grip::observation::model::Selection,
     grip::mutation::model::MutationPlan,
 ) {
-    let (root, grip_home, source, _) = accepted_file_fixture();
+    let (root, metadata_dir, source, _) = accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;
@@ -775,16 +789,16 @@ pub fn resolution_execution_fixture(
     winner: grip::mutation::model::ConflictWinner,
 ) -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     grip::observation::model::Selection,
     grip::mutation::model::MutationPlan,
 ) {
-    let (root, grip_home, source, destination) = accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
     fs::write(&destination, "destination change").unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let identity = state
@@ -792,7 +806,6 @@ pub fn resolution_execution_fixture(
         .complete_baselines
         .keys()
         .next()
-        .or_else(|| state.accepted.baselines.keys().next())
         .unwrap()
         .clone();
     let selection = grip::observation::model::Selection::Entry(identity);
@@ -818,35 +831,35 @@ pub fn resolution_execution_fixture(
 
 pub fn mixed_sync_execution_fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     grip::observation::model::Selection,
     grip::mutation::model::MutationPlan,
 ) {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = minimal_home(root.path());
+    let metadata_dir = initialize_project_metadata(root.path());
     let source_a = root.path().join("source-a");
     let destination_a = root.path().join("destination-a");
     let source_b = root.path().join("source-b");
     let destination_b = root.path().join("destination-b");
     fs::write(&source_a, "accepted-a").unwrap();
     fs::write(&source_b, "accepted-b").unwrap();
-    write_registry(
-        &grip_home,
+    write_descriptor(
+        &metadata_dir,
         &[
             ("file", &source_a, &destination_a),
             ("file", &source_b, &destination_b),
         ],
     );
     assert!(
-        command_with_grip_home(root.path(), &grip_home, &["push"])
+        project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&source_a, "source change").unwrap();
     fs::write(&destination_b, "destination change").unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;
@@ -870,7 +883,7 @@ pub fn mixed_sync_execution_fixture() -> (
     (root, home, registry, state, selection, plan)
 }
 
-pub fn read_operation_component<T>(path: &Path) -> grip::operation::model::EnvelopeV1<T>
+pub fn read_operation_component<T>(path: &Path) -> grip::operation::model::LifecycleEnvelopeV2<T>
 where
     T: Clone
         + serde::Serialize

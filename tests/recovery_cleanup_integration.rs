@@ -2,12 +2,12 @@ mod support;
 
 #[test]
 fn confirmed_cleanup_removes_only_bytes_and_publishes_tombstone() {
-    let (root, grip_home, _, _, reference) = support::payload_recovery_fixture();
-    let accepted_registry = std::fs::read(grip_home.join("config.toml")).unwrap();
-    let accepted_state = std::fs::read(grip_home.join("state/state.json")).unwrap();
-    let preview = support::command_with_grip_home(
+    let (root, metadata_dir, _, _, reference) = support::payload_recovery_fixture();
+    let accepted_registry = std::fs::read(metadata_dir.join("config.toml")).unwrap();
+    let accepted_state = std::fs::read(metadata_dir.join("state/state.json")).unwrap();
+    let preview = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output=json",
             "recovery",
@@ -18,9 +18,9 @@ fn confirmed_cleanup_removes_only_bytes_and_publishes_tombstone() {
         ],
     );
     assert!(preview.status.success());
-    let execute = support::command_with_grip_home(
+    let execute = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output=json",
             "recovery",
@@ -40,24 +40,24 @@ fn confirmed_cleanup_removes_only_bytes_and_publishes_tombstone() {
         .unwrap()
         .to_owned();
     let summary =
-        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV1>(
-            &grip_home
+        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV2>(
+            &metadata_dir
                 .join("state/operations")
                 .join(operation)
                 .join("operation.json"),
         );
     assert_eq!(summary.payload.result_delivery, "delivered");
     assert_eq!(
-        std::fs::read(grip_home.join("config.toml")).unwrap(),
+        std::fs::read(metadata_dir.join("config.toml")).unwrap(),
         accepted_registry
     );
     assert_eq!(
-        std::fs::read(grip_home.join("state/state.json")).unwrap(),
+        std::fs::read(metadata_dir.join("state/state.json")).unwrap(),
         accepted_state
     );
-    let show = support::command_with_grip_home(
+    let show = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "recovery", "show", &reference],
     );
     assert_eq!(
@@ -68,8 +68,8 @@ fn confirmed_cleanup_removes_only_bytes_and_publishes_tombstone() {
 
 #[test]
 fn interrupted_tombstone_publication_is_retryable_but_not_reported_cleaned() {
-    let (_root, grip_home, _, _, reference) = support::payload_recovery_fixture();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let (_root, metadata_dir, _, _, reference) = support::payload_recovery_fixture();
+    let home = support::project_home(&metadata_dir);
     let reference: grip::recovery::model::RecoveryRef = reference.parse().unwrap();
     let plan = grip::recovery::cleanup::plan(&home, std::slice::from_ref(&reference)).unwrap();
     assert!(
@@ -98,8 +98,8 @@ fn interrupted_tombstone_publication_is_retryable_but_not_reported_cleaned() {
 
 #[test]
 fn cleanup_byte_removal_failure_preserves_available_bytes() {
-    let (_root, grip_home, _, _, reference) = support::payload_recovery_fixture();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let (_root, metadata_dir, _, _, reference) = support::payload_recovery_fixture();
+    let home = support::project_home(&metadata_dir);
     let reference: grip::recovery::model::RecoveryRef = reference.parse().unwrap();
     let plan = grip::recovery::cleanup::plan(&home, std::slice::from_ref(&reference)).unwrap();
     assert!(
@@ -120,20 +120,15 @@ fn cleanup_byte_removal_failure_preserves_available_bytes() {
 
 #[test]
 fn multi_reference_cleanup_reports_completed_failed_and_unattempted_actions() {
-    let (root, grip_home, source, _) = support::accepted_tree_fixture();
+    let (root, metadata_dir, source, _) = support::accepted_tree_fixture();
     std::fs::remove_dir_all(&source).unwrap();
-    let deletion = support::command_with_grip_home(
+    let deletion = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "--source", "source"],
     );
     assert!(deletion.status.success());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let references = grip::recovery::inventory::list(&home)
         .unwrap()
         .into_iter()

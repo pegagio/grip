@@ -1,7 +1,7 @@
 //! Explicit exact-reference recovery cleanup.
 
 use crate::error::GripError;
-use crate::home::GripHome;
+use crate::project::ProjectPaths;
 use crate::recovery::model::{
     CleanupAction, CleanupPlan, CleanupTombstonePayloadV1, RecoveryAvailability,
     RecoveryEnvelopeV1, RecoveryRef,
@@ -19,7 +19,7 @@ pub enum CleanupFault {
     TombstonePublicationAt(usize),
 }
 
-pub fn plan(home: &GripHome, references: &[RecoveryRef]) -> Result<CleanupPlan, GripError> {
+pub fn plan(home: &ProjectPaths, references: &[RecoveryRef]) -> Result<CleanupPlan, GripError> {
     let mut unique = BTreeSet::new();
     let mut actions = Vec::new();
     let mut blockers = Vec::new();
@@ -45,7 +45,7 @@ pub fn plan(home: &GripHome, references: &[RecoveryRef]) -> Result<CleanupPlan, 
                 .join("operation.json");
             let bytes = crate::mutation::filesystem::read_private_file(&summary_path)?;
             let summary = crate::operation::model::decode::<
-                crate::operation::model::OperationSummaryPayloadV1,
+                crate::operation::model::OperationSummaryPayloadV2,
             >(&bytes)?;
             if summary.payload.state == "executing" {
                 blockers.push(format!("{reference}: active_operation"));
@@ -81,13 +81,13 @@ pub fn plan(home: &GripHome, references: &[RecoveryRef]) -> Result<CleanupPlan, 
     })
 }
 
-pub fn execute(home: &GripHome, expected: &CleanupPlan) -> Result<CleanupPlan, GripError> {
+pub fn execute(home: &ProjectPaths, expected: &CleanupPlan) -> Result<CleanupPlan, GripError> {
     execute_with_fault(home, expected, None)
 }
 
 #[doc(hidden)]
 pub fn execute_with_fault(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &CleanupPlan,
     fault: Option<CleanupFault>,
 ) -> Result<CleanupPlan, GripError> {
@@ -304,8 +304,8 @@ fn cleanup_fail(
 fn checkpoint(
     publication: &str,
     durable: bool,
-) -> crate::operation::model::ActionCheckpointEvidenceV1 {
-    crate::operation::model::ActionCheckpointEvidenceV1 {
+) -> crate::operation::model::ActionCheckpointEvidenceV2 {
+    crate::operation::model::ActionCheckpointEvidenceV2 {
         revalidation: "passed".into(),
         recovery: "not_required".into(),
         recovery_ref: None,

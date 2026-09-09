@@ -97,16 +97,15 @@ pub fn classify(entry: &ObservedEntry, baseline: Option<&SupportedState>) -> Cla
     }
 }
 
-/// Classify with explicit State V2 migration semantics or complete State V3 equality.
+/// Classify with complete State V4 equality.
 pub fn classify_accepted(
     entry: &ObservedEntry,
     accepted: &crate::state::AcceptedState,
 ) -> ClassificationRecord {
-    let legacy = accepted.baselines.get(&entry.identity);
     let complete = accepted.complete_baselines.get(&entry.identity);
     if entry.source_complete.is_none() && entry.destination_complete.is_none() && complete.is_none()
     {
-        return classify(entry, legacy);
+        return classify(entry, None);
     }
     let source = entry.source_complete.as_ref().map(|value| &value.state);
     let destination = entry
@@ -119,25 +118,19 @@ pub fn classify_accepted(
         .any(|reason| reason.starts_with("destination:") || reason == "wrong_node_kind");
     let classification = if entry.membership == Membership::Untracked {
         Classification::UntrackedPendingRetirement
-    } else if entry.membership == Membership::Ignored && (legacy.is_some() || complete.is_some()) {
+    } else if entry.membership == Membership::Ignored && complete.is_some() {
         Classification::NewlyIgnoredPendingRetirement
     } else if entry.blocking && unsafe_destination {
         Classification::UnsafeCollision
     } else if entry.blocking {
         Classification::UnsupportedManaged
-    } else if accepted.schema_version == Some(2) && legacy.is_some() {
-        if source.is_some() && source == destination {
-            Classification::MetadataMigrationReady
-        } else {
-            Classification::MetadataMigrationConflict
-        }
     } else if let Some(baseline) = complete {
         classify_complete_with_baseline(source, destination, baseline)
     } else {
         classify_complete_without_baseline(source, destination)
     };
     let (direction, attention, blocking, reason) = properties(classification);
-    let mut record = classify(entry, legacy);
+    let mut record = classify(entry, None);
     record.classification = classification;
     record.prospective_direction = direction;
     record.attention = attention;

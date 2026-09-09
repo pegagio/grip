@@ -1,8 +1,7 @@
 //! Typed public recovery references and lifecycle evidence.
 
 use crate::error::GripError;
-use crate::metadata::model::{SupportedEntryStateV3, XattrFingerprint};
-use crate::observation::model::MappingSnapshot;
+use crate::metadata::model::SupportedEntryStateV3;
 use crate::state::IntegrityV1;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -95,24 +94,6 @@ pub enum RecoveryKind {
     Operation,
 }
 
-/// Immutable provenance for newly retained recovery bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecoveryManifestPayloadV1 {
-    pub reference: RecoveryRef,
-    pub kind: RecoveryKind,
-    pub created_at: String,
-    pub origin_operation: Option<String>,
-    pub origin_transition: String,
-    pub managed_identity: Option<String>,
-    pub bound_side: Option<String>,
-    pub bound_target: Option<String>,
-    pub prior_evidence: serde_json::Value,
-    pub expected_post_evidence: serde_json::Value,
-    pub byte_count: u64,
-    pub payload_ref: String,
-}
-
 /// Immutable proof that recoverable bytes were explicitly removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -132,100 +113,231 @@ pub struct RecoveryEnvelopeV1<T> {
     pub integrity: IntegrityV1,
 }
 
-/// Lossless identity binding for complete Recovery Metadata V2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RecoveryIdentityV2 {
-    pub mapping: MappingSnapshot,
-    pub relative_path_hex: String,
+pub struct RecoveryManifestPayloadV2 {
+    pub reference: RecoveryRef,
+    pub kind: RecoveryKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<crate::state::EntryIdentityV4>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint_role: Option<crate::state::EndpointRoleV1>,
+    pub private_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_target: Option<crate::operation::model::DiagnosticPathV1>,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_operation: Option<String>,
+    pub origin_transition: String,
+    pub prior_evidence: serde_json::Value,
+    pub expected_post_evidence: serde_json::Value,
+    pub byte_count: u64,
 }
 
-/// Safe reference to exact xattr bytes retained on the private recovery object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RecoveryXattrReferenceV2 {
-    pub fingerprint: XattrFingerprint,
-    pub payload_ref: String,
-    pub preserved: bool,
-    pub verified: bool,
-}
-
-/// Security metadata applied to the private recovery object, separate from original state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PrivateRecoverySecurityV2 {
-    pub permission_mode: String,
-    pub uid: u32,
-    pub gid: u32,
-}
-
-/// Complete, action-bound prior state required for a Feature 009 mutation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecoveryMetadataPayloadV2 {
-    pub operation_id: String,
-    pub action_index: usize,
-    pub identity: RecoveryIdentityV2,
-    pub prior_state: SupportedEntryStateV3,
-    pub payload_ref: Option<String>,
-    pub xattrs: Vec<RecoveryXattrReferenceV2>,
-    pub private_security: PrivateRecoverySecurityV2,
-    pub preserved: bool,
-    pub verified: bool,
-}
-
-/// Integrity-protected complete recovery metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecoveryMetadataEnvelopeV2 {
+pub struct RecoveryManifestV2 {
     pub schema_version: u8,
-    pub payload: RecoveryMetadataPayloadV2,
+    pub payload: RecoveryManifestPayloadV2,
     pub integrity: IntegrityV1,
 }
 
-#[derive(Serialize)]
-struct IntegrityInputV2<'a> {
-    schema_version: u8,
-    payload: &'a RecoveryMetadataPayloadV2,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryMetadataPayloadV3 {
+    pub operation_id: String,
+    pub action_index: usize,
+    pub identity: crate::state::EntryIdentityV4,
+    pub endpoint_role: crate::state::EndpointRoleV1,
+    pub prior_state: SupportedEntryStateV3,
+    pub payload_ref: Option<String>,
+    pub preserved: bool,
+    pub verified: bool,
 }
 
-impl RecoveryMetadataEnvelopeV2 {
-    pub fn new(payload: RecoveryMetadataPayloadV2) -> Result<Self, GripError> {
-        validate_metadata_v2(&payload)?;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryMetadataV3 {
+    pub schema_version: u8,
+    pub payload: RecoveryMetadataPayloadV3,
+    pub integrity: IntegrityV1,
+}
+
+impl RecoveryManifestV2 {
+    pub fn new(payload: RecoveryManifestPayloadV2) -> Result<Self, GripError> {
+        validate_manifest_v2(&payload)?;
         Ok(Self {
             schema_version: 2,
             integrity: IntegrityV1 {
                 algorithm: "sha256".into(),
-                digest: integrity_digest_v2(&payload)?,
+                digest: portable_digest(2, &payload)?,
             },
             payload,
         })
     }
 
     pub fn validate(&self) -> Result<(), GripError> {
-        if self.schema_version != 2 {
-            return Err(GripError::UnsupportedSchema(format!(
-                "unsupported recovery metadata schema version {}",
-                self.schema_version
-            )));
-        }
-        validate_metadata_v2(&self.payload)?;
-        if self.integrity.algorithm != "sha256"
-            || !valid_digest(&self.integrity.digest)
-            || self.integrity.digest != integrity_digest_v2(&self.payload)?
-        {
-            return Err(corrupt("recovery metadata integrity verification failed"));
-        }
-        Ok(())
+        validate_portable_envelope(2, self.schema_version, &self.payload, &self.integrity)?;
+        validate_manifest_v2(&self.payload)
     }
 }
 
-/// Strictly decode and validate complete Recovery Metadata V2.
-pub fn decode_metadata_v2(bytes: &[u8]) -> Result<RecoveryMetadataEnvelopeV2, GripError> {
-    let envelope: RecoveryMetadataEnvelopeV2 = serde_json::from_slice(bytes)
-        .map_err(|error| GripError::CorruptState(format!("invalid recovery metadata: {error}")))?;
-    envelope.validate()?;
-    Ok(envelope)
+impl RecoveryMetadataV3 {
+    pub fn new(payload: RecoveryMetadataPayloadV3) -> Result<Self, GripError> {
+        validate_metadata_v3(&payload)?;
+        Ok(Self {
+            schema_version: 3,
+            integrity: IntegrityV1 {
+                algorithm: "sha256".into(),
+                digest: portable_digest(3, &payload)?,
+            },
+            payload,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), GripError> {
+        validate_portable_envelope(3, self.schema_version, &self.payload, &self.integrity)?;
+        validate_metadata_v3(&self.payload)
+    }
+}
+
+pub fn decode_manifest_v2(bytes: &[u8]) -> Result<RecoveryManifestV2, GripError> {
+    decode_portable(bytes, 2, RecoveryManifestV2::validate)
+}
+
+pub fn decode_metadata_v3(bytes: &[u8]) -> Result<RecoveryMetadataV3, GripError> {
+    decode_portable(bytes, 3, RecoveryMetadataV3::validate)
+}
+
+fn decode_portable<T>(
+    bytes: &[u8],
+    expected: u64,
+    validate: impl FnOnce(&T) -> Result<(), GripError>,
+) -> Result<T, GripError>
+where
+    T: DeserializeOwned,
+{
+    let raw: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| GripError::CorruptState(format!("invalid recovery data: {error}")))?;
+    let version = raw
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| corrupt("recovery schema_version is required"))?;
+    if version != expected {
+        return Err(GripError::UnsupportedSchema(format!(
+            "unsupported recovery schema version {version}"
+        )));
+    }
+    let value: T = serde_json::from_value(raw)
+        .map_err(|error| GripError::CorruptState(format!("invalid recovery schema: {error}")))?;
+    validate(&value)?;
+    Ok(value)
+}
+
+fn validate_portable_envelope<T: Serialize>(
+    expected: u8,
+    actual: u8,
+    payload: &T,
+    integrity: &IntegrityV1,
+) -> Result<(), GripError> {
+    if actual != expected {
+        return Err(GripError::UnsupportedSchema(format!(
+            "unsupported recovery schema version {actual}"
+        )));
+    }
+    if integrity.algorithm != "sha256" || integrity.digest != portable_digest(expected, payload)? {
+        return Err(corrupt("recovery integrity verification failed"));
+    }
+    Ok(())
+}
+
+fn portable_digest<T: Serialize>(schema_version: u8, payload: &T) -> Result<String, GripError> {
+    let bytes = serde_json::to_vec(&IntegrityInput {
+        schema_version,
+        payload,
+    })
+    .map_err(|error| {
+        GripError::Internal(format!("could not encode recovery integrity: {error}"))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn validate_portable_identity(identity: &crate::state::EntryIdentityV4) -> Result<(), GripError> {
+    crate::registry::ProjectDescriptorV2::new(vec![identity.mapping.clone()])
+        .map_err(|_| corrupt("recovery portable identity is invalid"))?;
+    crate::state::decode_v4_identity_path(&identity.relative_path_hex)?;
+    Ok(())
+}
+
+fn validate_private_ref(value: &str) -> Result<(), GripError> {
+    let path = std::path::Path::new(value);
+    if value.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(corrupt("recovery private reference must remain relative"));
+    }
+    Ok(())
+}
+
+fn validate_manifest_v2(payload: &RecoveryManifestPayloadV2) -> Result<(), GripError> {
+    let expected_kind = match payload.reference {
+        RecoveryRef::Payload { .. } => RecoveryKind::Payload,
+        RecoveryRef::Registry { .. } => RecoveryKind::Registry,
+        RecoveryRef::AcceptedState { .. } => RecoveryKind::AcceptedState,
+        RecoveryRef::Operation { .. } => RecoveryKind::Operation,
+    };
+    if payload.kind != expected_kind || payload.kind == RecoveryKind::Operation {
+        return Err(corrupt(
+            "recovery manifest kind does not match its reference",
+        ));
+    }
+    if payload.created_at.is_empty() || payload.origin_transition.is_empty() {
+        return Err(corrupt("recovery manifest provenance is incomplete"));
+    }
+    validate_private_ref(&payload.private_ref)?;
+    match payload.kind {
+        RecoveryKind::Payload => {
+            let identity = payload
+                .identity
+                .as_ref()
+                .ok_or_else(|| corrupt("payload recovery identity is required"))?;
+            validate_portable_identity(identity)?;
+            if payload.endpoint_role.is_none()
+                || payload
+                    .origin_operation
+                    .as_deref()
+                    .is_none_or(|value| !valid_component(value))
+            {
+                return Err(corrupt("payload recovery binding is incomplete"));
+            }
+        }
+        RecoveryKind::Registry | RecoveryKind::AcceptedState => {
+            if payload.identity.is_some()
+                || payload.endpoint_role.is_some()
+                || payload.origin_operation.is_some()
+            {
+                return Err(corrupt("authority recovery contains payload-only binding"));
+            }
+        }
+        RecoveryKind::Operation => unreachable!(),
+    }
+    Ok(())
+}
+
+fn validate_metadata_v3(payload: &RecoveryMetadataPayloadV3) -> Result<(), GripError> {
+    if !valid_component(&payload.operation_id) || !payload.preserved || !payload.verified {
+        return Err(corrupt(
+            "Recovery Metadata V3 lifecycle evidence is invalid",
+        ));
+    }
+    validate_portable_identity(&payload.identity)?;
+    if let Some(reference) = &payload.payload_ref {
+        validate_private_ref(reference)?;
+    }
+    payload.prior_state.validate().map_err(corrupt)
 }
 
 #[derive(Serialize)]
@@ -270,52 +382,6 @@ where
             || self.integrity.digest != integrity_digest(&self.payload)?
         {
             return Err(corrupt("recovery evidence integrity verification failed"));
-        }
-        Ok(())
-    }
-}
-
-impl ValidateRecoveryPayload for RecoveryManifestPayloadV1 {
-    fn validate_payload(&self) -> Result<(), GripError> {
-        let expected_kind = match self.reference {
-            RecoveryRef::Payload { .. } => RecoveryKind::Payload,
-            RecoveryRef::Registry { .. } => RecoveryKind::Registry,
-            RecoveryRef::AcceptedState { .. } => RecoveryKind::AcceptedState,
-            RecoveryRef::Operation { .. } => RecoveryKind::Operation,
-        };
-        if self.kind != expected_kind || self.kind == RecoveryKind::Operation {
-            return Err(corrupt(
-                "recovery manifest kind does not match its reference",
-            ));
-        }
-        if self.created_at.is_empty()
-            || self.origin_transition.is_empty()
-            || !valid_private_component(&self.payload_ref)
-        {
-            return Err(corrupt("recovery manifest contains invalid provenance"));
-        }
-        match self.kind {
-            RecoveryKind::Payload => {
-                if self
-                    .origin_operation
-                    .as_deref()
-                    .is_none_or(|id| !valid_component(id))
-                    || self.managed_identity.as_deref().is_none_or(str::is_empty)
-                    || !matches!(self.bound_side.as_deref(), Some("source" | "destination"))
-                    || self.bound_target.as_deref().is_none_or(str::is_empty)
-                {
-                    return Err(corrupt("payload recovery binding is incomplete"));
-                }
-            }
-            RecoveryKind::Registry | RecoveryKind::AcceptedState => {
-                if self.managed_identity.is_some()
-                    || self.bound_side.is_some()
-                    || self.bound_target.is_some()
-                {
-                    return Err(corrupt("authority recovery contains payload-only binding"));
-                }
-            }
-            RecoveryKind::Operation => unreachable!(),
         }
         Ok(())
     }
@@ -419,7 +485,7 @@ pub struct RestoreAction {
     pub reference: RecoveryRef,
     pub target: Option<String>,
     pub status: String,
-    pub milestones: crate::operation::model::ActionCheckpointEvidenceV1,
+    pub milestones: crate::operation::model::ActionCheckpointEvidenceV2,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
 }
@@ -451,66 +517,11 @@ fn integrity_digest<T: Serialize>(payload: &T) -> Result<String, GripError> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
-fn integrity_digest_v2(payload: &RecoveryMetadataPayloadV2) -> Result<String, GripError> {
-    let bytes = serde_json::to_vec(&IntegrityInputV2 {
-        schema_version: 2,
-        payload,
-    })
-    .map_err(|error| GripError::Internal(format!("could not hash recovery metadata: {error}")))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
-}
-
-fn validate_metadata_v2(payload: &RecoveryMetadataPayloadV2) -> Result<(), GripError> {
-    if !valid_component(&payload.operation_id) {
-        return Err(corrupt("recovery metadata operation binding is invalid"));
-    }
-    if !payload.identity.mapping.source.is_absolute()
-        || !payload.identity.mapping.destination.is_absolute()
-        || !payload.identity.relative_path_hex.len().is_multiple_of(2)
-        || !payload
-            .identity
-            .relative_path_hex
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(corrupt("recovery metadata identity binding is invalid"));
-    }
-    payload.prior_state.validate().map_err(corrupt)?;
-    if payload.private_security.permission_mode != "0600" {
-        return Err(corrupt("private recovery object must use mode 0600"));
-    }
-    let expected_xattrs = &payload.prior_state.metadata.extended_attributes;
-    if payload.xattrs.len() != expected_xattrs.len()
-        || payload
-            .xattrs
-            .iter()
-            .zip(expected_xattrs)
-            .any(|(reference, expected)| {
-                reference.fingerprint != *expected
-                    || !valid_private_component(&reference.payload_ref)
-                    || !reference.preserved
-                    || !reference.verified
-            })
-    {
-        return Err(corrupt(
-            "recovery xattr references must exactly bind verified prior fingerprints",
-        ));
-    }
-    if !payload.preserved || !payload.verified {
-        return Err(corrupt("recovery metadata is not preserved and verified"));
-    }
-    Ok(())
-}
-
 fn valid_component(value: &str) -> bool {
     !value.is_empty()
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-}
-
-fn valid_private_component(value: &str) -> bool {
-    valid_component(value) && value != "." && value != ".."
 }
 
 fn valid_digest(value: &str) -> bool {
@@ -562,32 +573,6 @@ mod tests {
     }
 
     #[test]
-    fn manifest_expected_round_trip_when_binding_is_complete() {
-        let payload = RecoveryManifestPayloadV1 {
-            reference: RecoveryRef::Payload {
-                operation_id: "delete-1".into(),
-                action_index: 0,
-            },
-            kind: RecoveryKind::Payload,
-            created_at: "1".into(),
-            origin_operation: Some("delete-1".into()),
-            origin_transition: "deletion".into(),
-            managed_identity: Some("mapping:entry".into()),
-            bound_side: Some("destination".into()),
-            bound_target: Some("/target".into()),
-            prior_evidence: serde_json::json!({"state":"prior"}),
-            expected_post_evidence: serde_json::json!({"state":"absent"}),
-            byte_count: 4,
-            payload_ref: "payload".into(),
-        };
-        let envelope = RecoveryEnvelopeV1::new(payload).unwrap();
-        assert_eq!(
-            decode::<RecoveryManifestPayloadV1>(&encode(&envelope).unwrap()).unwrap(),
-            envelope
-        );
-    }
-
-    #[test]
     fn tombstone_expected_failure_when_reference_is_operation_only() {
         let payload = CleanupTombstonePayloadV1 {
             reference: RecoveryRef::Operation {
@@ -596,25 +581,6 @@ mod tests {
             cleaned_at: "1".into(),
             removed_byte_count: 0,
             cleanup_operation_id: "cleanup-1".into(),
-        };
-        assert!(RecoveryEnvelopeV1::new(payload).is_err());
-    }
-
-    #[test]
-    fn manifest_expected_failure_for_layout_kind_mismatch() {
-        let payload = RecoveryManifestPayloadV1 {
-            reference: RecoveryRef::Registry { digest: digest() },
-            kind: RecoveryKind::Payload,
-            created_at: "1".into(),
-            origin_operation: None,
-            origin_transition: "registry_publication".into(),
-            managed_identity: None,
-            bound_side: None,
-            bound_target: None,
-            prior_evidence: serde_json::Value::Null,
-            expected_post_evidence: serde_json::Value::Null,
-            byte_count: 0,
-            payload_ref: "config.toml".into(),
         };
         assert!(RecoveryEnvelopeV1::new(payload).is_err());
     }

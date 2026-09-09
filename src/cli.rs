@@ -1,10 +1,13 @@
 use crate::result::OutputMode;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "grip", version, about = "Safely manage per-user file mappings")]
 pub struct Cli {
+    #[arg(long, global = true, value_name = "PATH")]
+    pub project: Option<PathBuf>,
     #[arg(long, global = true, value_enum, default_value = "human")]
     pub output: OutputArg,
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
@@ -29,6 +32,8 @@ impl From<OutputArg> for OutputMode {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Initialize an existing directory as a Grip project.
+    Init(InitArgs),
     Version,
     Validate,
     Mapping(MappingArgs),
@@ -50,6 +55,12 @@ pub enum Command {
     /// Inspect, restore, or explicitly clean retained recovery evidence.
     Recovery(RecoveryArgs),
     Baseline(BaselineArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct InitArgs {
+    #[arg(value_name = "PATH")]
+    pub path: Option<PathBuf>,
 }
 
 /// Arguments for explicitly authorized directional deletion.

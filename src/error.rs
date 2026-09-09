@@ -53,6 +53,60 @@ pub enum MetadataReasonCode {
     MountBoundary,
 }
 
+/// Stable reasons for project selection and retained-context failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectReasonCode {
+    ProjectNotFound,
+    AmbiguousProject,
+    InvalidProjectRoot,
+    InvalidProjectMetadata,
+    NestedProject,
+    ProjectChanged,
+    InapplicableProjectOption,
+}
+
+impl ProjectReasonCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProjectNotFound => "project_not_found",
+            Self::AmbiguousProject => "ambiguous_project",
+            Self::InvalidProjectRoot => "invalid_project_root",
+            Self::InvalidProjectMetadata => "invalid_project_metadata",
+            Self::NestedProject => "nested_project",
+            Self::ProjectChanged => "project_changed",
+            Self::InapplicableProjectOption => "inapplicable_project_option",
+        }
+    }
+}
+
+/// Stable outcomes when project-local state carries a different local binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RebindingReasonCode {
+    BindingMismatch,
+    MissingMapping,
+    AmbiguousMapping,
+    StaleEvidence,
+    IncompleteEvidence,
+    UnsafeAncestry,
+    ContradictoryEvidence,
+}
+
+impl RebindingReasonCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BindingMismatch => "binding_mismatch",
+            Self::MissingMapping => "missing_mapping",
+            Self::AmbiguousMapping => "ambiguous_mapping",
+            Self::StaleEvidence => "stale_evidence",
+            Self::IncompleteEvidence => "incomplete_evidence",
+            Self::UnsafeAncestry => "unsafe_ancestry",
+            Self::ContradictoryEvidence => "contradictory_evidence",
+        }
+    }
+}
+
 impl ResultCategory {
     pub const fn code(self) -> &'static str {
         match self {

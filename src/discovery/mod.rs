@@ -5,8 +5,8 @@ pub mod ignore_policy;
 pub mod model;
 
 use crate::error::GripError;
-use crate::home::GripHome;
 use crate::mapping::{Mapping, MappingKind};
+use crate::project::ProjectPaths;
 use crate::registry::publication::{self, RegistrySnapshot};
 use filesystem::{Directory, evidence, metadata_at_path, unsupported_reason};
 use model::{
@@ -22,7 +22,7 @@ const OPERATION: &str = "mapping_inspect";
 
 /// Produce a deterministic inventory from two equivalent complete inspections.
 pub fn inspect(
-    home: &GripHome,
+    home: &ProjectPaths,
     initial: &RegistrySnapshot,
     selected_source: Option<PathBuf>,
 ) -> Result<DiscoveryInventory, GripError> {
@@ -30,7 +30,7 @@ pub fn inspect(
 }
 
 fn inspect_with_between_pass<F>(
-    home: &GripHome,
+    home: &ProjectPaths,
     initial: &RegistrySnapshot,
     selected_source: Option<PathBuf>,
     between_passes: F,
@@ -42,7 +42,7 @@ where
         .clone()
         .map_or(DiscoveryScope::All, DiscoveryScope::Mapping);
     let selected = select_mappings(initial, selected_source.as_deref())?;
-    let first = inspect_pass(&initial.bytes, selected)?;
+    let first = inspect_pass(&initial.bytes, selected, home.path())?;
     between_passes();
 
     let current = publication::load(home, false).map_err(|error| {
@@ -58,7 +58,7 @@ where
         ));
     }
     let selected = select_mappings(&current, selected_source.as_deref())?;
-    let second = inspect_pass(&current.bytes, selected)?;
+    let second = inspect_pass(&current.bytes, selected, home.path())?;
     publication::revalidate_readonly(home, initial, OPERATION)?;
     if first != second {
         return Err(stale(
@@ -96,6 +96,7 @@ fn select_mappings<'a>(
 fn inspect_pass(
     registry_bytes: &[u8],
     mappings: Vec<&Mapping>,
+    reserved_metadata: &Path,
 ) -> Result<DiscoveryPass, GripError> {
     let mut records = Vec::new();
     let mut node_evidence = BTreeMap::new();
@@ -108,6 +109,7 @@ fn inspect_pass(
             }
             MappingKind::Tree => inspect_tree_mapping(
                 mapping,
+                reserved_metadata,
                 &mut records,
                 &mut node_evidence,
                 &mut policy_evidence,
@@ -437,6 +439,7 @@ fn inspect_file_mapping(
 
 fn inspect_tree_mapping(
     mapping: &Mapping,
+    reserved_metadata: &Path,
     records: &mut Vec<DiscoveryRecord>,
     evidence_map: &mut BTreeMap<(EvidenceSide, PathBuf, Vec<u8>), model::NodeEvidence>,
     policy_evidence: &mut BTreeMap<Vec<u8>, model::PolicyEvidence>,
@@ -447,9 +450,10 @@ fn inspect_tree_mapping(
         Err(error) => return Err(unavailable(&mapping.source, "directory_unreadable", error)),
     };
     let root_device = root.root_metadata().st_dev as u64;
-    let names = root
+    let mut names = root
         .child_names()
         .map_err(|error| unavailable(&mapping.source, "directory_unreadable", error))?;
+    names.retain(|name| append_raw(&mapping.source, name) != reserved_metadata);
     let root_metadata = filesystem::NodeMetadata {
         stat: *root.root_metadata(),
         extended_flags: None,
@@ -474,6 +478,7 @@ fn inspect_tree_mapping(
         evidence_map,
         policy_evidence,
         &[],
+        reserved_metadata,
     )
 }
 
@@ -488,6 +493,7 @@ fn walk_source(
     evidence_map: &mut BTreeMap<(EvidenceSide, PathBuf, Vec<u8>), model::NodeEvidence>,
     policy_evidence: &mut BTreeMap<Vec<u8>, model::PolicyEvidence>,
     inherited_policies: &[ignore_policy::GripignorePolicy],
+    reserved_metadata: &Path,
 ) -> Result<(), GripError> {
     let directory_path = append_raw(&mapping.source, &parent_relative);
     let mut policies = inherited_policies.to_vec();
@@ -508,6 +514,9 @@ fn walk_source(
         }
         let relative = join_relative(&parent_relative, &name);
         let source_path = append_raw(&mapping.source, &relative);
+        if source_path == reserved_metadata {
+            continue;
+        }
         let destination_path = append_raw(&mapping.destination, &relative);
         let metadata = directory
             .metadata(&name)
@@ -580,6 +589,7 @@ fn walk_source(
                 evidence_map,
                 policy_evidence,
                 &policies,
+                reserved_metadata,
             )?;
         }
     }
@@ -634,27 +644,21 @@ mod stale_tests {
     use super::*;
     use std::fs;
 
-    fn tree_fixture() -> (tempfile::TempDir, GripHome, PathBuf) {
+    fn tree_fixture() -> (tempfile::TempDir, ProjectPaths, PathBuf) {
         let root = tempfile::tempdir().unwrap();
-        let grip_home_path = root.path().join("grip-home");
+        let metadata_dir = root.path().join(".grip");
         let source = root.path().join("source");
-        let destination = root.path().join("destination");
-        fs::create_dir(&grip_home_path).unwrap();
+        fs::create_dir(&metadata_dir).unwrap();
         fs::create_dir(&source).unwrap();
         fs::write(source.join("existing"), "value").unwrap();
         let source = fs::canonicalize(source).unwrap();
-        let mut destination_canonical = fs::canonicalize(root.path()).unwrap();
-        destination_canonical.push(destination.file_name().unwrap());
         fs::write(
-            grip_home_path.join("config.toml"),
-            format!(
-                "schema_version = 1\n[[mappings]]\nkind = \"tree\"\nsource = {:?}\ndestination = {:?}\n",
-                source.display().to_string(),
-                destination_canonical.display().to_string()
-            ),
+            metadata_dir.join("config.toml"),
+            "schema_version = 2\n\n[[mappings]]\nkind = \"tree\"\nsource = \"source\"\ndestination = \"~/destination\"\n",
         )
         .unwrap();
-        let home = crate::home::select(Some(grip_home_path.into_os_string()), None).unwrap();
+        let home =
+            crate::project::ProjectPaths::project_metadata(metadata_dir, root.path().to_path_buf());
         (root, home, source)
     }
 

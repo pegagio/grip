@@ -1,19 +1,87 @@
 mod support;
 
 use grip::discovery::model::NodeKind;
-use grip::home;
 use grip::mapping::MappingKind;
 use grip::metadata::model::{AclState, MetadataState, ModificationTime, SupportedEntryStateV3};
-use grip::observation::model::{
-    ContentFingerprint, EntryIdentity, MappingSnapshot, SupportedState,
-};
+use grip::observation::model::{ContentFingerprint, EntryIdentity, ResolvedMapping};
+use grip::state;
 use grip::state::lock::PublicationLock;
 use grip::state::publication::PublicationFault;
-use grip::state::{self, StateEnvelopeV1};
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::PathBuf;
+
+fn portable_identity(relative_path_hex: &str) -> state::EntryIdentityV4 {
+    state::EntryIdentityV4 {
+        mapping: grip::mapping::PortableMapping::parse(
+            MappingKind::Tree,
+            std::ffi::OsStr::new("payload"),
+            std::ffi::OsStr::new("~/payload"),
+        )
+        .unwrap(),
+        relative_path_hex: relative_path_hex.into(),
+    }
+}
+
+fn project_binding() -> state::ProjectBindingV1 {
+    state::ProjectBindingV1 {
+        project_root: "/project".into(),
+        user_home: "/home".into(),
+        descriptor_digest: "a".repeat(64),
+        resolved_mapping_digest: "b".repeat(64),
+    }
+}
+
+#[test]
+fn state_v4_round_trips_portable_identity_binding_and_generation() {
+    let accepted = state::AcceptedStateV4 {
+        generation: 4,
+        binding: project_binding(),
+        baselines: BTreeMap::from([
+            (portable_identity("61"), complete_state()),
+            (portable_identity("7a"), complete_state()),
+        ]),
+        pending_retirements: Vec::new(),
+        accepted_bytes: None,
+    };
+    let bytes = state::encode_v4(&accepted).unwrap();
+    let decoded = state::decode_v4(&bytes).unwrap();
+    assert_eq!(decoded.generation, 4);
+    assert_eq!(decoded.binding, accepted.binding);
+    assert_eq!(decoded.baselines, accepted.baselines);
+}
+
+#[test]
+fn state_v4_rejects_old_versions_unknown_fields_integrity_and_ordering() {
+    for version in 1..=3 {
+        let bytes = format!("{{\"schema_version\":{version}}}");
+        assert_eq!(
+            state::decode_v4(bytes.as_bytes()).unwrap_err().category(),
+            grip::ResultCategory::UnsupportedSchema
+        );
+    }
+    let accepted = state::AcceptedStateV4 {
+        generation: 1,
+        binding: project_binding(),
+        baselines: BTreeMap::from([
+            (portable_identity("61"), complete_state()),
+            (portable_identity("62"), complete_state()),
+        ]),
+        pending_retirements: Vec::new(),
+        accepted_bytes: None,
+    };
+    let bytes = state::encode_v4(&accepted).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["extra"] = serde_json::json!(true);
+    assert!(state::decode_v4(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut envelope: state::StateEnvelopeV4 = serde_json::from_slice(&bytes).unwrap();
+    envelope.payload.baselines.swap(0, 1);
+    envelope.integrity.digest = state::state_v4_digest(&envelope.payload).unwrap();
+    assert!(envelope.validate().is_err());
+    envelope.integrity.digest.replace_range(..1, "0");
+    assert!(envelope.validate().is_err());
+}
 
 fn complete_state() -> SupportedEntryStateV3 {
     SupportedEntryStateV3 {
@@ -38,97 +106,60 @@ fn complete_state() -> SupportedEntryStateV3 {
     }
 }
 
-fn complete_identity(relative: &[u8]) -> EntryIdentity {
+fn publication_fixture() -> (tempfile::TempDir, grip::project::ProjectPaths) {
+    let root = tempfile::tempdir().unwrap();
+    let metadata = root.path().join(".grip");
+    fs::create_dir(&metadata).unwrap();
+    fs::write(
+        metadata.join("config.toml"),
+        "schema_version = 2\n\n[[mappings]]\nkind = \"tree\"\nsource = \"payload\"\ndestination = \"~/destination\"\n",
+    )
+    .unwrap();
+    let home = project_home(&metadata);
+    (root, home)
+}
+
+fn project_home(metadata: &std::path::Path) -> grip::project::ProjectPaths {
+    grip::project::ProjectPaths::project_metadata(
+        metadata.to_path_buf(),
+        metadata.parent().unwrap().to_path_buf(),
+    )
+}
+
+fn publication_identity(root: &std::path::Path, relative: &[u8]) -> EntryIdentity {
     EntryIdentity::new(
-        MappingSnapshot {
+        ResolvedMapping {
             kind: MappingKind::Tree,
-            source: PathBuf::from("/source"),
-            destination: PathBuf::from("/destination"),
+            source: root.join("payload"),
+            destination: root.join("destination"),
         },
         relative.to_vec(),
     )
     .unwrap()
 }
 
-#[test]
-fn state_v3_round_trips_complete_canonical_state_and_generation() {
-    let mut baselines = BTreeMap::new();
-    baselines.insert(complete_identity(b"z"), complete_state());
-    baselines.insert(complete_identity(b"a"), complete_state());
-    let accepted = state::AcceptedStateV3 {
-        generation: 9,
-        baselines,
-        accepted_bytes: None,
-    };
-    let bytes = state::encode_v3(&accepted).unwrap();
-    let decoded = state::decode_versioned(&bytes).unwrap();
-    let state::DecodedAcceptedState::Complete(decoded) = decoded else {
-        panic!("V3 must remain complete state");
-    };
-    assert_eq!(decoded.generation, 9);
-    assert_eq!(decoded.baselines, accepted.baselines);
-
-    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(value["payload"]["baselines"][0]["relative_path_hex"], "61");
+fn complete_baselines(
+    root: &std::path::Path,
+    digest_byte: char,
+) -> BTreeMap<EntryIdentity, SupportedEntryStateV3> {
+    let mut value = complete_state();
+    value.content.as_mut().unwrap().digest = digest_byte.to_string().repeat(64);
+    BTreeMap::from([(publication_identity(root, b"file"), value)])
 }
 
 #[test]
-fn state_v3_rejects_integrity_unknown_fields_and_noncanonical_order() {
-    let mut baselines = BTreeMap::new();
-    baselines.insert(complete_identity(b"a"), complete_state());
-    baselines.insert(complete_identity(b"b"), complete_state());
-    let accepted = state::AcceptedStateV3 {
-        generation: 1,
-        baselines,
-        accepted_bytes: None,
-    };
-    let bytes = state::encode_v3(&accepted).unwrap();
-    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    value["extra"] = serde_json::json!(true);
-    assert!(state::decode_versioned(&serde_json::to_vec(&value).unwrap()).is_err());
-
-    let mut envelope: state::StateEnvelopeV3 = serde_json::from_slice(&bytes).unwrap();
-    envelope.integrity.digest.replace_range(..1, "0");
-    assert!(envelope.validate().is_err());
-    envelope = state::StateEnvelopeV3::new(1, &accepted.baselines);
-    envelope.payload.baselines.swap(0, 1);
-    assert!(envelope.validate().is_err());
-}
-
-#[test]
-fn legacy_v2_remains_legacy_and_v3_cannot_be_downgraded() {
-    let legacy = accepted_with_digest('a');
-    let v2 = state::encode_v2(&legacy, 4).unwrap();
-    assert!(matches!(
-        state::decode_versioned(&v2).unwrap(),
-        state::DecodedAcceptedState::Legacy(_)
-    ));
-
-    let mut baselines = BTreeMap::new();
-    baselines.insert(complete_identity(b"a"), complete_state());
-    let v3 = state::encode_v3(&state::AcceptedStateV3 {
-        generation: 5,
-        baselines,
-        accepted_bytes: None,
-    })
-    .unwrap();
-    assert!(state::decode_accepted(Some(&v3)).is_err());
-}
-
-#[test]
-fn complete_state_publication_is_atomic_and_loads_as_v3() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+fn complete_state_publication_is_atomic_and_loads_as_v4() {
+    let (root, home) = publication_fixture();
     let state_dir = state::publication::prepare_directory(&home).unwrap();
     let _lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
     let expected = state::publication::load(&home).unwrap();
-    let baselines = BTreeMap::from([(complete_identity(b"file"), complete_state())]);
+    let baselines = complete_baselines(root.path(), 'c');
     assert_eq!(
         state::publication::publish_complete_locked(&home, &expected, &baselines).unwrap(),
         Some(0)
     );
     let loaded = state::publication::load(&home).unwrap();
-    let complete = loaded.complete.expect("published state must remain V3");
+    let complete = loaded.complete.expect("published state must remain V4");
     assert_eq!(complete.generation, 0);
     assert_eq!(complete.baselines, baselines);
     assert_eq!(
@@ -139,67 +170,6 @@ fn complete_state_publication_is_atomic_and_loads_as_v3() {
             & 0o777,
         0o600
     );
-}
-
-#[test]
-fn validates_digest_schema_and_generation() {
-    let state = StateEnvelopeV1::new(0);
-    let bytes = state::encode(&state).unwrap();
-    assert_eq!(
-        state::decode(std::str::from_utf8(&bytes).unwrap()).unwrap(),
-        state
-    );
-    let mut corrupt = state.clone();
-    corrupt.integrity.digest.replace_range(..1, "0");
-    assert!(corrupt.validate().is_err());
-    let text = String::from_utf8(bytes)
-        .unwrap()
-        .replace("\"schema_version\":1", "\"schema_version\":2");
-    assert_eq!(state::decode(&text).unwrap_err().category().exit_code(), 11);
-}
-
-#[test]
-fn publication_retains_verified_prior_generation_and_permissions() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
-    state::publication::publish(&home, &StateEnvelopeV1::new(0)).unwrap();
-    state::publication::publish(&home, &StateEnvelopeV1::new(1)).unwrap();
-    let current = fs::read_to_string(root.path().join("state/state.json")).unwrap();
-    assert_eq!(state::decode(&current).unwrap().payload.generation, 1);
-    let prior =
-        fs::read_to_string(root.path().join("state/recovery/generation-0/state.json")).unwrap();
-    assert_eq!(state::decode(&prior).unwrap().payload.generation, 0);
-    assert_eq!(
-        fs::metadata(root.path().join("state"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o700
-    );
-    assert_eq!(
-        fs::metadata(root.path().join("state/state.json"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
-}
-
-#[test]
-fn rejects_nonincreasing_generation_and_recovery_collision() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
-    state::publication::publish(&home, &StateEnvelopeV1::new(0)).unwrap();
-    assert!(state::publication::publish(&home, &StateEnvelopeV1::new(0)).is_err());
-    fs::create_dir_all(root.path().join("state/recovery/generation-0")).unwrap();
-    fs::write(
-        root.path().join("state/recovery/generation-0/state.json"),
-        "different",
-    )
-    .unwrap();
-    assert!(state::publication::publish(&home, &StateEnvelopeV1::new(1)).is_err());
 }
 
 #[test]
@@ -216,118 +186,17 @@ fn lock_contention_is_bounded_and_release_allows_retry() {
 }
 
 #[test]
-fn injected_pre_rename_failure_preserves_accepted_state_and_cleans_staging() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
-    state::publication::publish(&home, &StateEnvelopeV1::new(0)).unwrap();
-    assert!(
-        state::publication::publish_with_fault(
-            &home,
-            &StateEnvelopeV1::new(1),
-            Some(PublicationFault::BeforeStateRename),
-        )
-        .is_err()
-    );
-    let accepted = fs::read_to_string(root.path().join("state/state.json")).unwrap();
-    assert_eq!(state::decode(&accepted).unwrap().payload.generation, 0);
-    assert!(
-        fs::read_dir(root.path().join("state"))
-            .unwrap()
-            .all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".state.tmp-")
-            })
-    );
-}
-
-#[test]
-fn version_neutral_reader_accepts_absent_v1_and_v2_state() {
-    let absent = state::decode_accepted(None).unwrap();
-    assert_eq!(absent.generation, None);
-    assert!(absent.baselines.is_empty());
-
-    let v1 = state::encode(&StateEnvelopeV1::new(7)).unwrap();
-    let predecessor = state::decode_accepted(Some(&v1)).unwrap();
-    assert_eq!(predecessor.generation, Some(7));
-    assert!(predecessor.baselines.is_empty());
-
-    let identity = EntryIdentity::new(
-        MappingSnapshot {
-            kind: MappingKind::File,
-            source: PathBuf::from("/source/file"),
-            destination: PathBuf::from("/destination/file"),
-        },
-        Vec::new(),
-    )
-    .unwrap();
-    let state_value = SupportedState {
-        node_kind: NodeKind::File,
-        content: Some(ContentFingerprint {
-            algorithm: "sha256".into(),
-            digest: "b".repeat(64),
-            length: 9,
-        }),
-        permission_mode: Some("0600".into()),
-    };
-    let mut baselines = BTreeMap::new();
-    baselines.insert(identity.clone(), state_value.clone());
-    let accepted = state::AcceptedState {
-        generation: Some(8),
-        baselines,
-        complete_baselines: BTreeMap::new(),
-        schema_version: Some(2),
-        accepted_bytes: None,
-    };
-    let v2 = state::encode_v2(&accepted, 8).unwrap();
-    let decoded = state::decode_accepted(Some(&v2)).unwrap();
-    assert_eq!(decoded.generation, Some(8));
-    assert_eq!(decoded.baselines.get(&identity), Some(&state_value));
-}
-
-fn accepted_with_digest(digest_byte: char) -> state::AcceptedState {
-    let identity = EntryIdentity::new(
-        MappingSnapshot {
-            kind: MappingKind::File,
-            source: PathBuf::from("/source/file"),
-            destination: PathBuf::from("/destination/file"),
-        },
-        Vec::new(),
-    )
-    .unwrap();
-    let mut baselines = BTreeMap::new();
-    baselines.insert(
-        identity,
-        SupportedState {
-            node_kind: NodeKind::File,
-            content: Some(ContentFingerprint {
-                algorithm: "sha256".into(),
-                digest: digest_byte.to_string().repeat(64),
-                length: 1,
-            }),
-            permission_mode: Some("0600".into()),
-        },
-    );
-    state::AcceptedState {
-        generation: None,
-        baselines,
-        complete_baselines: BTreeMap::new(),
-        schema_version: Some(2),
-        accepted_bytes: None,
-    }
-}
-
-#[test]
-fn v2_pre_rename_and_corrupt_staging_failures_preserve_prior_state() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+fn v4_pre_rename_and_corrupt_staging_failures_preserve_prior_state() {
+    let (root, home) = publication_fixture();
     let state_dir = state::publication::prepare_directory(&home).unwrap();
     let lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
     let absent = state::publication::load(&home).unwrap();
-    state::publication::publish_accepted_locked(&home, &absent, &accepted_with_digest('a'))
-        .unwrap();
+    state::publication::publish_complete_locked(
+        &home,
+        &absent,
+        &complete_baselines(root.path(), 'a'),
+    )
+    .unwrap();
     let before = fs::read(state_dir.join("state.json")).unwrap();
     let expected = state::publication::load(&home).unwrap();
 
@@ -336,10 +205,10 @@ fn v2_pre_rename_and_corrupt_staging_failures_preserve_prior_state() {
         PublicationFault::CorruptV2Staging,
     ] {
         assert!(
-            state::publication::publish_accepted_locked_with_fault(
+            state::publication::publish_complete_locked_with_fault(
                 &home,
                 &expected,
-                &accepted_with_digest('b'),
+                &complete_baselines(root.path(), 'b'),
                 Some(fault),
             )
             .is_err()
@@ -357,14 +226,13 @@ fn v2_pre_rename_and_corrupt_staging_failures_preserve_prior_state() {
 }
 
 #[test]
-fn v2_post_rename_failure_reports_visibility_and_retry_is_noop() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+fn v4_post_rename_failure_reports_visibility_and_retry_is_noop() {
+    let (root, home) = publication_fixture();
     let state_dir = state::publication::prepare_directory(&home).unwrap();
     let lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
     let absent = state::publication::load(&home).unwrap();
-    let next = accepted_with_digest('a');
-    let error = state::publication::publish_accepted_locked_with_fault(
+    let next = complete_baselines(root.path(), 'a');
+    let error = state::publication::publish_complete_locked_with_fault(
         &home,
         &absent,
         &next,
@@ -376,23 +244,26 @@ fn v2_post_rename_failure_reports_visibility_and_retry_is_noop() {
     assert_eq!(outcome.details["publication_visible"], true);
     assert_eq!(outcome.details["durability_confirmed"], false);
     let visible = state::publication::load(&home).unwrap();
-    assert_eq!(visible.accepted.baselines, next.baselines);
+    assert_eq!(visible.complete.as_ref().unwrap().baselines, next);
     assert_eq!(
-        state::publication::publish_accepted_locked(&home, &visible, &next).unwrap(),
+        state::publication::publish_complete_locked(&home, &visible, &next).unwrap(),
         None
     );
     drop(lock);
 }
 
 #[test]
-fn v2_rejects_recovery_collisions_and_unsafe_state_artifacts() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+fn v4_rejects_recovery_collisions_and_unsafe_state_artifacts() {
+    let (root, home) = publication_fixture();
     let state_dir = state::publication::prepare_directory(&home).unwrap();
     let lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
     let absent = state::publication::load(&home).unwrap();
-    state::publication::publish_accepted_locked(&home, &absent, &accepted_with_digest('a'))
-        .unwrap();
+    state::publication::publish_complete_locked(
+        &home,
+        &absent,
+        &complete_baselines(root.path(), 'a'),
+    )
+    .unwrap();
     let expected = state::publication::load(&home).unwrap();
     let recovery_dir = state_dir.join("recovery/generation-0");
     fs::create_dir_all(&recovery_dir).unwrap();
@@ -406,8 +277,12 @@ fn v2_rejects_recovery_collisions_and_unsafe_state_artifacts() {
     fs::write(&recovery, b"different").unwrap();
     fs::set_permissions(&recovery, fs::Permissions::from_mode(0o600)).unwrap();
     assert!(
-        state::publication::publish_accepted_locked(&home, &expected, &accepted_with_digest('b'))
-            .is_err()
+        state::publication::publish_complete_locked(
+            &home,
+            &expected,
+            &complete_baselines(root.path(), 'b'),
+        )
+        .is_err()
     );
     drop(lock);
 
@@ -426,7 +301,7 @@ fn v2_rejects_recovery_collisions_and_unsafe_state_artifacts() {
 fn read_only_load_rejects_unsafe_state_directories_even_when_state_is_absent() {
     for mode in [0o755, 0o770] {
         let root = tempfile::tempdir().unwrap();
-        let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+        let home = project_home(root.path());
         fs::create_dir(root.path().join("state")).unwrap();
         fs::set_permissions(root.path().join("state"), fs::Permissions::from_mode(mode)).unwrap();
         assert_eq!(
@@ -439,7 +314,7 @@ fn read_only_load_rejects_unsafe_state_directories_even_when_state_is_absent() {
     }
 
     let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+    let home = project_home(root.path());
     fs::write(root.path().join("state"), b"not a directory").unwrap();
     assert_eq!(
         state::publication::load(&home)
@@ -451,7 +326,7 @@ fn read_only_load_rejects_unsafe_state_directories_even_when_state_is_absent() {
 
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+    let home = project_home(root.path());
     symlink(outside.path(), root.path().join("state")).unwrap();
     assert_eq!(
         state::publication::load(&home)
@@ -463,63 +338,39 @@ fn read_only_load_rejects_unsafe_state_directories_even_when_state_is_absent() {
 }
 
 #[test]
-fn v2_staging_substitution_is_rejected_preserved_and_does_not_publish() {
-    for fault in [
-        PublicationFault::SubstituteV2StagingFile,
-        PublicationFault::SubstituteV2StagingSymlink,
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
-        let state_dir = state::publication::prepare_directory(&home).unwrap();
-        let lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
-        let absent = state::publication::load(&home).unwrap();
-        let error = state::publication::publish_accepted_locked_with_fault(
-            &home,
-            &absent,
-            &accepted_with_digest('a'),
-            Some(fault),
-        )
-        .unwrap_err();
-        assert_eq!(error.category().exit_code(), 12);
-        assert!(!state_dir.join("state.json").exists());
-        assert!(fs::read_dir(&state_dir).unwrap().any(|entry| {
-            entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".state.tmp-")
-        }));
-        drop(lock);
-    }
-}
-
-#[test]
 fn stale_state_and_exhausted_generation_have_stable_non_success_results() {
-    let root = tempfile::tempdir().unwrap();
-    let home = home::select(Some(root.path().to_owned().into_os_string()), None).unwrap();
+    let (root, home) = publication_fixture();
     let absent = state::publication::load(&home).unwrap();
     let state_dir = state::publication::prepare_directory(&home).unwrap();
-    let bytes = state::encode_v2(&accepted_with_digest('a'), 0).unwrap();
-    fs::write(state_dir.join("state.json"), bytes).unwrap();
-    fs::set_permissions(
-        state_dir.join("state.json"),
-        fs::Permissions::from_mode(0o600),
+    let initial_lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
+    state::publication::publish_complete_locked(
+        &home,
+        &absent,
+        &complete_baselines(root.path(), 'a'),
     )
     .unwrap();
+    drop(initial_lock);
     let stale = state::publication::revalidate(&home, &absent).unwrap_err();
     let stale_outcome = grip::result::CommandOutcome::failure(&stale);
     assert_eq!(stale_outcome.category.exit_code(), 20);
     assert_eq!(stale_outcome.details["reason"], "stale_state_evidence");
 
-    let mut maximum = accepted_with_digest('a');
-    maximum.generation = Some(u64::MAX);
-    support::write_v2_state(root.path(), u64::MAX, maximum.baselines.clone());
+    let mut maximum = state::decode_v4(&fs::read(state_dir.join("state.json")).unwrap()).unwrap();
+    maximum.generation = u64::MAX;
+    fs::write(
+        state_dir.join("state.json"),
+        state::encode_v4(&maximum).unwrap(),
+    )
+    .unwrap();
     let snapshot = state::publication::load(&home).unwrap();
     let before = fs::read(state_dir.join("state.json")).unwrap();
     let lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
-    let exhausted =
-        state::publication::publish_accepted_locked(&home, &snapshot, &accepted_with_digest('b'))
-            .unwrap_err();
+    let exhausted = state::publication::publish_complete_locked(
+        &home,
+        &snapshot,
+        &complete_baselines(root.path(), 'b'),
+    )
+    .unwrap_err();
     let outcome = grip::result::CommandOutcome::failure(&exhausted);
     assert_eq!(outcome.category.exit_code(), 20);
     assert_eq!(outcome.details["reason"], "generation_exhausted");

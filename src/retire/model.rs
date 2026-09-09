@@ -26,7 +26,7 @@ pub struct RetirementAction {
     pub reason: String,
     pub force: bool,
     pub status: ActionStatus,
-    pub milestones: crate::operation::model::ActionCheckpointEvidenceV1,
+    pub milestones: crate::operation::model::ActionCheckpointEvidenceV2,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
 }

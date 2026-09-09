@@ -41,7 +41,6 @@ pub fn build_from_actioned(
             .expect("equivalent actioned entry has source");
         if expected.complete_baselines.get(identity) != Some(&state) {
             next.complete_baselines.insert(identity.clone(), state);
-            next.baselines.remove(identity);
             changed_count += 1;
         }
     }
@@ -84,16 +83,9 @@ pub fn build(
         if expected.complete_baselines.get(&record.identity) != Some(&state) {
             next.complete_baselines
                 .insert(record.identity.clone(), state);
-            next.baselines.remove(&record.identity);
             changed_count += 1;
         }
     }
-    if !next.baselines.is_empty() {
-        return Err(GripError::BaselineNotAcceptable {
-            records: records.to_vec(),
-        });
-    }
-    next.schema_version = Some(3);
     Ok(Candidate {
         next,
         selected_count: records.len(),

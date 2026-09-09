@@ -3,25 +3,25 @@
 mod support;
 
 use grip::mapping::MappingKind;
-use grip::observation::model::{EntryIdentity, MappingSnapshot};
+use grip::observation::model::{EntryIdentity, ResolvedMapping};
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
 fn execution_fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     grip::observation::model::Selection,
     grip::push::model::PushPlan,
 ) {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "planned").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    let home = support::project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;
@@ -69,7 +69,7 @@ fn staged_addition_preserves_content_mode_and_unmanaged_neighbor() {
 #[test]
 fn replacement_preserves_verified_private_recovery_before_publication() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "new payload").unwrap();
@@ -78,11 +78,11 @@ fn replacement_preserves_verified_private_recovery_before_publication() {
     fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
     let expected_source = support::supported_file_state(&source);
     let expected_destination = support::supported_file_state(&destination);
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let receipt =
         grip::operation::publication::initialize(&home, &support::test_push_plan(1)).unwrap();
     let identity = EntryIdentity::new(
-        MappingSnapshot {
+        ResolvedMapping {
             kind: MappingKind::File,
             source: source.clone(),
             destination: destination.clone(),
@@ -190,14 +190,13 @@ fn lock_held_plan_and_per_action_revalidation_reject_drift_before_mutation() {
 #[test]
 fn cli_push_adds_then_replaces_with_recovery_and_matching_baseline() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "first").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
 
-    let first =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push"]);
+    let first = support::project_command(root.path(), &metadata_dir, &["--output=json", "push"]);
     assert!(
         first.status.success(),
         "stdout={} stderr={}",
@@ -210,8 +209,7 @@ fn cli_push_adds_then_replaces_with_recovery_and_matching_baseline() {
     assert_eq!(fs::read_to_string(&destination).unwrap(), "first");
 
     fs::write(&source, "second").unwrap();
-    let second =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push"]);
+    let second = support::project_command(root.path(), &metadata_dir, &["--output=json", "push"]);
     assert!(
         second.status.success(),
         "stdout={} stderr={}",
@@ -229,7 +227,7 @@ fn cli_push_adds_then_replaces_with_recovery_and_matching_baseline() {
         .unwrap();
     assert_eq!(
         fs::read_to_string(
-            grip_home
+            metadata_dir
                 .join("state/operations")
                 .join(operation_id)
                 .join("recovery/00000000/payload")
@@ -237,8 +235,7 @@ fn cli_push_adds_then_replaces_with_recovery_and_matching_baseline() {
         .unwrap(),
         "first"
     );
-    let status =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "status"]);
+    let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
     assert!(status.status.success());
     assert_eq!(support::json(&status)["details"]["attention_count"], 0);
 }
@@ -246,15 +243,14 @@ fn cli_push_adds_then_replaces_with_recovery_and_matching_baseline() {
 #[test]
 fn cli_push_creates_nested_tree_directories_in_dependency_order() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
     let destination = root.path().join("destination-tree");
     fs::create_dir(&source).unwrap();
     fs::create_dir(source.join("nested")).unwrap();
     fs::write(source.join("nested/file"), "payload").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
-    let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push"]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    let output = support::project_command(root.path(), &metadata_dir, &["--output=json", "push"]);
     assert!(
         output.status.success(),
         "stdout={} stderr={}",

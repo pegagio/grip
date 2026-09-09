@@ -85,18 +85,18 @@ fn metadata_only_pull_plan_carries_complete_transition_and_recovery_contract() {
         grip::discovery::model::NodeKind::File,
     );
     assert!(
-        support::command_with_grip_home(
+        support::project_command(
             fixture.root.path(),
-            &fixture.grip_home,
+            &fixture.metadata_dir,
             &["baseline", "accept"],
         )
         .status
         .success()
     );
     support::set_fixture_mode(&fixture.destination, 0o600);
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         fixture.root.path(),
-        &fixture.grip_home,
+        &fixture.metadata_dir,
         &["--output=json", "pull", "--dry-run"],
     );
     let action = &support::json(&output)["details"]["actions"][0];

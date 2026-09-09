@@ -9,9 +9,9 @@ fn plans() -> (
     grip::delete::model::DeletionPlan,
     grip::delete::model::DeletionPlan,
 ) {
-    let (root, grip_home, source, _) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, _) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let observed =

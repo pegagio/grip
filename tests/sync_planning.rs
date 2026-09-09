@@ -5,36 +5,36 @@ use std::fs;
 #[test]
 fn sync_plan_is_deterministic_and_contains_both_directions() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source_a = root.path().join("source-a");
     let destination_a = root.path().join("destination-a");
     let source_b = root.path().join("source-b");
     let destination_b = root.path().join("destination-b");
     fs::write(&source_a, "accepted-a").unwrap();
     fs::write(&source_b, "accepted-b").unwrap();
-    support::write_registry(
-        &grip_home,
+    support::write_descriptor(
+        &metadata_dir,
         &[
             ("file", &source_b, &destination_b),
             ("file", &source_a, &destination_a),
         ],
     );
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&source_a, "source change").unwrap();
     fs::write(&destination_b, "destination change").unwrap();
 
-    let first = support::command_with_grip_home(
+    let first = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "sync", "-n"],
     );
-    let second = support::command_with_grip_home(
+    let second = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "sync", "--dry-run"],
     );
     let first = support::json(&first);
@@ -52,11 +52,11 @@ fn sync_plan_is_deterministic_and_contains_both_directions() {
 
 #[test]
 fn one_conflict_blocks_the_complete_mixed_plan() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
     fs::write(&destination, "destination change").unwrap();
     let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "sync"]);
+        support::project_command(root.path(), &metadata_dir, &["--output", "json", "sync"]);
     assert_eq!(output.status.code(), Some(10));
     let value = support::json(&output);
     assert_eq!(value["details"]["result"], "blocked");
@@ -71,21 +71,21 @@ fn one_conflict_blocks_the_complete_mixed_plan() {
 #[test]
 fn unmanaged_destination_content_remains_a_non_action() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
     let destination = root.path().join("destination-tree");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("managed"), "accepted").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(destination.join("unmanaged"), "destination only").unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "sync", "--dry-run"],
     );
     assert!(output.status.success());
@@ -103,7 +103,7 @@ fn unmanaged_destination_content_remains_a_non_action() {
 #[test]
 fn sync_metadata_actions_are_directional_and_plan_identity_is_repeatable() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source_a = root.path().join("source-a");
     let destination_a = root.path().join("destination-a");
     let source_b = root.path().join("source-b");
@@ -121,28 +121,28 @@ fn sync_metadata_actions_are_directional_and_plan_identity_is_repeatable() {
         &destination_b,
         grip::discovery::model::NodeKind::File,
     );
-    support::write_registry(
-        &grip_home,
+    support::write_descriptor(
+        &metadata_dir,
         &[
             ("file", &source_a, &destination_a),
             ("file", &source_b, &destination_b),
         ],
     );
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
+        support::project_command(root.path(), &metadata_dir, &["baseline", "accept"])
             .status
             .success()
     );
     support::set_fixture_mode(&source_a, 0o600);
     support::set_fixture_mode(&destination_b, 0o640);
-    let first = support::command_with_grip_home(
+    let first = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "sync", "--dry-run"],
     );
-    let second = support::command_with_grip_home(
+    let second = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "sync", "--dry-run"],
     );
     let first = support::json(&first);

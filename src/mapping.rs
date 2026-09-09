@@ -1,6 +1,7 @@
 //! Mapping domain values and complete-registry ownership validation.
 
 use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// The two mapping extents supported by Grip.
@@ -9,6 +10,91 @@ use std::path::{Path, PathBuf};
 pub enum MappingKind {
     File,
     Tree,
+}
+
+impl MappingKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Tree => "tree",
+        }
+    }
+}
+
+/// A version-controllable mapping declaration with no machine-specific paths.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortableMapping {
+    pub kind: MappingKind,
+    pub source: crate::path_policy::ProjectRelativePath,
+    pub destination: crate::path_policy::HomeRelativePath,
+}
+
+impl PortableMapping {
+    pub fn parse(
+        kind: MappingKind,
+        source: &OsStr,
+        destination: &OsStr,
+    ) -> Result<Self, crate::GripError> {
+        Ok(Self {
+            kind,
+            source: crate::path_policy::ProjectRelativePath::parse(
+                source,
+                kind == MappingKind::Tree,
+            )?,
+            destination: crate::path_policy::HomeRelativePath::parse(destination)?,
+        })
+    }
+
+    pub fn identity(&self) -> String {
+        format!(
+            "{}\0{}\0{}",
+            self.source.as_str(),
+            self.kind.as_str(),
+            self.destination.as_str()
+        )
+    }
+
+    pub fn resolve(
+        &self,
+        project_root: &Path,
+        home_root: &Path,
+        operation: &str,
+    ) -> Result<ResolvedMapping, crate::GripError> {
+        let source_path = self.source.resolve(project_root);
+        let destination_path = self.destination.resolve(home_root);
+        let source_evidence =
+            crate::path_policy::inspect_durable_endpoint(&source_path, self.kind, true, operation)?;
+        let destination_evidence =
+            crate::path_policy::inspect_endpoint(&destination_path, self.kind, false, operation)?;
+        Ok(ResolvedMapping {
+            declaration: self.clone(),
+            source: source_evidence.canonical.clone(),
+            destination: destination_evidence.canonical.clone(),
+            source_evidence,
+            destination_evidence,
+        })
+    }
+}
+
+/// Runtime endpoints resolved from one portable declaration and command context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedMapping {
+    pub declaration: PortableMapping,
+    pub source: PathBuf,
+    pub destination: PathBuf,
+    pub source_evidence: crate::path_policy::PathEvidence,
+    pub destination_evidence: crate::path_policy::PathEvidence,
+}
+
+impl ResolvedMapping {
+    pub fn ownership_mapping(&self) -> Mapping {
+        Mapping::new(
+            self.declaration.kind,
+            self.source.clone(),
+            self.destination.clone(),
+        )
+    }
 }
 
 /// One canonical source-to-destination ownership declaration.

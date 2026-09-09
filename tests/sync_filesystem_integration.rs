@@ -6,22 +6,22 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 #[test]
 fn sync_executes_mixed_directions_and_publishes_one_generation() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source_a = root.path().join("source-a");
     let destination_a = root.path().join("destination-a");
     let source_b = root.path().join("source-b");
     let destination_b = root.path().join("destination-b");
     fs::write(&source_a, "accepted-a").unwrap();
     fs::write(&source_b, "accepted-b").unwrap();
-    support::write_registry(
-        &grip_home,
+    support::write_descriptor(
+        &metadata_dir,
         &[
             ("file", &source_a, &destination_a),
             ("file", &source_b, &destination_b),
         ],
     );
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
@@ -29,7 +29,7 @@ fn sync_executes_mixed_directions_and_publishes_one_generation() {
     fs::write(&destination_b, "destination change").unwrap();
 
     let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "sync"]);
+        support::project_command(root.path(), &metadata_dir, &["--output", "json", "sync"]);
     assert!(
         output.status.success(),
         "{}",
@@ -44,7 +44,7 @@ fn sync_executes_mixed_directions_and_publishes_one_generation() {
 
 #[test]
 fn converged_only_sync_records_and_accepts_state_then_becomes_noop() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "converged").unwrap();
     fs::write(&destination, "converged").unwrap();
     support::copy_complete_metadata(
@@ -52,8 +52,7 @@ fn converged_only_sync_records_and_accepts_state_then_becomes_noop() {
         &destination,
         grip::discovery::model::NodeKind::File,
     );
-    let first =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "sync"]);
+    let first = support::project_command(root.path(), &metadata_dir, &["--output", "json", "sync"]);
     assert!(first.status.success());
     let value = support::json(&first);
     assert_eq!(value["details"]["counts"]["actions"], 0);
@@ -64,21 +63,21 @@ fn converged_only_sync_records_and_accepts_state_then_becomes_noop() {
             .as_bool()
             .unwrap()
     );
-    let operations_before = fs::read_dir(grip_home.join("state/operations"))
+    let operations_before = fs::read_dir(metadata_dir.join("state/operations"))
         .unwrap()
         .count();
-    let state_before = fs::read(grip_home.join("state/state.json")).unwrap();
+    let state_before = fs::read(metadata_dir.join("state/state.json")).unwrap();
 
     let second =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "sync"]);
+        support::project_command(root.path(), &metadata_dir, &["--output", "json", "sync"]);
     assert!(second.status.success());
     assert_eq!(support::json(&second)["details"]["result"], "no_op");
     assert_eq!(
-        fs::read(grip_home.join("state/state.json")).unwrap(),
+        fs::read(metadata_dir.join("state/state.json")).unwrap(),
         state_before
     );
     assert_eq!(
-        fs::read_dir(grip_home.join("state/operations"))
+        fs::read_dir(metadata_dir.join("state/operations"))
             .unwrap()
             .count(),
         operations_before
@@ -88,7 +87,7 @@ fn converged_only_sync_records_and_accepts_state_then_becomes_noop() {
 #[test]
 fn sync_adds_a_nested_source_entry_with_private_parent_creation() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
     let destination = root.path().join("destination-tree");
     fs::create_dir(&source).unwrap();
@@ -99,10 +98,9 @@ fn sync_adds_a_nested_source_entry_with_private_parent_creation() {
         fs::Permissions::from_mode(0o640),
     )
     .unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "sync"]);
+    let output = support::project_command(root.path(), &metadata_dir, &["--output=json", "sync"]);
     assert!(
         output.status.success(),
         "stdout={} stderr={}",
@@ -134,16 +132,15 @@ fn sync_adds_a_nested_source_entry_with_private_parent_creation() {
 
 #[test]
 fn sync_blocks_a_symlink_target_without_following_or_changing_it() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     let sentinel = root.path().join("sentinel");
     fs::write(&source, "source change").unwrap();
     fs::write(&sentinel, "outside mapping").unwrap();
     fs::remove_file(&destination).unwrap();
     symlink(&sentinel, &destination).unwrap();
-    let before_state = fs::read(grip_home.join("state/state.json")).unwrap();
+    let before_state = fs::read(metadata_dir.join("state/state.json")).unwrap();
 
-    let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "sync"]);
+    let output = support::project_command(root.path(), &metadata_dir, &["--output=json", "sync"]);
     assert_eq!(output.status.code(), Some(10));
     let value = support::json(&output);
     assert_eq!(value["status"], "error");
@@ -156,7 +153,7 @@ fn sync_blocks_a_symlink_target_without_following_or_changing_it() {
     );
     assert_eq!(fs::read_to_string(&sentinel).unwrap(), "outside mapping");
     assert_eq!(
-        fs::read(grip_home.join("state/state.json")).unwrap(),
+        fs::read(metadata_dir.join("state/state.json")).unwrap(),
         before_state
     );
 }
