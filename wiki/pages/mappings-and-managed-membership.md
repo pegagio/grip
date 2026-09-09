@@ -9,7 +9,7 @@ updated: 2026-09-09
 
 A mapping declares a source-to-destination relationship. A file mapping pairs two exact paths, while a tree mapping pairs directory roots and maps source-relative paths to the same destination-relative paths. (S001)
 
-The canonical source path is the user-facing identity of a mapping; Grip does not assign a separate mapping ID. Stored state must still retain and validate the mapping kind, source, and destination, and mappings that overlap or could own the same entry are rejected before discovery or mutation. (S001)
+Grip does not assign a separate mapping ID. A mapping is identified by its kind, normalized project-relative source, and normalized home-relative destination; resolved machine paths are runtime evidence only. Mappings that overlap or could own the same entry are rejected before discovery or mutation. (S001)
 
 The complete accepted registry is validated as one graph. Equal or nested namespaces, same-mapping overlap, and cross-mapping overlap all block publication. Adding and removing mappings changes registry intent only; it does not touch payloads or synchronization state. (S005)
 
@@ -25,11 +25,11 @@ Retirement is a state-only transition selected by an exact path or explicit `--a
 
 ## Portable mapping identity
 
-The current mapping identity is `(kind, normalized project-relative source, normalized home-relative destination)`, with entry-relative bytes appended for managed-entry identity. Absolute resolved endpoints exist only in the selected runtime context and are not durable mapping authority. Declared and resolved values are rendered separately. (S013)
+The current mapping identity is `(kind, normalized project-relative source, normalized home-relative destination)`, with entry-relative bytes appended for managed-entry identity. Absolute resolved endpoints exist only in the selected runtime context and are not durable mapping authority. Declared and resolved values are rendered separately. (S001) (S013)
 
 Exact `.` is valid only for a tree source and makes the project root the source tree. `.grip/` is pruned structurally before ignore evaluation, so configuration, state, operations, and recovery can never become managed payload. (S013)
 
-> ⚠ conflict: S001, S004, and S005 describe canonical absolute source identity; S013 replaces that current identity with the portable tuple while preserving source-defined membership semantics.
+> ⚠ conflict: S004 and S005 preserve historical absolute-source identity; the re-ingested S001 and Feature 010 source S013 define the current portable tuple while preserving source-defined membership semantics.
 
 ## Related pages
 

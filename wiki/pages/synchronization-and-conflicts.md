@@ -2,7 +2,7 @@
 title: Synchronization and conflicts
 type: component
 sources: [S001, S004, S007, S008, S009, S010, S011, S012]
-updated: 2026-09-08
+updated: 2026-09-09
 ---
 
 # Synchronization and conflicts
@@ -12,6 +12,8 @@ Grip compares the current source, current destination, and last accepted baselin
 Feature 004 implements this model as deterministic typed records shared by `status`, `check`, and `diff`. Explicit baseline acceptance is allowed only when all selected source and destination evidence is complete and equivalent; an already-current acceptance is an exact no-op, and acceptance-relevant drift detected before publication preserves the prior baseline. (S004)
 
 `push` propagates eligible source-side changes, `pull` propagates eligible destination-side changes, and `sync` plans all unambiguous one-sided changes in both directions. An accepted operation updates the baseline only after its changes have been applied and verified. (S001)
+
+All synchronization commands operate within one resolved Grip project. Selectors use project-relative source space by default, and dry runs create no state, operation evidence, recovery material, baseline, or payload change. (S001) (S004)
 
 Feature 005 established only the `push` portion: source additions and source-only changes become actions, synchronized and other non-action classifications remain reported, and any blocker prevents all mutation. It deliberately deferred pull, bidirectional planning, conflict winners, deletion, retirement, and automatic recovery to their owning features. (S008)
 

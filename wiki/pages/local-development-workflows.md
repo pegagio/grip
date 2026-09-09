@@ -1,8 +1,8 @@
 ---
 title: Local development workflows
 type: howto
-sources: [S004, S008, S009, S010, S011, S012]
-updated: 2026-09-08
+sources: [S004, S008, S009, S010, S011, S012, S013]
+updated: 2026-09-09
 ---
 
 # Local development workflows
@@ -22,6 +22,8 @@ Feature 007's 10,000-entry mixed fixture covers synchronized, source-only, desti
 Feature 008 adds documented 10,000-entry deletion-preview and recovery-inventory workloads. Across 100 warm release runs on the representative workstation, deletion preview p95 was 1.054690542 seconds and recovery inventory p95 was 1.412352292 seconds, satisfying the two-second threshold without a persistent cache, background service, broad payload lock, or automatic cleanup policy. (S011)
 
 Feature 009's final 10,000-entry release qualification measures status plus push, pull, and mixed-sync dry-run and plan workloads over 100 samples. Every asserted p95 remained below two seconds after operation-local capability reuse and removal of redundant metadata reads, payload hashing, and duplicate result state; representative synchronization was reported separately. Explicit ignored tests qualify case-sensitive and case-insensitive APFS, cross-volume logical fidelity, and path collisions. (S012)
+
+Feature 010 adds a 100-sample implicit-discovery workload from 100 levels below a project root; its recorded p95 was 4.960 ms against the one-second requirement. The converted 10,000-entry project fixtures retained their established thresholds, and five explicit ignored APFS qualification tests passed on distinct disposable case-sensitive and case-insensitive volumes. (S013)
 
 ## Related pages
 

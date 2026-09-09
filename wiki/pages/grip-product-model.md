@@ -17,9 +17,9 @@ The name reflects the ownership boundary: Grip has an explicit grip on selected 
 
 ## Project-scoped product boundary
 
-A **Grip project** is an initialized source directory. Its portable mapping intent lives in `.grip/config.toml`, while mutable baselines, locks, operations, staging, and recovery live only beneath ignored `.grip/state/`. The descriptor and `.grip/.gitignore` may be committed without committing local operational evidence. (S013)
+A **Grip project** is an initialized source directory. Its portable mapping intent lives in `.grip/config.toml`, while mutable baselines, locks, operations, staging, and recovery live only beneath ignored `.grip/state/`. The descriptor and `.grip/.gitignore` may be committed without committing local operational evidence. (S001) (S013)
 
-Project selection is explicit through `--project PATH` or implicit through a bounded upward walk. Grip has no global mapping installation, generated project identity, daemon, or persistent project index. A copied project resolves the same declarations against its own root and invoking-user home. (S013)
+Project selection is explicit through `--project PATH` or implicit through a bounded upward walk. Grip has no global mapping installation, generated project identity, daemon, or persistent project index. A copied project resolves the same declarations against its own root and invoking-user home. (S001) (S013)
 
 ## Related pages
 

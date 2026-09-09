@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-09
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "Replace the global Grip mapping pattern with initialized Grip projects. Add `grip init [PATH]`, discover a project by walking upward or select it explicitly, scope every project-dependent command to that project, store portable mapping intent in the project for version control, and keep machine-local operational state separate. Backward compatibility is not required before release."
 
