@@ -21,11 +21,13 @@ Concurrent external edits are handled through evidence capture, pre-action reval
 
 Registry replacement and payload mutation apply this same boundary with owner-only bounded locks, lock-held plan equality, same-directory staging, private recovery, checkpoints, final verification, and one accepted-state publication. Directional deletion remains separately authorized, and recovery restore and cleanup remain explicit, compatibility-gated operations. (S005) (S008) (S009) (S010) (S011)
 
+Current writers lazily create owner-only state and coordinate through a bounded project-local mutation lock. Read-only commands and dry runs create no state or write coordination, and unrelated projects do not contend through a global authority. (S004)
+
 ## Project and rebinding authority
 
 Feature 010 adds project selection to the safety boundary: root, `.grip`, descriptor, ignore file, invoking-user home, descriptor bytes, and resolved topology are retained and revalidated without rediscovery before mutation. Unsafe substitution stops the operation. (S013)
 
-State and recovery authority is portable. A copied State V4 is not accepted merely by prefix substitution; Grip must match every portable identity to the current descriptor, reobserve required accepted entries and recovery targets, and reject missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. Recovery inventory and restore derive live targets from portable identity plus endpoint role, preventing cross-project restoration through stale absolute paths. (S013)
+State and recovery authority is portable. A copied State V4 is not accepted merely by prefix substitution; Grip must match every portable identity to the current descriptor, reobserve required accepted entries and recovery targets, and reject missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. Recovery inventory and restore derive live targets from portable identity plus endpoint role, preventing cross-project restoration through stale absolute paths. (S001) (S013)
 
 ## Related pages
 

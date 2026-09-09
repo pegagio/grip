@@ -1,16 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.0 -> 1.1.1
-Bump rationale: Start the eligible Feature 010 specification workflow.
+Version change: 1.1.1 -> 1.1.2
+Bump rationale: Record verified completion of Feature 010.
 
 Changes this revision:
-  - Transitioned Feature 010 from planned to in-progress
+  - Transitioned Feature 010 from in-progress to verified
+  - Added the Feature 010 debrief as verification evidence
 
 Specs affected: 010
 Open questions added/resolved: none
 
-Notes: Direct active-user authorization on 2026-09-09 to start the next eligible feature. Feature 009 is verified and satisfies Feature 010's only dependency.
+Notes: Direct active-user authorization on 2026-09-09 to verify Feature 010 after successful convergence and a PROCEED debrief with no findings.
 -->
 
 # Grip — Spec Roadmap
@@ -161,7 +162,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Content and Metadata, Supported Node Boundary, Testing Direction, Incremental Delivery Milestone 6
 - **Notes:** The spec completes Q-06, Q-07, and Q-08. Representative macOS/APFS correctness and performance qualification passed without persistent caches, broad locks, parallel execution, or inode-tracking schemes. Verification evidence: `specs/009-metadata-filesystem-contract/roadmap-reviews/debrief-20260908T135643Z.md` (`PROCEED`, no findings).
 
-### 010 — Project-Scoped Initialization and Portable Mappings  [status: in-progress]
+### 010 — Project-Scoped Initialization and Portable Mappings  [status: verified]
 
 - **Spec dir:** `specs/010-project-scoped-initialization`
 - **Description:** Replace the global per-user mapping registry with initialized Grip projects whose portable mapping intent is rooted in a source directory and whose commands resolve an explicit or enclosing project.
@@ -171,7 +172,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 009
 - **Governed by:** C-01, C-02, C-03, C-04, C-05, C-06, C-10, C-11, C-12, C-13
 - **Addresses:** `docs/product-definition.md` — Core Concepts, Mapping Model, Command-Line Experience, Configuration and State
-- **Notes:** This is an intentional pre-release product correction. Verified Features 001–009 remain historical evidence, but their global registry, absolute mapping, and per-user command-scope decisions are superseded where Feature 010 conflicts with them.
+- **Notes:** This is an intentional pre-release product correction. Verified Features 001–009 remain historical evidence, but their global registry, absolute mapping, and per-user command-scope decisions are superseded where Feature 010 conflicts with them. Verification evidence: `specs/010-project-scoped-initialization/roadmap-reviews/debrief-20260909T193508Z.md` (`PROCEED`, no findings).
 
 ## Open Questions
 
@@ -209,4 +210,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.1.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-09
+**Version**: 1.1.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-09

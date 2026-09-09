@@ -19,9 +19,13 @@ Common inspection and planning workflows must remain responsive on representativ
 
 Features 001 through 009 established the single-crate CLI, registry, discovery, state, mutation, deletion, recovery, and metadata boundaries. Shared direction-neutral safety machinery keeps push, pull, sync, and resolution behavior consistent without duplicating locking, revalidation, recovery, operation-record, or result semantics. (S003) (S004) (S006) (S008) (S009)
 
-Feature 010 corrects the product boundary by introducing one selected `ProjectContext`, portable declarations and durable identities, and project-local mutable state. Existing discovery, classification, planning, mutation, deletion, retirement, recovery, metadata, and result behavior remains in the single crate and receives the selected context rather than consulting a global installation. (S013)
+Feature 010 corrects the product boundary by introducing one selected project context, portable declarations and durable identities, and project-local mutable state. Existing discovery, classification, planning, mutation, deletion, retirement, recovery, metadata, and result behavior remains in the single crate and receives the selected context rather than consulting a global installation. (S001) (S013)
 
 The cutover deliberately adds no dependency, daemon, watcher, cache, persistent index, generated project ID, compatibility reader, or automatic Git behavior. The required verification surface includes deep upward discovery, clone isolation and rebinding, current-interface scanning, the complete prior regression matrix, and a 100-sample release performance harness. (S013)
+
+The roadmap records Feature 010 as verified after a trustworthy baseline-to-worktree debrief returned `PROCEED` with no findings, completing the ten-feature initial delivery sequence. (S003)
+
+Feature 010's own completion evidence records a clean convergence pass, full formatting, lint, default-test, and release-build validation, representative performance acceptance, and explicit disposable-volume APFS qualification. (S013)
 
 ## Related pages
 

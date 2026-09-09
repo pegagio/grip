@@ -21,11 +21,11 @@ The implemented bidirectional surface is `grip sync [-n|--dry-run] [--destinatio
 
 ## Current project selection and paths
 
-`grip init [PATH]` initializes the current or named existing directory with `.grip/config.toml` and canonical `.grip/.gitignore`. Every project-dependent command accepts an exact-root `--project PATH` or discovers exactly one enclosing project; zero, multiple, invalid, or unsafe boundaries fail without fallback. Version and help remain project-independent, and `--project` is invalid with `init` or `version`. (S013)
+`grip init [PATH]` initializes the current or named existing directory with `.grip/config.toml` and canonical `.grip/.gitignore`. Every project-dependent command accepts an exact-root `--project PATH` or discovers exactly one enclosing project; zero, multiple, invalid, or unsafe boundaries fail without fallback. Version and help remain project-independent, and `--project` is invalid with `init` or `version`. (S001) (S004) (S013)
 
-Mapping sources and default selectors now use normalized project-relative source space. Destinations use literal `~` or `~/...`; resolved absolute endpoints are local diagnostic values rather than stored identity. (S013)
+Mapping sources and default selectors use normalized project-relative source space. Destinations use literal `~` or `~/...`; resolved absolute endpoints are local diagnostic values rather than stored identity. (S004) (S013)
 
-> ⚠ conflict: S004 and S006 document the historical absolute-source and Grip-home interfaces; S013 replaces those current interfaces with initialized-project selection and portable paths.
+> ⚠ conflict: S006 documents the historical absolute-source and Grip-home interfaces; the re-ingested S004 and Feature 010 source S013 define the current initialized-project interface.
 
 ## Related pages
 

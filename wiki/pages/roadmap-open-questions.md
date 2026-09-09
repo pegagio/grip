@@ -2,12 +2,12 @@
 title: Roadmap open questions
 type: reference
 sources: [S003]
-updated: 2026-09-08
+updated: 2026-09-09
 ---
 
 # Roadmap open questions
 
-The roadmap retains thirteen questions for the specification that owns each decision; they do not change the approved feature order or initial-product boundary. (S003)
+The roadmap retains sixteen numbered questions for the specification that owns each decision; resolved questions remain recorded as provenance and do not change the completed initial-product boundary. (S003)
 
 - **001:** confirm package and executable identity, choose registry and state serialization, and establish stable machine-output and exit-code contracts. (S003)
 - **002 (resolved):** the `mapping add`, `list`, `show`, and `remove` family defines lifecycle syntax; tracking records intent only; and complete-registry validation conservatively rejects duplicate, overlapping, equal, nested, and cross-recursive ownership. (S003)
@@ -19,6 +19,7 @@ The roadmap retains thirteen questions for the specification that owns each deci
 - **009 (resolved):** supported equality includes independent file and directory metadata; symbolic links remain unsupported non-followed objects; current macOS on APFS is the qualification boundary; exact path bytes are preserved; and endpoint-observed case and Unicode behavior blocks incompatible managed identities rather than normalizing or renaming them. (S003)
 - **004 (resolved for automation):** `status`, `check`, `diff`, and baseline acceptance expose stable structured results and distinguish successful inspection, attention-required state, and operational failure. (S003)
 - **Governance:** name the integration branch whose acceptance freezes a feature directory under merge-bounded persistence. (S003)
+- **010 (resolved):** project metadata is `.grip/config.toml` plus canonical `.grip/.gitignore`; sources are project-relative, destinations use `~`-relative notation, local state lives beneath `.grip/state/` without a generated project ID, initialization is exactly idempotent, and discovery is exhaustive and fail-closed across candidate boundaries. (S003)
 
 Each feature must clarify its assigned questions without silently expanding scope. Performance measurements precede new caches, indexing, parallelism, or coordination complexity, and filesystem behavior is tested in isolated temporary roots. (S003)
 
