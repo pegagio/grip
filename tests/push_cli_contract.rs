@@ -25,8 +25,8 @@ fn push_parses_default_execute_and_both_dry_run_aliases() {
 #[test]
 fn output_failure_finalizes_delivery_without_rewriting_published_state() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let home = support::project_home(&metadata_dir);
     let mut receipt =
         grip::operation::publication::initialize(&home, &support::test_push_plan(0)).unwrap();
     receipt
@@ -56,7 +56,7 @@ fn output_failure_finalizes_delivery_without_rewriting_published_state() {
     );
     assert_eq!(fs::read(state_path).unwrap(), before);
     let summary = support::read_operation_component::<
-        grip::operation::model::OperationSummaryPayloadV1,
+        grip::operation::model::OperationSummaryPayloadV2,
     >(&receipt.directory().join("operation.json"));
     assert_eq!(summary.payload.result_delivery, "failed");
     assert_eq!(summary.payload.state, "completed");
@@ -86,20 +86,20 @@ fn push_rejects_extra_selectors() {
 #[test]
 fn dry_run_reports_deterministic_action_and_changes_nothing() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "payload").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     let before = support::snapshot(root.path());
 
-    let first = support::command_with_grip_home(
+    let first = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "push", "--dry-run"],
     );
     let second =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push", "-n"]);
+        support::project_command(root.path(), &metadata_dir, &["--output=json", "push", "-n"]);
     assert!(first.status.success());
     assert!(second.status.success());
     assert_eq!(first.stdout, second.stdout);
@@ -121,7 +121,7 @@ fn dry_run_reports_deterministic_action_and_changes_nothing() {
         64
     );
     assert!(value["details"]["actions"][0]["destination_path"]["display"].is_string());
-    let human = support::command_with_grip_home(root.path(), &grip_home, &["push", "-n"]);
+    let human = support::project_command(root.path(), &metadata_dir, &["push", "-n"]);
     assert!(human.status.success());
     let human_text = String::from_utf8_lossy(&human.stdout);
     assert!(human_text.contains("add_file"));
@@ -142,25 +142,25 @@ fn push_exit_categories_cover_usage_schema_corruption_and_operational_failure() 
     assert_eq!(usage.exit_code(), 2);
 
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     fs::write(
-        grip_home.join("config.toml"),
+        metadata_dir.join("config.toml"),
         "schema_version = 99\nmappings = []\n",
     )
     .unwrap();
-    let unsupported = support::command_with_grip_home(
+    let unsupported = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "push", "--dry-run"],
     );
     assert_eq!(unsupported.status.code(), Some(11));
 
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
-    fs::create_dir(grip_home.join("state")).unwrap();
-    let corrupt = support::command_with_grip_home(
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::create_dir(metadata_dir.join("state")).unwrap();
+    let corrupt = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "push", "--dry-run"],
     );
     assert_eq!(corrupt.status.code(), Some(12));
@@ -170,7 +170,7 @@ fn push_exit_categories_cover_usage_schema_corruption_and_operational_failure() 
 #[test]
 fn dry_run_reports_all_blockers_and_starts_no_action() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source_a = root.path().join("source-a");
     let source_b = root.path().join("source-b");
     let destination_a = root.path().join("destination-a");
@@ -179,17 +179,17 @@ fn dry_run_reports_all_blockers_and_starts_no_action() {
     fs::write(&source_b, "source-b").unwrap();
     fs::write(&destination_a, "destination-a").unwrap();
     fs::write(&destination_b, "destination-b").unwrap();
-    support::write_registry(
-        &grip_home,
+    support::write_descriptor(
+        &metadata_dir,
         &[
             ("file", &source_a, &destination_a),
             ("file", &source_b, &destination_b),
         ],
     );
     let before = support::snapshot(root.path());
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "push", "--dry-run"],
     );
     assert_eq!(output.status.code(), Some(10));

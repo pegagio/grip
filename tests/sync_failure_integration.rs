@@ -2,7 +2,7 @@ mod support;
 
 use std::fs;
 
-use grip::operation::model::{ActionCheckpointPayloadV1, OperationSummaryPayloadV1};
+use grip::operation::model::{ActionCheckpointPayloadV2, OperationSummaryPayloadV2};
 
 #[test]
 fn sync_failure_stops_before_publication_and_preserves_baseline_authority() {
@@ -158,7 +158,7 @@ fn sync_fault_matrix_records_every_pipeline_boundary_truthfully() {
             .path()
             .join("state/operations")
             .join(&failure.operation_id);
-        let summary = support::read_operation_component::<OperationSummaryPayloadV1>(
+        let summary = support::read_operation_component::<OperationSummaryPayloadV2>(
             &operation_directory.join("operation.json"),
         );
         assert_eq!(summary.payload.operation, "sync");
@@ -167,7 +167,7 @@ fn sync_fault_matrix_records_every_pipeline_boundary_truthfully() {
             summary.payload.baseline["publication_visible"],
             failure.baseline.publication_visible
         );
-        let action = support::read_operation_component::<ActionCheckpointPayloadV1>(
+        let action = support::read_operation_component::<ActionCheckpointPayloadV2>(
             &operation_directory.join("actions/00000000.json"),
         );
         assert!(matches!(

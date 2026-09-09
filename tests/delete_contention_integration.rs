@@ -4,20 +4,20 @@ use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn deletion_preview_is_lock_free_and_execute_reports_contention() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
-    let home = grip::home::select(Some(grip_home.clone().into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let _guard = grip::state::mutation_lock::MutationLock::acquire(&home, "test-owner").unwrap();
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         root.path(),
-        &grip_home,
-        &["delete", "-n", "--source", source.to_str().unwrap()],
+        &metadata_dir,
+        &["delete", "-n", "--source", "source"],
     );
     assert!(preview.status.success());
-    let execute = support::command_with_grip_home(
+    let execute = support::project_command(
         root.path(),
-        &grip_home,
-        &["delete", "--source", source.to_str().unwrap()],
+        &metadata_dir,
+        &["delete", "--source", "source"],
     );
     assert_eq!(execute.status.code(), Some(13));
     assert!(destination.exists());
@@ -25,21 +25,17 @@ fn deletion_preview_is_lock_free_and_execute_reports_contention() {
 
 #[test]
 fn deletion_execution_overwrites_released_stale_lock_metadata() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
-    let lock_path = grip_home.join(".mutation.lock");
+    let home = support::project_home(&metadata_dir);
+    let lock_path = grip::state::lock::project_lock_path(&home, "mutation.lock").unwrap();
     fs::write(&lock_path, "stale-owner").unwrap();
     std::fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600)).unwrap();
 
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "--source", "source"],
     );
 
     assert!(output.status.success());
@@ -74,9 +70,9 @@ fn deletion_rejects_registry_state_and_target_drift_before_removal() {
 
 #[test]
 fn deletion_revalidates_each_action_and_stops_when_a_child_is_recreated() {
-    let (_root, grip_home, source, destination) = support::accepted_tree_fixture();
+    let (_root, metadata_dir, source, destination) = support::accepted_tree_fixture();
     fs::remove_dir_all(&source).unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::resolve_selection(

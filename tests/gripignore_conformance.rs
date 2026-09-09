@@ -7,20 +7,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 fn inspect(root: &Path, source: &Path, policy: &str) -> BTreeMap<String, String> {
-    let grip_home = support::minimal_home(root);
+    let metadata_dir = support::initialize_project_metadata(root);
     let destination = root.join("destination");
     fs::write(source.join(".gripignore"), policy).unwrap();
-    support::write_registry(&grip_home, &[("tree", source, &destination)]);
-    let output = support::command_with_grip_home(
+    support::write_descriptor(&metadata_dir, &[("tree", source, &destination)]);
+    let selector = source.strip_prefix(root).unwrap().to_str().unwrap();
+    let output = support::project_command(
         root,
-        &grip_home,
-        &[
-            "--output",
-            "json",
-            "mapping",
-            "inspect",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output", "json", "mapping", "inspect", selector],
     );
     assert_eq!(
         output.status.code(),

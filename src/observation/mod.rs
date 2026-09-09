@@ -5,16 +5,16 @@ pub mod model;
 
 use crate::discovery::model::{NodeKind, RecordCategory};
 use crate::error::GripError;
-use crate::home::GripHome;
 use crate::mapping::{Mapping, MappingKind};
+use crate::project::ProjectPaths;
 use crate::registry::publication::RegistrySnapshot;
 use crate::state::AcceptedState;
-use model::{EntryIdentity, MappingSnapshot, Membership, Observation, ObservedEntry, Selection};
+use model::{EntryIdentity, Membership, Observation, ObservedEntry, ResolvedMapping, Selection};
 use std::collections::BTreeMap;
 
 /// Build a stable observation and join it with retained accepted identities.
 pub fn inspect(
-    home: &GripHome,
+    home: &ProjectPaths,
     registry: &RegistrySnapshot,
     accepted: &AcceptedState,
     selection: &Selection,
@@ -40,18 +40,18 @@ fn inspect_once(
     selection: &Selection,
     inventory: &crate::discovery::model::DiscoveryInventory,
 ) -> Result<Observation, GripError> {
-    let current: BTreeMap<MappingSnapshot, &Mapping> = registry
+    let current: BTreeMap<ResolvedMapping, &Mapping> = registry
         .registry
         .mappings()
         .iter()
-        .map(|mapping| (MappingSnapshot::from(mapping), mapping))
+        .map(|mapping| (ResolvedMapping::from(mapping), mapping))
         .collect();
     let mut observed = Observation::new();
     let mut relative_inspectors = BTreeMap::new();
 
     for mapping in registry.registry.mappings() {
         if mapping.kind == MappingKind::File {
-            let identity = EntryIdentity::new(MappingSnapshot::from(mapping), Vec::new())
+            let identity = EntryIdentity::new(ResolvedMapping::from(mapping), Vec::new())
                 .expect("file mapping identity is valid");
             let source_complete = inspect_complete_supported(&mapping.source)?;
             let destination_complete = inspect_complete_supported(&mapping.destination)?;
@@ -59,7 +59,6 @@ fn inspect_once(
             let destination = destination_complete.as_ref().map(legacy_from_complete);
             if source.is_some()
                 || destination.is_some()
-                || accepted.baselines.contains_key(&identity)
                 || accepted.complete_baselines.contains_key(&identity)
             {
                 observed.insert(
@@ -100,7 +99,7 @@ fn inspect_once(
             .relative_path
             .as_ref()
             .map_or_else(Vec::new, |path| path.raw_bytes().to_vec());
-        let identity = EntryIdentity::new(MappingSnapshot::from(mapping), relative)
+        let identity = EntryIdentity::new(ResolvedMapping::from(mapping), relative)
             .map_err(|message| GripError::CorruptState(message.into()))?;
         let entry = observed
             .entry(identity.clone())
@@ -136,9 +135,7 @@ fn inspect_once(
             }
             RecordCategory::Ignored => {
                 entry.membership = Membership::Ignored;
-                if accepted.baselines.contains_key(&identity)
-                    || accepted.complete_baselines.contains_key(&identity)
-                {
+                if accepted.complete_baselines.contains_key(&identity) {
                     entry.source_complete = inspect_complete_identity(&identity, true)?;
                     entry.destination_complete = inspect_complete_identity(&identity, false)?;
                     if let Some(complete) = &entry.source_complete {
@@ -182,11 +179,7 @@ fn inspect_once(
         }
     }
 
-    for identity in accepted
-        .baselines
-        .keys()
-        .chain(accepted.complete_baselines.keys())
-    {
+    for identity in accepted.complete_baselines.keys() {
         let entry = observed
             .entry(identity.clone())
             .or_insert_with(|| ObservedEntry {
@@ -227,7 +220,7 @@ fn inspect_once(
     }
 
     let mut capability_cache: BTreeMap<
-        MappingSnapshot,
+        ResolvedMapping,
         Vec<crate::metadata::model::EndpointCapabilityProfile>,
     > = BTreeMap::new();
     for entry in observed.values_mut() {
@@ -247,7 +240,6 @@ fn inspect_once(
         selection.includes(identity)
             && !(matches!(selection, Selection::All | Selection::Mapping(_))
                 && entry.membership == Membership::Ignored
-                && !accepted.baselines.contains_key(identity)
                 && !accepted.complete_baselines.contains_key(identity))
     });
     Ok(observed)
@@ -569,7 +561,7 @@ fn inspect_complete_identity(
 fn inspect_identity(
     identity: &EntryIdentity,
     source: bool,
-    inspectors: &mut BTreeMap<(MappingSnapshot, bool), fingerprint::RelativeInspector>,
+    inspectors: &mut BTreeMap<(ResolvedMapping, bool), fingerprint::RelativeInspector>,
 ) -> Result<Option<(model::SupportedState, model::DiagnosticEvidence)>, GripError> {
     let path = if source {
         identity.source_path()

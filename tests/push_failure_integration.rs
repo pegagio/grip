@@ -5,26 +5,26 @@ mod support;
 use grip::classification;
 use grip::classification::model::ClassificationScope;
 use grip::observation::model::{PathSpace, Selection};
-use grip::operation::model::{ActionCheckpointPayloadV1, OperationSummaryPayloadV1};
+use grip::operation::model::{ActionCheckpointPayloadV2, OperationSummaryPayloadV2};
 use grip::push::FaultPhase;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 fn fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     Selection,
     grip::push::model::PushPlan,
 ) {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "payload").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    let home = support::project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = Selection::All;
@@ -50,7 +50,7 @@ fn fixture() -> (
 
 fn replacement_fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     Selection,
@@ -83,7 +83,7 @@ fn replacement_fixture() -> (
 
 fn metadata_only_fixture() -> (
     tempfile::TempDir,
-    grip::home::GripHome,
+    grip::project::ProjectPaths,
     grip::registry::publication::RegistrySnapshot,
     grip::state::publication::StateSnapshot,
     Selection,
@@ -141,12 +141,12 @@ fn staging_failure_is_terminal_and_leaves_later_actions_unattempted() {
         .path()
         .join("state/operations")
         .join(&failure.operation_id);
-    let summary = support::read_operation_component::<OperationSummaryPayloadV1>(
+    let summary = support::read_operation_component::<OperationSummaryPayloadV2>(
         &operation.join("operation.json"),
     );
     assert_eq!(summary.payload.state, "failed");
     assert_eq!(summary.payload.result_delivery, "prepared");
-    let action = support::read_operation_component::<ActionCheckpointPayloadV1>(
+    let action = support::read_operation_component::<ActionCheckpointPayloadV2>(
         &operation.join("actions/00000000.json"),
     );
     assert_eq!(action.payload.status, "failed");

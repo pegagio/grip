@@ -57,15 +57,30 @@ fn measure_consistent(mut command: impl FnMut() -> Command) -> Distribution {
     distribution(samples)
 }
 
+fn command_output(program: &str, arguments: &[&str]) -> String {
+    String::from_utf8(
+        Command::new(program)
+            .args(arguments)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned()
+}
+
 #[test]
 #[ignore = "representative-workstation acceptance harness"]
 fn warm_release_commands_meet_p95_targets() {
     let binary = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/grip");
     assert!(binary.is_file(), "build release binary first");
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
-    let source_root = root.path().join("sources");
-    let destination_root = root.path().join("destinations");
+    let registry_project = root.path().join("registry-project");
+    std::fs::create_dir(&registry_project).unwrap();
+    let metadata_dir = support::initialize_project_metadata(&registry_project);
+    let source_root = registry_project.join("sources");
+    let destination_root = registry_project.join("destinations");
     std::fs::create_dir(&source_root).unwrap();
     std::fs::create_dir(&destination_root).unwrap();
     let mappings = (0..1_000)
@@ -83,46 +98,60 @@ fn warm_release_commands_meet_p95_targets() {
         .iter()
         .map(|(kind, source, destination)| (*kind, source.as_path(), destination.as_path()))
         .collect::<Vec<_>>();
-    support::write_registry(&grip_home, &borrowed);
+    support::write_descriptor(&metadata_dir, &borrowed);
     eprintln!(
-        "os={} arch={} rust={} profile=release runs={}",
+        "os={} arch={} host={} revision={} rust={} profile=release runs={}",
         std::env::consts::OS,
         std::env::consts::ARCH,
+        command_output("uname", &["-n"]),
+        command_output("git", &["rev-parse", "HEAD"]),
         env!("CARGO_PKG_RUST_VERSION"),
         sample_count()
     );
     let help = measure(|| {
         let mut c = Command::new(&binary);
-        c.env_clear().env("HOME", root.path()).arg("--help");
+        c.env_clear()
+            .env("HOME", &registry_project)
+            .current_dir(&registry_project)
+            .arg("--help");
         c
     });
     let version = measure(|| {
         let mut c = Command::new(&binary);
-        c.env_clear().env("HOME", root.path()).arg("version");
+        c.env_clear()
+            .env("HOME", &registry_project)
+            .current_dir(&registry_project)
+            .arg("version");
         c
     });
     let validate = measure(|| {
         let mut c = Command::new(&binary);
         c.env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &grip_home)
+            .env("HOME", &registry_project)
+            .current_dir(&registry_project)
             .arg("validate");
         c
     });
     let mapping_list = measure_consistent(|| {
         let mut c = Command::new(&binary);
         c.env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &grip_home)
+            .env("HOME", &registry_project)
+            .current_dir(&registry_project)
             .args(["--output=json", "mapping", "list"]);
         c
     });
-    let discovery_home = root.path().join("discovery-home");
-    let discovery_source = root.path().join("discovery-source");
-    let discovery_destination = root.path().join("discovery-destination");
-    std::fs::create_dir(&discovery_home).unwrap();
+    let discovery_project = root.path().join("discovery-project");
+    std::fs::create_dir(&discovery_project).unwrap();
+    let discovery_home = support::initialize_project_metadata(&discovery_project);
+    let discovery_source = discovery_project.join("sources");
+    let discovery_destination = discovery_project.join("destinations");
     std::fs::create_dir(&discovery_source).unwrap();
     std::fs::create_dir(&discovery_destination).unwrap();
+    let mut deep_directory = discovery_project.clone();
+    for _ in 0..100 {
+        deep_directory.push("d");
+    }
+    std::fs::create_dir_all(&deep_directory).unwrap();
     let qualification = support::qualification_record(&discovery_source, "release");
     eprintln!(
         "qualification={}",
@@ -201,25 +230,34 @@ fn warm_release_commands_meet_p95_targets() {
         1_700_100_000,
         987_654_321,
     );
-    support::write_registry(
+    support::write_descriptor(
         &discovery_home,
         &[("tree", &discovery_source, &discovery_destination)],
     );
+    let implicit_discovery_100_levels = measure_consistent(|| {
+        let mut command = Command::new(&binary);
+        command
+            .env_clear()
+            .env("HOME", &discovery_project)
+            .current_dir(&deep_directory)
+            .args(["--output=json", "mapping", "list"]);
+        command
+    });
     let discovery = measure_consistent(|| {
         let mut command = Command::new(&binary);
         command
             .env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &discovery_home)
+            .env("HOME", &discovery_project)
+            .current_dir(&discovery_project)
             .args(["--output=json", "mapping", "inspect"])
             .arg(&discovery_source);
         command
     });
     let accepted = Command::new(&binary)
         .env_clear()
-        .env("HOME", root.path())
-        .env("GRIP_HOME", &discovery_home)
-        .args(["baseline", "accept"])
+        .env("HOME", &discovery_project)
+        .current_dir(&discovery_project)
+        .args(["--output=json", "baseline", "accept"])
         .output()
         .unwrap();
     assert!(
@@ -249,8 +287,8 @@ fn warm_release_commands_meet_p95_targets() {
         let mut command = Command::new(&binary);
         command
             .env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &discovery_home)
+            .env("HOME", &discovery_project)
+            .current_dir(&discovery_project)
             .args(["--output=json", "status"]);
         command
     });
@@ -258,12 +296,12 @@ fn warm_release_commands_meet_p95_targets() {
         let mut command = Command::new(&binary);
         command
             .env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &discovery_home)
+            .env("HOME", &discovery_project)
+            .current_dir(&discovery_project)
             .args(["--output=json", "push", "--dry-run"]);
         command
     });
-    let home = grip::home::select(Some(discovery_home.clone().into_os_string()), None).unwrap();
+    let home = support::project_home(&discovery_home);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;
@@ -298,8 +336,8 @@ fn warm_release_commands_meet_p95_targets() {
     );
     let dry_run_output = Command::new(&binary)
         .env_clear()
-        .env("HOME", root.path())
-        .env("GRIP_HOME", &discovery_home)
+        .env("HOME", &discovery_project)
+        .current_dir(&discovery_project)
         .args(["--output=json", "push", "--dry-run"])
         .output()
         .unwrap();
@@ -331,8 +369,8 @@ fn warm_release_commands_meet_p95_targets() {
     }
     let pull_accepted = Command::new(&binary)
         .env_clear()
-        .env("HOME", root.path())
-        .env("GRIP_HOME", &discovery_home)
+        .env("HOME", &discovery_project)
+        .current_dir(&discovery_project)
         .args(["baseline", "accept"])
         .output()
         .unwrap();
@@ -352,8 +390,8 @@ fn warm_release_commands_meet_p95_targets() {
         let mut command = Command::new(&binary);
         command
             .env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &discovery_home)
+            .env("HOME", &discovery_project)
+            .current_dir(&discovery_project)
             .args(["--output=json", "pull", "--dry-run"]);
         command
     });
@@ -422,8 +460,8 @@ fn warm_release_commands_meet_p95_targets() {
         let mut command = Command::new(&binary);
         command
             .env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &discovery_home)
+            .env("HOME", &discovery_project)
+            .current_dir(&discovery_project)
             .args(["--output=json", "sync", "--dry-run"]);
         command
     });
@@ -467,15 +505,15 @@ fn warm_release_commands_meet_p95_targets() {
         let mut command = Command::new(&binary);
         command
             .env_clear()
-            .env("HOME", root.path())
-            .env("GRIP_HOME", &discovery_home)
+            .env("HOME", &discovery_project)
+            .current_dir(&discovery_project)
             .args(["--output=json", "delete", "--dry-run", "--source"])
             .arg(&discovery_source);
         command
     });
     let recovery_home = root.path().join("recovery-home");
     std::fs::create_dir(&recovery_home).unwrap();
-    support::minimal_home(&recovery_home);
+    support::initialize_project_metadata(&recovery_home);
     let operations = recovery_home.join(".grip/state/operations");
     std::fs::create_dir_all(&operations).unwrap();
     for index in 0..10_000 {
@@ -486,15 +524,15 @@ fn warm_release_commands_meet_p95_targets() {
         command
             .env_clear()
             .env("HOME", root.path())
-            .env("GRIP_HOME", recovery_home.join(".grip"))
+            .current_dir(&recovery_home)
             .args(["--output=json", "recovery", "list"]);
         command
     });
     let synchronization_container = root.path().join("synchronization-container");
-    let synchronization_source = root.path().join("synchronization-source");
-    let synchronization_destination = root.path().join("synchronization-destination");
     std::fs::create_dir(&synchronization_container).unwrap();
-    let synchronization_home = support::minimal_home(&synchronization_container);
+    let synchronization_home = support::initialize_project_metadata(&synchronization_container);
+    let synchronization_source = synchronization_container.join("sources");
+    let synchronization_destination = synchronization_container.join("destinations");
     std::fs::create_dir(&synchronization_source).unwrap();
     std::fs::create_dir(&synchronization_destination).unwrap();
     for directory_index in 0..100 {
@@ -516,7 +554,7 @@ fn warm_release_commands_meet_p95_targets() {
         support::set_fixture_modified_time(&source_directory, 1_710_100_000, 135_792_468);
         support::set_fixture_modified_time(&destination_directory, 1_710_100_000, 135_792_468);
     }
-    support::write_registry(
+    support::write_descriptor(
         &synchronization_home,
         &[(
             "tree",
@@ -526,8 +564,8 @@ fn warm_release_commands_meet_p95_targets() {
     );
     let initial_sync = Command::new(&binary)
         .env_clear()
-        .env("HOME", root.path())
-        .env("GRIP_HOME", &synchronization_home)
+        .env("HOME", &synchronization_container)
+        .current_dir(&synchronization_container)
         .args(["baseline", "accept"])
         .output()
         .unwrap();
@@ -542,21 +580,22 @@ fn warm_release_commands_meet_p95_targets() {
     let synchronization_start = Instant::now();
     let synchronization = Command::new(&binary)
         .env_clear()
-        .env("HOME", root.path())
-        .env("GRIP_HOME", &synchronization_home)
+        .env("HOME", &synchronization_container)
+        .current_dir(&synchronization_container)
         .arg("sync")
         .output()
         .unwrap();
     let synchronization_duration = synchronization_start.elapsed();
     assert!(synchronization.status.success());
     eprintln!(
-        "distributions help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?} sync_dry_run_mixed_10000={dry_run_sync:?} sync_execute_plan_mixed_10000={sync_execute_plan:?} delete_preview_10000={delete_preview:?} recovery_inventory_10000={recovery_inventory:?} representative_sync_10000_entries_10_changes={synchronization_duration:?}"
+        "distributions help={help:?} version={version:?} validate={validate:?} mapping_list_1000={mapping_list:?} implicit_discovery_100_levels={implicit_discovery_100_levels:?} discovery_10000={discovery:?} status_accepted_paired_10000={status:?} push_dry_run_10000={dry_run_push:?} push_execute_plan_10000={execute_mode_plan:?} pull_dry_run_10000={dry_run_pull:?} pull_execute_plan_10000={pull_execute_plan:?} sync_dry_run_mixed_10000={dry_run_sync:?} sync_execute_plan_mixed_10000={sync_execute_plan:?} delete_preview_10000={delete_preview:?} recovery_inventory_10000={recovery_inventory:?} representative_sync_10000_entries_10_changes={synchronization_duration:?}"
     );
     for measured in [
         help,
         version,
         validate,
         mapping_list,
+        implicit_discovery_100_levels,
         discovery,
         status,
         dry_run_push,
@@ -574,6 +613,7 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(version.p95 <= Duration::from_millis(100));
     assert!(validate.p95 <= Duration::from_secs(1));
     assert!(mapping_list.p95 <= Duration::from_secs(1));
+    assert!(implicit_discovery_100_levels.p95 <= Duration::from_secs(1));
     assert!(discovery.p95 <= Duration::from_secs(2));
     assert!(status.p95 <= Duration::from_secs(2));
     assert!(dry_run_push.p95 <= Duration::from_secs(2));

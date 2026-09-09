@@ -4,25 +4,19 @@ use std::fs;
 
 #[test]
 fn resolution_winner_determines_transfer_direction_and_plan_identity() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
     fs::write(&destination, "destination change").unwrap();
-    let source_plan = support::command_with_grip_home(
+    let source_plan = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
-            "--output",
-            "json",
-            "resolve",
-            "-n",
-            "--source",
-            "--",
-            source.to_str().unwrap(),
+            "--output", "json", "resolve", "-n", "--source", "--", "source",
         ],
     );
-    let destination_plan = support::command_with_grip_home(
+    let destination_plan = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output",
             "json",
@@ -30,7 +24,7 @@ fn resolution_winner_determines_transfer_direction_and_plan_identity() {
             "-n",
             "--destination",
             "--",
-            source.to_str().unwrap(),
+            "source",
         ],
     );
     let source_plan = support::json(&source_plan);
@@ -48,18 +42,18 @@ fn resolution_winner_determines_transfer_direction_and_plan_identity() {
 
 #[test]
 fn resolution_plan_selects_one_complete_content_and_metadata_winner() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source content").unwrap();
     support::set_fixture_mode(&source, 0o600);
     fs::write(&destination, "destination content").unwrap();
     support::set_fixture_mode(&destination, 0o640);
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output=json",
             "resolve",
-            source.to_str().unwrap(),
+            "source",
             "--source",
             "--dry-run",
         ],
@@ -77,18 +71,11 @@ fn resolution_plan_selects_one_complete_content_and_metadata_winner() {
 
 #[test]
 fn resolution_rejects_a_non_conflicting_entry() {
-    let (root, grip_home, source, _) = support::accepted_file_fixture();
-    let output = support::command_with_grip_home(
+    let (root, metadata_dir, _, _) = support::accepted_file_fixture();
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output",
-            "json",
-            "resolve",
-            "--source",
-            "--",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output", "json", "resolve", "--source", "--", "source"],
     );
     assert_eq!(output.status.code(), Some(10));
     assert_eq!(support::json(&output)["details"]["result"], "blocked");
@@ -97,7 +84,7 @@ fn resolution_rejects_a_non_conflicting_entry() {
 #[test]
 fn resolution_rejects_each_supported_non_conflict_change_shape() {
     for shape in ["source_only", "destination_only", "converged"] {
-        let (root, grip_home, source, destination) = support::accepted_file_fixture();
+        let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
         match shape {
             "source_only" => fs::write(&source, "source change").unwrap(),
             "destination_only" => fs::write(&destination, "destination change").unwrap(),
@@ -112,16 +99,10 @@ fn resolution_rejects_each_supported_non_conflict_change_shape() {
             }
             _ => unreachable!(),
         }
-        let output = support::command_with_grip_home(
+        let output = support::project_command(
             root.path(),
-            &grip_home,
-            &[
-                "--output=json",
-                "resolve",
-                "--source",
-                "--",
-                source.to_str().unwrap(),
-            ],
+            &metadata_dir,
+            &["--output=json", "resolve", "--source", "--", "source"],
         );
         assert_eq!(output.status.code(), Some(10), "shape={shape}");
         assert_eq!(support::json(&output)["details"]["result"], "blocked");
@@ -131,28 +112,22 @@ fn resolution_rejects_each_supported_non_conflict_change_shape() {
 #[test]
 fn resolution_rejects_a_mapping_or_subtree_that_is_not_one_exact_entry() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
     let destination = root.path().join("destination-tree");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("one"), "one").unwrap();
     fs::write(source.join("two"), "two").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "resolve",
-            "--source",
-            "--",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "resolve", "--source", "--", "source-tree"],
     );
     assert_eq!(output.status.code(), Some(10));
     assert_eq!(

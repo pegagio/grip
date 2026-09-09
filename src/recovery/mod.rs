@@ -7,7 +7,7 @@ pub mod restore;
 
 /// Route public recovery commands without exposing private storage paths.
 pub fn dispatch(
-    home: &crate::home::GripHome,
+    home: &crate::project::ProjectPaths,
     command: &crate::cli::RecoveryCommand,
 ) -> Result<crate::result::CommandOutcome, crate::error::GripError> {
     use crate::cli::RecoveryCommand;

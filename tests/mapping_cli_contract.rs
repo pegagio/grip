@@ -9,30 +9,29 @@ fn json(output: &std::process::Output) -> serde_json::Value {
 #[test]
 fn add_list_show_and_remove_support_human_and_json_contracts() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
-    let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
 
-    let add = support::command_with_grip_home(
+    let add = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output=json",
             "mapping",
             "add",
             "tree",
-            source.to_str().unwrap(),
-            destination.to_str().unwrap(),
+            "source",
+            "~/destination",
         ],
     );
     assert_eq!(add.status.code(), Some(0));
     assert_eq!(json(&add)["details"]["operation"], "mapping_add");
-    assert_eq!(json(&add)["details"]["mapping"]["kind"], "tree");
+    assert_eq!(json(&add)["details"]["mapping"]["declared"]["kind"], "tree");
 
-    let list = support::command_with_grip_home(
+    let list = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "mapping", "list"],
     );
     assert_eq!(
@@ -40,24 +39,14 @@ fn add_list_show_and_remove_support_human_and_json_contracts() {
         1
     );
 
-    let show = support::command_with_grip_home(
-        root.path(),
-        &grip_home,
-        &["mapping", "show", source.to_str().unwrap()],
-    );
+    let show = support::project_command(root.path(), &metadata_dir, &["mapping", "show", "source"]);
     assert!(show.status.success());
     assert!(String::from_utf8_lossy(&show.stdout).contains("Mapping found"));
 
-    let remove = support::command_with_grip_home(
+    let remove = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "mapping",
-            "remove",
-            "--",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "mapping", "remove", "--", "source"],
     );
     assert_eq!(json(&remove)["details"]["operation"], "mapping_remove");
 }
@@ -80,21 +69,13 @@ fn mapping_grammar_rejects_missing_extra_and_unknown_arguments() {
 #[test]
 fn option_termination_allows_dash_prefixed_path_components() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("-source");
-    let destination = root.path().join("-destination");
     fs::write(&source, "payload").unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "mapping",
-            "add",
-            "file",
-            "--",
-            source.to_str().unwrap(),
-            destination.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["mapping", "add", "file", "--", "-source", "~/-destination"],
     );
     assert!(
         output.status.success(),
@@ -106,33 +87,20 @@ fn option_termination_allows_dash_prefixed_path_components() {
 #[test]
 fn human_conflict_reports_canonical_paths_and_relation() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let child = source.join("child");
     fs::create_dir_all(&child).unwrap();
-    let destination = root.path().join("destination");
-    let first = support::command_with_grip_home(
+    let first = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "mapping",
-            "add",
-            "tree",
-            source.to_str().unwrap(),
-            destination.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["mapping", "add", "tree", "source", "~/destination"],
     );
     assert!(first.status.success());
-    let conflict = support::command_with_grip_home(
+    let conflict = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "mapping",
-            "add",
-            "tree",
-            child.to_str().unwrap(),
-            root.path().join("other").to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["mapping", "add", "tree", "source/child", "~/other"],
     );
     let human = String::from_utf8(conflict.stdout).unwrap();
     assert!(human.contains(fs::canonicalize(&source).unwrap().to_str().unwrap()));
@@ -144,14 +112,15 @@ fn human_conflict_reports_canonical_paths_and_relation() {
 fn both_mapping_kinds_have_exact_tuples_in_human_and_json_lifecycle_output() {
     for kind in ["file", "tree"] {
         let root = tempfile::tempdir().unwrap();
-        let grip_home = support::minimal_home(root.path());
+        let metadata_dir = support::initialize_project_metadata(root.path());
         let source = root.path().join(format!("{kind}-source"));
         if kind == "file" {
             fs::write(&source, "payload").unwrap();
         } else {
             fs::create_dir(&source).unwrap();
         }
-        let destination = root.path().join(format!("{kind}-destination"));
+        let declared_source = format!("{kind}-source");
+        let declared_destination = format!("~/{kind}-destination");
         let canonical_source = fs::canonicalize(&source).unwrap().display().to_string();
         let canonical_destination = fs::canonicalize(root.path())
             .unwrap()
@@ -159,47 +128,54 @@ fn both_mapping_kinds_have_exact_tuples_in_human_and_json_lifecycle_output() {
             .display()
             .to_string();
 
-        let add = support::command_with_grip_home(
+        let add = support::project_command(
             root.path(),
-            &grip_home,
+            &metadata_dir,
             &[
                 "--output=json",
                 "mapping",
                 "add",
                 kind,
-                source.to_str().unwrap(),
-                destination.to_str().unwrap(),
+                &declared_source,
+                &declared_destination,
             ],
         );
         let added = &json(&add)["details"]["mapping"];
-        assert_eq!(added["kind"], kind);
-        assert_eq!(added["source"], canonical_source);
-        assert_eq!(added["destination"], canonical_destination);
+        assert_eq!(added["declared"]["kind"], kind);
+        assert_eq!(added["declared"]["source"], declared_source);
+        assert_eq!(added["declared"]["destination"], declared_destination);
+        assert_eq!(added["resolved"]["source"]["display"], canonical_source);
+        assert_eq!(
+            added["resolved"]["destination"]["display"],
+            canonical_destination
+        );
 
         for arguments in [
             vec!["mapping", "list"],
-            vec!["mapping", "show", source.to_str().unwrap()],
+            vec!["mapping", "show", &declared_source],
         ] {
-            let output = support::command_with_grip_home(root.path(), &grip_home, &arguments);
+            let output = support::project_command(root.path(), &metadata_dir, &arguments);
             let human = String::from_utf8(output.stdout).unwrap();
             assert!(human.contains(kind));
+            assert!(human.contains(&declared_source));
+            assert!(human.contains(&declared_destination));
             assert!(human.contains(&canonical_source));
             assert!(human.contains(&canonical_destination));
         }
 
-        let remove = support::command_with_grip_home(
+        let remove = support::project_command(
             root.path(),
-            &grip_home,
-            &[
-                "--output=json",
-                "mapping",
-                "remove",
-                source.to_str().unwrap(),
-            ],
+            &metadata_dir,
+            &["--output=json", "mapping", "remove", &declared_source],
         );
         let removed = &json(&remove)["details"]["mapping"];
-        assert_eq!(removed["kind"], kind);
-        assert_eq!(removed["source"], canonical_source);
-        assert_eq!(removed["destination"], canonical_destination);
+        assert_eq!(removed["declared"]["kind"], kind);
+        assert_eq!(removed["declared"]["source"], declared_source);
+        assert_eq!(removed["declared"]["destination"], declared_destination);
+        assert_eq!(removed["resolved"]["source"]["display"], canonical_source);
+        assert_eq!(
+            removed["resolved"]["destination"]["display"],
+            canonical_destination
+        );
     }
 }

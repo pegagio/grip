@@ -12,7 +12,7 @@ use std::process::Command;
 #[test]
 fn inspection_includes_file_mapping_and_tree_members_without_mutation() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let file_source = root.path().join("single-source");
     let file_destination = root.path().join("single-destination");
     fs::write(&file_source, "single").unwrap();
@@ -20,8 +20,8 @@ fn inspection_includes_file_mapping_and_tree_members_without_mutation() {
     let tree_destination = root.path().join("tree-destination");
     fs::create_dir_all(tree_source.join("nested/empty")).unwrap();
     fs::write(tree_source.join("nested/file.txt"), "payload").unwrap();
-    support::write_registry(
-        &grip_home,
+    support::write_descriptor(
+        &metadata_dir,
         &[
             ("file", &file_source, &file_destination),
             ("tree", &tree_source, &tree_destination),
@@ -29,9 +29,9 @@ fn inspection_includes_file_mapping_and_tree_members_without_mutation() {
     );
     let before = support::snapshot(root.path());
 
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(output.status.code(), Some(0));
@@ -49,27 +49,27 @@ fn inspection_includes_file_mapping_and_tree_members_without_mutation() {
 #[test]
 fn invalid_unselected_mapping_blocks_selected_inspection() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     fs::write(
-        grip_home.join("config.toml"),
-        "schema_version = 1\n[[mappings]]\nkind = \"tree\"\nsource = \"relative\"\ndestination = \"/destination\"\n",
+        metadata_dir.join("config.toml"),
+        "schema_version = 2\n[[mappings]]\nkind = \"tree\"\nsource = \"/absolute\"\ndestination = \"~/destination\"\n",
     )
     .unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &["--output", "json", "mapping", "inspect", "/not-selected"],
+        &metadata_dir,
+        &["--output", "json", "mapping", "inspect", "not-selected"],
     );
     assert_eq!(output.status.code(), Some(10));
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["details"]["operation"], "mapping_inspect");
-    assert_eq!(result["details"]["reason"], "invalid_registry");
+    assert_eq!(result["details"]["operation"], "project_selection");
+    assert_eq!(result["details"]["reason"], "invalid_project_metadata");
 }
 
 #[test]
 fn inspection_reports_source_blockers_destination_overlay_and_collisions() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir_all(&source).unwrap();
@@ -80,11 +80,11 @@ fn inspection_reports_source_blockers_destination_overlay_and_collisions() {
     symlink("managed.txt", source.join("source-link")).unwrap();
     let non_utf8 = OsString::from_vec(vec![b'n', 0xff]);
     let non_utf8_created = fs::write(source.join(&non_utf8), "raw").is_ok();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(output.status.code(), Some(0));
@@ -120,17 +120,17 @@ fn inspection_reports_source_blockers_destination_overlay_and_collisions() {
 #[test]
 fn invalid_policy_fails_without_a_partial_inventory() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("visible"), "payload").unwrap();
     fs::write(source.join(".gripignore"), [0xff]).unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
     let before = support::snapshot(root.path());
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(output.status.code(), Some(10));
@@ -149,16 +149,16 @@ fn invalid_policy_fails_without_a_partial_inventory() {
 #[test]
 fn policy_node_and_parse_failures_are_fail_closed() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("target"), "payload").unwrap();
     symlink("target", source.join(".gripignore")).unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
-    let symlinked = support::command_with_grip_home(
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    let symlinked = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(symlinked.status.code(), Some(10));
@@ -167,9 +167,9 @@ fn policy_node_and_parse_failures_are_fail_closed() {
 
     fs::remove_file(source.join(".gripignore")).unwrap();
     fs::write(source.join(".gripignore"), "dangling\\\n").unwrap();
-    let malformed = support::command_with_grip_home(
+    let malformed = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(malformed.status.code(), Some(10));
@@ -180,18 +180,18 @@ fn policy_node_and_parse_failures_are_fail_closed() {
 #[test]
 fn unreadable_and_hard_linked_policies_prevent_a_complete_inventory() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
     let policy = source.join(".gripignore");
     fs::write(&policy, "ignored\n").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
     fs::set_permissions(&policy, fs::Permissions::from_mode(0o000)).unwrap();
-    let unreadable = support::command_with_grip_home(
+    let unreadable = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(unreadable.status.code(), Some(20));
@@ -200,9 +200,9 @@ fn unreadable_and_hard_linked_policies_prevent_a_complete_inventory() {
 
     fs::set_permissions(&policy, fs::Permissions::from_mode(0o600)).unwrap();
     fs::hard_link(&policy, source.join("policy-copy")).unwrap();
-    let hard_linked = support::command_with_grip_home(
+    let hard_linked = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(hard_linked.status.code(), Some(10));
@@ -214,9 +214,9 @@ fn unreadable_and_hard_linked_policies_prevent_a_complete_inventory() {
     let sparse = fs::File::create(&policy).unwrap();
     sparse.set_len(1024 * 1024).unwrap();
     drop(sparse);
-    let sparse_policy = support::command_with_grip_home(
+    let sparse_policy = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(sparse_policy.status.code(), Some(10));
@@ -227,7 +227,7 @@ fn unreadable_and_hard_linked_policies_prevent_a_complete_inventory() {
 #[test]
 fn special_source_and_destination_nodes_are_classified_without_opening_them() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
@@ -251,11 +251,11 @@ fn special_source_and_destination_nodes_are_classified_without_opening_them() {
     drop(destination_sparse);
     fs::write(destination.join(".gripignore"), "ignored\n").unwrap();
     let socket = UnixListener::bind(destination.join("overlay.socket")).ok();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "mapping", "inspect"],
     );
     assert_eq!(output.status.code(), Some(0));

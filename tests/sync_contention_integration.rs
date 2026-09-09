@@ -4,12 +4,12 @@ use std::fs;
 
 #[test]
 fn sync_uses_the_shared_writer_lock_and_reports_owner() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
-    let home = grip::home::select(Some(grip_home.clone().into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let guard = grip::state::mutation_lock::MutationLock::acquire(&home, "resolve").unwrap();
     let blocked =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "sync"]);
+        support::project_command(root.path(), &metadata_dir, &["--output", "json", "sync"]);
     assert_eq!(blocked.status.code(), Some(13));
     let value = support::json(&blocked);
     assert_eq!(value["details"]["requested_operation"], "sync");
@@ -17,7 +17,7 @@ fn sync_uses_the_shared_writer_lock_and_reports_owner() {
     assert_eq!(fs::read_to_string(destination).unwrap(), "accepted");
     drop(guard);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["sync"])
+        support::project_command(root.path(), &metadata_dir, &["sync"])
             .status
             .success()
     );
@@ -102,11 +102,10 @@ fn sync_preview_and_semantic_noop_remain_lock_free() {
     let (preview_root, preview_home, preview_source, preview_destination) =
         support::accepted_file_fixture();
     fs::write(&preview_source, "source change").unwrap();
-    let preview_selected =
-        grip::home::select(Some(preview_home.clone().into_os_string()), None).unwrap();
+    let preview_selected = support::project_home(&preview_home);
     let preview_guard =
         grip::state::mutation_lock::MutationLock::acquire(&preview_selected, "push").unwrap();
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         preview_root.path(),
         &preview_home,
         &["--output=json", "sync", "--dry-run"],
@@ -116,11 +115,10 @@ fn sync_preview_and_semantic_noop_remain_lock_free() {
     drop(preview_guard);
 
     let (noop_root, noop_home, _source, _destination) = support::accepted_file_fixture();
-    let noop_selected = grip::home::select(Some(noop_home.clone().into_os_string()), None).unwrap();
+    let noop_selected = support::project_home(&noop_home);
     let noop_guard =
         grip::state::mutation_lock::MutationLock::acquire(&noop_selected, "resolve").unwrap();
-    let noop =
-        support::command_with_grip_home(noop_root.path(), &noop_home, &["--output=json", "sync"]);
+    let noop = support::project_command(noop_root.path(), &noop_home, &["--output=json", "sync"]);
     assert!(noop.status.success());
     assert_eq!(support::json(&noop)["details"]["result"], "no_op");
     drop(noop_guard);

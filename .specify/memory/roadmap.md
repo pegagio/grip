@@ -1,17 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.18 -> 1.0.19
-Bump rationale: Record Feature 009 verification after its successful implementation debrief.
+Version change: 1.1.0 -> 1.1.1
+Bump rationale: Start the eligible Feature 010 specification workflow.
 
 Changes this revision:
-  - Transitioned Feature 009 from in-progress to verified
-  - Added the attributable Feature 009 debrief as verification evidence
+  - Transitioned Feature 010 from planned to in-progress
 
-Specs affected: 009
+Specs affected: 010
 Open questions added/resolved: none
 
-Notes: Feature 009 completes and verifies the approved initial-product roadmap.
+Notes: Direct active-user authorization on 2026-09-09 to start the next eligible feature. Feature 009 is verified and satisfies Feature 010's only dependency.
 -->
 
 # Grip — Spec Roadmap
@@ -30,6 +29,7 @@ The initial roadmap is complete when Grip delivers the full local product descri
 - Grip can classify current source and destination state against an accepted baseline, propagate unambiguous changes in either direction, and require an explicit complete-side choice for conflicts.
 - Every mutation supports deterministic preview, bounded revalidation, staged replacement, verification, recovery evidence, and truthful baseline publication; deletion receives separate authorization.
 - The resulting CLI is responsive for representative local trees, precise for humans and automation, tested against real filesystem behavior in isolated roots, and deliberately limited to its supported macOS and Unix contracts.
+- A user can initialize a portable Grip project, commit its mapping intent, clone it on another machine, and operate only within the explicitly selected or enclosing project while machine-local operational state remains outside committed project content.
 
 ## Constraints & Decisions
 
@@ -46,6 +46,8 @@ These constraints apply across the ledger. Each is grounded in the active user-a
 - **C-09 — Allowlisted filesystem contract:** Ordinary regular files and directories form the initial payload boundary. Unsupported nodes or unreproducible metadata transitions are reported precisely and never silently coerced; macOS and Unix contracts may precede broader portability.
 - **C-10 — Merge-bounded persistence:** Before merge, feature artifacts and implementation form one mutable, reviewable unit with accepted discoveries flowed back. Merge into the designated integration branch freezes the feature directory semantically, and later behavioral changes flow forward through new features.
 - **C-11 — Separated interfaces:** CLI parsing and presentation remain separate from Grip-owned domain behavior. Human output, machine-readable output, and diagnostics are distinct interfaces, with deterministic forms where automation depends on them.
+- **C-12 — Project-scoped operation:** Every project-dependent command operates against exactly one Grip project. `grip init [PATH]` initializes `PATH`, or the current directory when omitted. Other commands accept a global `--project PATH` selector or discover the project by walking from the current directory toward the filesystem root. Failure to find exactly one valid project fails without mutation.
+- **C-13 — Portable intent, local state:** The Grip project contains a version-controllable mapping document. Mapping sources are relative to the project root and destinations use a portable, user-relative representation. Baselines, locks, recovery data, resolved machine paths, and operation records remain machine-local and outside committed project content.
 
 ## Planned Specs
 
@@ -159,6 +161,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Content and Metadata, Supported Node Boundary, Testing Direction, Incremental Delivery Milestone 6
 - **Notes:** The spec completes Q-06, Q-07, and Q-08. Representative macOS/APFS correctness and performance qualification passed without persistent caches, broad locks, parallel execution, or inode-tracking schemes. Verification evidence: `specs/009-metadata-filesystem-contract/roadmap-reviews/debrief-20260908T135643Z.md` (`PROCEED`, no findings).
 
+### 010 — Project-Scoped Initialization and Portable Mappings  [status: in-progress]
+
+- **Spec dir:** `specs/010-project-scoped-initialization`
+- **Description:** Replace the global per-user mapping registry with initialized Grip projects whose portable mapping intent is rooted in a source directory and whose commands resolve an explicit or enclosing project.
+- **Outcome:** A user can initialize a directory, commit its mapping configuration to version control, clone it on another machine, and run Grip commands scoped exclusively to that project without embedding machine-specific absolute source or destination paths.
+- **Scope (in):** `grip init [PATH]`; the “Grip project” term; project-root metadata discovery by ancestor walking; a global `--project PATH` selector for project-dependent commands; project-scoped command execution; relative source mappings; portable user-relative destinations; committed intent separated from machine-local operational state; complete replacement of the global mapping model; documentation, CLI, storage, state-binding, selection, validation, recovery, and test updates.
+- **Scope (out):** Backward compatibility, migration, dual-read behavior, continued support for a global mapping registry, Git automation, remote synchronization, and sharing machine-owned state.
+- **Depends on:** 009
+- **Governed by:** C-01, C-02, C-03, C-04, C-05, C-06, C-10, C-11, C-12, C-13
+- **Addresses:** `docs/product-definition.md` — Core Concepts, Mapping Model, Command-Line Experience, Configuration and State
+- **Notes:** This is an intentional pre-release product correction. Verified Features 001–009 remain historical evidence, but their global registry, absolute mapping, and per-user command-scope decisions are superseded where Feature 010 conflicts with them.
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -176,6 +190,9 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-11 — Backup and state recovery (005, 008):** Define backup inspection and removal plus bounded recovery when registry or baseline state is absent, corrupt, unreadable, or inconsistent.
 - **Q-12 — Automation contract (001, 004):** Define stable machine-output schemas and exit codes for success, drift, conflict, invalid configuration, unsupported entries, and operational failure.
 - **Q-13 — Integration branch:** Name the branch whose acceptance freezes a feature directory under the Merge-Bounded Flow-Back model.
+- **Q-14 — Project descriptor and destination notation (010):** Select the project metadata filename and exact portable destination notation.
+- **Q-15 — Machine-local project identity (010):** Define how machine-local state is keyed to a project without creating collisions between multiple clones.
+- **Q-16 — Initialization and discovery boundaries (010):** Define initialization idempotency, nested-project discovery, and behavior when an explicit project conflicts with an enclosing project.
 
 ## Cross-Cutting Notes
 
@@ -188,7 +205,8 @@ These notes guide specification work without prematurely resolving feature-owned
 - Human output, machine-readable output, and diagnostic logging remain separate throughout the roadmap; domain state and decisions must not be buried in presentation strings.
 - Two-way interactive `merge`, metadata-only `remap`, multiple path selectors, network synchronization, daemons, privileged services, and multi-user coordination are deferred future expansions, not hidden requirements of specs 001–009.
 - No configured ADRs were present when roadmap version 1.0.0 was created. Durable decisions that later require an ADR may add governing pointers through a roadmap amendment.
+- Feature 010 is authorized to replace the global `~/.grip/` mapping registry, absolute stored mapping paths, `GRIP_HOME`-selected command scope, and any other per-user global mapping behavior established by Features 001–009. No backward-compatible or dual-read behavior is required because Grip has not been released.
 
 ---
 
-**Version**: 1.0.19 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-08
+**Version**: 1.1.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-09

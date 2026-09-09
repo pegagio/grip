@@ -9,7 +9,7 @@ fn digest() -> String {
 
 #[test]
 fn recovery_mutation_previews_are_deterministic_and_non_mutating_for_100_runs() {
-    let (root, grip_home, _, _, reference) = support::payload_recovery_fixture();
+    let (root, metadata_dir, _, _, reference) = support::payload_recovery_fixture();
     let before = support::snapshot(root.path());
     for output in ["human", "json"] {
         for operation in ["restore", "remove"] {
@@ -18,9 +18,9 @@ fn recovery_mutation_previews_are_deterministic_and_non_mutating_for_100_runs() 
                 args.push("--confirm");
             }
             args.push(&reference);
-            let expected = support::command_with_grip_home(root.path(), &grip_home, &args);
+            let expected = support::project_command(root.path(), &metadata_dir, &args);
             for _ in 0..100 {
-                let actual = support::command_with_grip_home(root.path(), &grip_home, &args);
+                let actual = support::project_command(root.path(), &metadata_dir, &args);
                 assert_eq!(actual.status.code(), expected.status.code());
                 assert_eq!(actual.stdout, expected.stdout);
                 assert_eq!(actual.stderr, expected.stderr);
@@ -32,15 +32,15 @@ fn recovery_mutation_previews_are_deterministic_and_non_mutating_for_100_runs() 
 
 #[test]
 fn recovery_list_show_human_json_parity_and_content_nondisclosure() {
-    let (root, grip_home, _, _, reference) = support::payload_recovery_fixture();
+    let (root, metadata_dir, _, _, reference) = support::payload_recovery_fixture();
     for command in [
         vec!["recovery", "list"],
         vec!["recovery", "show", &reference],
     ] {
-        let human = support::command_with_grip_home(root.path(), &grip_home, &command);
+        let human = support::project_command(root.path(), &metadata_dir, &command);
         let mut json_args = vec!["--output=json"];
         json_args.extend(command);
-        let json = support::command_with_grip_home(root.path(), &grip_home, &json_args);
+        let json = support::project_command(root.path(), &metadata_dir, &json_args);
         assert!(human.status.success() && json.status.success());
         assert!(String::from_utf8_lossy(&human.stdout).contains(&reference));
         assert!(!String::from_utf8_lossy(&json.stdout).contains("\"content\""));
@@ -49,7 +49,7 @@ fn recovery_list_show_human_json_parity_and_content_nondisclosure() {
 
 #[test]
 fn cleanup_rejects_duplicate_and_operation_references_before_mutation() {
-    let (root, grip_home, _, _, reference) = support::payload_recovery_fixture();
+    let (root, metadata_dir, _, _, reference) = support::payload_recovery_fixture();
     let before = support::snapshot(root.path());
     for references in [
         vec![reference.as_str(), reference.as_str()],
@@ -57,7 +57,7 @@ fn cleanup_rejects_duplicate_and_operation_references_before_mutation() {
     ] {
         let mut args = vec!["recovery", "remove", "--confirm"];
         args.extend(references);
-        let result = support::command_with_grip_home(root.path(), &grip_home, &args);
+        let result = support::project_command(root.path(), &metadata_dir, &args);
         assert!(!result.status.success());
     }
     support::assert_snapshot_unchanged(&before, root.path());

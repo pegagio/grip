@@ -33,37 +33,32 @@ fn pull_parses_default_execute_selectors_and_dry_run_aliases() {
 #[test]
 fn pull_source_and_destination_selectors_resolve_the_same_managed_action() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&destination, "changed").unwrap();
 
-    let source_output = support::command_with_grip_home(
+    let source_output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "pull",
-            "--dry-run",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "pull", "--dry-run", "source"],
     );
-    let destination_output = support::command_with_grip_home(
+    let destination_output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output=json",
             "pull",
             "--dry-run",
             "--destination",
-            destination.to_str().unwrap(),
+            "~/destination",
         ],
     );
     assert!(source_output.status.success());
@@ -90,24 +85,23 @@ fn pull_source_and_destination_selectors_resolve_the_same_managed_action() {
 #[test]
 fn pull_preview_uses_shared_schema_and_changes_nothing() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
-    let pushed =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push"]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    let pushed = support::project_command(root.path(), &metadata_dir, &["--output=json", "push"]);
     assert!(pushed.status.success());
     fs::write(&destination, "destination change").unwrap();
     let before = support::snapshot(root.path());
 
-    let first = support::command_with_grip_home(
+    let first = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "pull", "--dry-run"],
     );
     let second =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "pull", "-n"]);
+        support::project_command(root.path(), &metadata_dir, &["--output=json", "pull", "-n"]);
     assert!(first.status.success());
     assert_eq!(first.stdout, second.stdout);
     let value = support::json(&first);
@@ -119,7 +113,7 @@ fn pull_preview_uses_shared_schema_and_changes_nothing() {
     assert_eq!(value["details"]["counts"]["actions"], 1);
     assert_eq!(value["details"]["actions"][0]["kind"], "replace_file");
     assert!(value["details"]["operation_record"].is_null());
-    let human = support::command_with_grip_home(root.path(), &grip_home, &["pull", "--dry-run"]);
+    let human = support::project_command(root.path(), &metadata_dir, &["pull", "--dry-run"]);
     let text = String::from_utf8_lossy(&human.stdout);
     let arrow = format!("{} -> {}", destination.display(), source.display());
     assert!(
@@ -132,22 +126,22 @@ fn pull_preview_uses_shared_schema_and_changes_nothing() {
 #[test]
 fn pull_reports_unmanaged_destination_content_without_importing_it() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
     let destination = root.path().join("destination-tree");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("managed"), "accepted").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(destination.join("managed"), "changed").unwrap();
     fs::write(destination.join("unmanaged"), "destination only").unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "pull", "--dry-run"],
     );
     assert!(
@@ -170,16 +164,16 @@ fn pull_reports_unmanaged_destination_content_without_importing_it() {
 #[test]
 fn pull_honors_hierarchical_source_side_gripignore_without_importing() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
     let destination = root.path().join("destination-tree");
     fs::create_dir_all(source.join("nested")).unwrap();
     fs::write(source.join("nested/.gripignore"), "*.secret\n").unwrap();
     fs::write(source.join("nested/managed"), "accepted").unwrap();
     fs::write(source.join("nested/private.secret"), "source private").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
@@ -191,8 +185,7 @@ fn pull_honors_hierarchical_source_side_gripignore_without_importing() {
     .unwrap();
     let private_before = fs::read(source.join("nested/private.secret")).unwrap();
 
-    let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "pull"]);
+    let output = support::project_command(root.path(), &metadata_dir, &["--output=json", "pull"]);
     assert!(
         output.status.success(),
         "stdout={} stderr={}",
@@ -212,21 +205,20 @@ fn pull_honors_hierarchical_source_side_gripignore_without_importing() {
 #[test]
 fn pull_blocks_divergent_changes_before_mutation() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&source, "source change").unwrap();
     fs::write(&destination, "destination change").unwrap();
     let before = support::snapshot(root.path());
-    let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "pull"]);
+    let output = support::project_command(root.path(), &metadata_dir, &["--output=json", "pull"]);
     assert_eq!(output.status.code(), Some(10));
     let value = support::json(&output);
     assert_eq!(value["details"]["completion"], "blocked");
@@ -292,25 +284,25 @@ fn pull_failure_has_equivalent_human_and_machine_evidence() {
 #[test]
 fn pull_human_results_cover_apply_noop_and_blocked_outcomes() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "accepted").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&destination, "destination change").unwrap();
 
-    let applied = support::command_with_grip_home(root.path(), &grip_home, &["pull"]);
+    let applied = support::project_command(root.path(), &metadata_dir, &["pull"]);
     assert!(applied.status.success());
     let applied_text = String::from_utf8(applied.stdout).unwrap();
     assert!(applied_text.contains("Pull applied"));
     assert!(applied_text.contains("Baseline published"));
 
-    let noop = support::command_with_grip_home(root.path(), &grip_home, &["pull"]);
+    let noop = support::project_command(root.path(), &metadata_dir, &["pull"]);
     assert!(noop.status.success());
     assert!(
         String::from_utf8(noop.stdout)
@@ -320,7 +312,7 @@ fn pull_human_results_cover_apply_noop_and_blocked_outcomes() {
 
     fs::write(&source, "source divergence").unwrap();
     fs::write(&destination, "destination divergence").unwrap();
-    let blocked = support::command_with_grip_home(root.path(), &grip_home, &["pull"]);
+    let blocked = support::project_command(root.path(), &metadata_dir, &["pull"]);
     assert_eq!(blocked.status.code(), Some(10));
     let blocked_text = String::from_utf8(blocked.stdout).unwrap();
     assert!(blocked_text.contains("Pull blocked"));

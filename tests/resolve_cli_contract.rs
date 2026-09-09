@@ -18,22 +18,16 @@ fn resolve_requires_exactly_one_winner_and_one_path() {
 
 #[test]
 fn resolve_preview_is_source_space_only_and_non_mutating() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
     fs::write(&destination, "destination change").unwrap();
     let before = support::snapshot(root.path());
     for preview in ["-n", "--dry-run"] {
-        let output = support::command_with_grip_home(
+        let output = support::project_command(
             root.path(),
-            &grip_home,
+            &metadata_dir,
             &[
-                "--output",
-                "json",
-                "resolve",
-                preview,
-                "--source",
-                "--",
-                source.to_str().unwrap(),
+                "--output", "json", "resolve", preview, "--source", "--", "source",
             ],
         );
         assert!(
@@ -48,29 +42,23 @@ fn resolve_preview_is_source_space_only_and_non_mutating() {
     }
     assert_eq!(support::snapshot(root.path()), before);
 
-    let rejected = support::command_with_grip_home(
+    let rejected = support::project_command(
         root.path(),
-        &grip_home,
-        &["resolve", "--source", "--", destination.to_str().unwrap()],
+        &metadata_dir,
+        &["resolve", "--source", "--", "~/destination"],
     );
     assert_eq!(rejected.status.code(), Some(10));
 }
 
 #[test]
 fn resolve_human_output_names_winner_and_directional_transfer() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
     fs::write(&destination, "destination change").unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "resolve",
-            "-n",
-            "--destination",
-            "--",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["resolve", "-n", "--destination", "--", "source"],
     );
     assert!(output.status.success());
     let human = String::from_utf8(output.stdout).unwrap();
@@ -84,13 +72,13 @@ fn resolve_human_output_names_winner_and_directional_transfer() {
 
 #[test]
 fn resolve_accepts_the_documented_path_then_winner_form() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::write(&source, "source change").unwrap();
     fs::write(&destination, "destination change").unwrap();
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
-        &["resolve", source.to_str().unwrap(), "--source", "--dry-run"],
+        &metadata_dir,
+        &["resolve", "source", "--source", "--dry-run"],
     );
     assert!(output.status.success());
 }
@@ -100,16 +88,10 @@ fn resolve_human_and_json_results_expose_equivalent_winner_and_acceptance() {
     let (json_root, json_home, json_source, json_destination) = support::accepted_file_fixture();
     fs::write(&json_source, "winner").unwrap();
     fs::write(&json_destination, "loser").unwrap();
-    let json_output = support::command_with_grip_home(
+    let json_output = support::project_command(
         json_root.path(),
         &json_home,
-        &[
-            "--output=json",
-            "resolve",
-            "--source",
-            "--",
-            json_source.to_str().unwrap(),
-        ],
+        &["--output=json", "resolve", "--source", "--", "source"],
     );
     assert!(json_output.status.success());
     let json = support::json(&json_output);
@@ -126,10 +108,10 @@ fn resolve_human_and_json_results_expose_equivalent_winner_and_acceptance() {
         support::accepted_file_fixture();
     fs::write(&human_source, "winner").unwrap();
     fs::write(&human_destination, "loser").unwrap();
-    let human_output = support::command_with_grip_home(
+    let human_output = support::project_command(
         human_root.path(),
         &human_home,
-        &["resolve", "--source", "--", human_source.to_str().unwrap()],
+        &["resolve", "--source", "--", "source"],
     );
     assert!(human_output.status.success());
     let human = String::from_utf8(human_output.stdout).unwrap();
@@ -164,7 +146,7 @@ fn resolve_output_failure_preserves_the_published_baseline_and_record() {
     let current = grip::state::publication::load(&home).unwrap();
     assert_eq!(current.accepted.generation, Some(generation));
     let summary =
-        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV1>(
+        support::read_operation_component::<grip::operation::model::OperationSummaryPayloadV2>(
             &home
                 .path()
                 .join("state/operations")

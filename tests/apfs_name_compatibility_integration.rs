@@ -65,12 +65,16 @@ fn case_only_aliases_report_every_identity_before_destination_mutation() {
     std::fs::create_dir(&source).unwrap();
     std::fs::write(source.join("Readme"), b"one").unwrap();
     std::fs::write(source.join("README"), b"two").unwrap();
-    let grip_home = support::minimal_home(source_fixture.path());
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    let metadata_dir = support::initialize_project_metadata(source_fixture.path());
+    support::write_descriptor_for_home(
+        &metadata_dir,
+        destination_fixture.path(),
+        &[("tree", &source, &destination)],
+    );
     let before = support::snapshot(source_fixture.path());
-    let inspected = support::command_with_grip_home(
-        source_fixture.path(),
-        &grip_home,
+    let inspected = support::project_command(
+        destination_fixture.path(),
+        &metadata_dir,
         &["--output=json", "mapping", "inspect"],
     );
     assert!(inspected.status.success());

@@ -1,13 +1,13 @@
 //! Atomic publication of partitioned operation records.
 
 use crate::error::GripError;
-use crate::home::GripHome;
 use crate::mutation::model::MutationPlan;
 use crate::operation::model::{
-    ActionCheckpointEnvelopeV1, ActionCheckpointEvidenceV1, ActionCheckpointPayloadV1,
-    OperationPlanEnvelopeV1, OperationPlanPayloadV1, OperationSummaryEnvelopeV1,
-    OperationSummaryPayloadV1, encode,
+    ActionCheckpointEnvelopeV2, ActionCheckpointEvidenceV2, ActionCheckpointPayloadV2,
+    OperationRecordPayloadV2, OperationRecordV2, OperationSummaryEnvelopeV2,
+    OperationSummaryPayloadV2, PortableActionV2, encode,
 };
+use crate::project::ProjectPaths;
 use rustix::fs::{AtFlags, Mode, OFlags, RenameFlags, fsync, openat, renameat_with, unlinkat};
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -25,8 +25,9 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct OperationReceipt {
     operation_id: String,
     directory: PathBuf,
-    summary: OperationSummaryPayloadV1,
+    summary: OperationSummaryPayloadV2,
     action_count: usize,
+    home: ProjectPaths,
 }
 
 impl OperationReceipt {
@@ -38,15 +39,22 @@ impl OperationReceipt {
         &self.directory
     }
 
+    pub(crate) fn portable_identity(
+        &self,
+        identity: &crate::observation::model::EntryIdentity,
+    ) -> Result<crate::state::EntryIdentityV4, GripError> {
+        crate::state::portable_identity_from_runtime(&self.home, identity)
+    }
+
     /// Atomically publish the latest bounded checkpoint for one started action.
     pub fn checkpoint_action(
         &self,
         action_index: usize,
         status: &str,
-        evidence: ActionCheckpointEvidenceV1,
+        evidence: ActionCheckpointEvidenceV2,
         failure: Option<String>,
     ) -> Result<(), GripError> {
-        let payload = ActionCheckpointPayloadV1 {
+        let payload = ActionCheckpointPayloadV2 {
             operation_id: self.operation_id.clone(),
             plan_id: self.summary.plan_id.clone(),
             action_index,
@@ -63,14 +71,14 @@ impl OperationReceipt {
         let actions = open_private_directory(&self.directory.join("actions"))?;
         let checkpoint_name = format!("{action_index:08}.json");
         if let Some(bytes) = read_private_component(&actions, checkpoint_name.as_bytes())? {
-            let previous = crate::operation::model::decode::<ActionCheckpointPayloadV1>(&bytes)?;
+            let previous = crate::operation::model::decode::<ActionCheckpointPayloadV2>(&bytes)?;
             crate::operation::model::validate_action_transition(&previous.payload, &payload)?;
         } else if status != "in_progress" {
             return Err(GripError::CorruptState(
                 "first action checkpoint must record in_progress".into(),
             ));
         }
-        let envelope = ActionCheckpointEnvelopeV1::new(payload)?;
+        let envelope = ActionCheckpointEnvelopeV2::new(payload)?;
         publish_replace(
             &self.directory.join("actions"),
             &format!("{action_index:08}.json"),
@@ -93,30 +101,87 @@ impl OperationReceipt {
         next.failure = failure;
         crate::operation::model::validate_summary_transition(&self.summary, &next)?;
         self.summary = next;
-        let envelope = OperationSummaryEnvelopeV1::new(self.summary.clone())?;
+        let envelope = OperationSummaryEnvelopeV2::new(self.summary.clone())?;
         publish_replace(&self.directory, "operation.json", &encode(&envelope)?)
     }
 }
 
 /// Allocate and initialize a new partitioned record immediately before mutation.
-pub fn initialize(home: &GripHome, plan: &MutationPlan) -> Result<OperationReceipt, GripError> {
-    initialize_typed(
+pub fn initialize(home: &ProjectPaths, plan: &MutationPlan) -> Result<OperationReceipt, GripError> {
+    let actions = plan
+        .actions
+        .iter()
+        .map(|action| {
+            Ok(PortableActionV2 {
+                index: action.index,
+                identity: action
+                    .identity
+                    .as_ref()
+                    .map(|identity| crate::state::portable_identity_from_runtime(home, identity))
+                    .transpose()?,
+                endpoint_role: match action.direction {
+                    crate::mutation::model::MutationDirection::Push => {
+                        crate::state::EndpointRoleV1::Destination
+                    }
+                    crate::mutation::model::MutationDirection::Pull => {
+                        crate::state::EndpointRoleV1::Source
+                    }
+                },
+                diagnostic_path: Some(action.destination_path.clone().into()),
+            })
+        })
+        .collect::<Result<Vec<_>, GripError>>()?;
+    initialize_portable(
         home,
         plan.operation.as_str(),
         &plan.plan_id,
-        plan,
         plan.actions.len(),
+        actions,
     )
 }
 
 /// Allocate and initialize a partitioned record for any validated typed plan.
 pub fn initialize_typed<T: serde::Serialize>(
-    home: &GripHome,
+    home: &ProjectPaths,
     operation: &str,
     plan_id: &str,
-    plan: &T,
+    _plan: &T,
     action_count: usize,
 ) -> Result<OperationReceipt, GripError> {
+    let actions = (0..action_count)
+        .map(|index| PortableActionV2 {
+            index,
+            identity: None,
+            endpoint_role: crate::state::EndpointRoleV1::AcceptedState,
+            diagnostic_path: None,
+        })
+        .collect();
+    initialize_portable(home, operation, plan_id, action_count, actions)
+}
+
+/// Allocate and initialize a typed operation with its portable action authority.
+pub fn initialize_typed_with_actions<T: serde::Serialize>(
+    home: &ProjectPaths,
+    operation: &str,
+    plan_id: &str,
+    _plan: &T,
+    actions: Vec<PortableActionV2>,
+) -> Result<OperationReceipt, GripError> {
+    initialize_portable(home, operation, plan_id, actions.len(), actions)
+}
+
+fn initialize_portable(
+    home: &ProjectPaths,
+    operation: &str,
+    plan_id: &str,
+    action_count: usize,
+    actions: Vec<PortableActionV2>,
+) -> Result<OperationReceipt, GripError> {
+    if actions.len() != action_count {
+        return Err(GripError::Internal(
+            "portable operation action count does not match the validated plan".into(),
+        ));
+    }
     let state = crate::state::publication::prepare_directory(home)?;
     let operations = state.join("operations");
     ensure_private_directory(&operations)?;
@@ -124,39 +189,41 @@ pub fn initialize_typed<T: serde::Serialize>(
     ensure_private_directory(&directory.join("actions"))?;
     ensure_private_directory(&directory.join("recovery"))?;
 
-    let plan_payload = OperationPlanPayloadV1 {
+    let record = OperationRecordV2::new(OperationRecordPayloadV2 {
         operation_id: operation_id.clone(),
         operation: operation.into(),
         plan_id: plan_id.into(),
-        plan: serde_json::to_value(plan).map_err(|error| {
-            GripError::Internal(format!("could not encode operation plan: {error}"))
-        })?,
-    };
-    let plan_envelope = OperationPlanEnvelopeV1::new(plan_payload)?;
-    publish_new(&directory, "plan.json", &encode(&plan_envelope)?)?;
-    let summary = OperationSummaryPayloadV1 {
+        actions,
+    })?;
+    publish_new(
+        &directory,
+        "record.json",
+        &crate::operation::model::encode_operation_v2(&record)?,
+    )?;
+    let summary = OperationSummaryPayloadV2 {
         operation_id: operation_id.clone(),
         operation: operation.into(),
         state: "executing".into(),
         plan_id: plan_id.into(),
-        plan_ref: "plan.json".into(),
+        plan_ref: "record.json".into(),
         baseline: serde_json::json!({"outcome":"not_attempted"}),
         result_delivery: "not_attempted".into(),
         failure: None,
     };
-    let envelope = OperationSummaryEnvelopeV1::new(summary.clone())?;
+    let envelope = OperationSummaryEnvelopeV2::new(summary.clone())?;
     publish_new(&directory, "operation.json", &encode(&envelope)?)?;
     Ok(OperationReceipt {
         operation_id,
         directory,
         summary,
         action_count,
+        home: home.clone(),
     })
 }
 
 /// Best-effort finalization of the result channel for one just-completed invocation.
 pub fn finalize_result_delivery(
-    home: &GripHome,
+    home: &ProjectPaths,
     operation_id: &str,
     result_delivery: &str,
 ) -> Result<(), GripError> {
@@ -173,7 +240,7 @@ pub fn finalize_result_delivery(
     let opened = open_private_directory(&directory)?;
     let bytes = read_private_component(&opened, b"operation.json")?
         .ok_or_else(|| GripError::CorruptState("operation summary is missing".into()))?;
-    let envelope = crate::operation::model::decode::<OperationSummaryPayloadV1>(&bytes)?;
+    let envelope = crate::operation::model::decode::<OperationSummaryPayloadV2>(&bytes)?;
     if envelope.payload.operation_id != operation_id {
         return Err(GripError::CorruptState(
             "operation summary identifier does not match its directory".into(),
@@ -184,6 +251,7 @@ pub fn finalize_result_delivery(
         directory,
         summary: envelope.payload,
         action_count: 0,
+        home: home.clone(),
     };
     receipt.checkpoint_summary(
         &receipt.summary.state.clone(),

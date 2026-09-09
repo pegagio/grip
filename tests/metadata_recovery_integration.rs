@@ -4,7 +4,7 @@ use grip::discovery::model::NodeKind;
 
 #[test]
 fn metadata_only_recovery_restores_the_exact_prior_complete_state() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     let prior = grip::observation::fingerprint::inspect_complete(&destination, NodeKind::File)
         .unwrap()
         .state;
@@ -12,8 +12,7 @@ fn metadata_only_recovery_restores_the_exact_prior_complete_state() {
     support::set_fixture_modified_time(&source, 1_600_000_123, 456_789_012);
     support::set_fixture_xattr(&source, "com.apple.TextEncoding", b"utf-8");
 
-    let pushed =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push"]);
+    let pushed = support::project_command(root.path(), &metadata_dir, &["--output=json", "push"]);
     assert!(
         pushed.status.success(),
         "stdout={} stderr={}",
@@ -25,15 +24,15 @@ fn metadata_only_recovery_restores_the_exact_prior_complete_state() {
         .unwrap()
         .to_owned();
     let reference = format!("payload:{operation}:0");
-    let metadata_path = grip_home
+    let metadata_path = metadata_dir
         .join("state/operations")
         .join(&operation)
-        .join("recovery/00000000/metadata-v2.json");
+        .join("recovery/00000000/metadata-v3.json");
     assert!(metadata_path.is_file());
 
-    let restored = support::command_with_grip_home(
+    let restored = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "recovery", "restore", &reference],
     );
     assert!(
@@ -52,7 +51,7 @@ fn metadata_only_recovery_restores_the_exact_prior_complete_state() {
 
 #[test]
 fn directory_metadata_recovery_restores_in_place_without_removing_children() {
-    let (root, grip_home, source, destination) = support::accepted_tree_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_tree_fixture();
     let source_directory = source.join("nested");
     let destination_directory = destination.join("nested");
     let prior = grip::observation::fingerprint::inspect_complete(
@@ -64,10 +63,10 @@ fn directory_metadata_recovery_restores_in_place_without_removing_children() {
     support::set_fixture_mode(&source_directory, 0o700);
     support::set_fixture_modified_time(&source_directory, 1_600_000_222, 987_654_321);
 
-    let pushed = support::command_with_grip_home(
+    let pushed = support::project_command(
         root.path(),
-        &grip_home,
-        &["--output=json", "push", source_directory.to_str().unwrap()],
+        &metadata_dir,
+        &["--output=json", "push", "source/nested"],
     );
     assert!(
         pushed.status.success(),
@@ -80,9 +79,9 @@ fn directory_metadata_recovery_restores_in_place_without_removing_children() {
     let action_index = value["details"]["actions"][0]["index"].as_u64().unwrap();
     let reference = format!("payload:{operation}:{action_index}");
 
-    let restored = support::command_with_grip_home(
+    let restored = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "recovery", "restore", &reference],
     );
     assert!(
@@ -113,14 +112,14 @@ fn recovery_v2_retains_empty_and_large_xattr_values_on_private_payloads() {
         ("com.apple.ResourceFork", vec![0x5a; 2 * 1024 * 1024]),
     ] {
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
-        let grip_home = support::minimal_home(root.path());
+        let metadata_dir = support::initialize_project_metadata(root.path());
         let source = root.path().join("source");
         let destination = root.path().join("destination");
         std::fs::write(&source, b"accepted").unwrap();
         support::set_fixture_xattr(&source, name, &prior_value);
-        support::write_registry(&grip_home, &[("file", &source, &destination)]);
+        support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
         assert!(
-            support::command_with_grip_home(root.path(), &grip_home, &["push"])
+            support::project_command(root.path(), &metadata_dir, &["push"])
                 .status
                 .success()
         );
@@ -132,16 +131,16 @@ fn recovery_v2_retains_empty_and_large_xattr_values_on_private_payloads() {
         support::remove_fixture_xattr(&source, name);
         support::set_fixture_mode(&source, 0o600);
         let pushed =
-            support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push"]);
+            support::project_command(root.path(), &metadata_dir, &["--output=json", "push"]);
         assert!(pushed.status.success());
         let operation = support::json(&pushed)["details"]["operation_record"]["id"]
             .as_str()
             .unwrap()
             .to_owned();
         let reference = format!("payload:{operation}:0");
-        let restored = support::command_with_grip_home(
+        let restored = support::project_command(
             root.path(),
-            &grip_home,
+            &metadata_dir,
             &["recovery", "restore", &reference],
         );
         assert!(
@@ -162,7 +161,7 @@ fn recovery_v2_retains_empty_and_large_xattr_values_on_private_payloads() {
 #[test]
 fn recovery_v2_restores_ordered_acl_and_supported_bsd_flags() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     std::fs::write(&source, b"accepted").unwrap();
@@ -171,9 +170,9 @@ fn recovery_v2_restores_ordered_acl_and_supported_bsd_flags() {
         &["everyone allow read", "staff allow readsecurity"],
     );
     support::set_fixture_bsd_flags(&source, libc::UF_NODUMP | libc::UF_HIDDEN);
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
@@ -184,8 +183,7 @@ fn recovery_v2_restores_ordered_acl_and_supported_bsd_flags() {
     support::set_fixture_bsd_flags(&source, 0);
     support::clear_fixture_acl(&source);
     support::set_fixture_mode(&source, 0o600);
-    let pushed =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output=json", "push"]);
+    let pushed = support::project_command(root.path(), &metadata_dir, &["--output=json", "push"]);
     assert!(
         pushed.status.success(),
         "{}",
@@ -195,9 +193,9 @@ fn recovery_v2_restores_ordered_acl_and_supported_bsd_flags() {
         .as_str()
         .unwrap()
         .to_owned();
-    let restored = support::command_with_grip_home(
+    let restored = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["recovery", "restore", &format!("payload:{operation}:0")],
     );
     assert!(

@@ -216,7 +216,7 @@ mod tests {
     use crate::discovery::model::SafePath;
     use crate::mapping::MappingKind;
     use crate::observation::model::{
-        ContentFingerprint, EntryIdentity, MappingSnapshot, PathSpace, SupportedState,
+        ContentFingerprint, EntryIdentity, PathSpace, ResolvedMapping, SupportedState,
     };
     use std::path::PathBuf;
 
@@ -232,7 +232,7 @@ mod tests {
         }
     }
     fn record(classification: Classification, relative: &[u8]) -> ClassificationRecord {
-        let mapping = MappingSnapshot {
+        let mapping = ResolvedMapping {
             kind: MappingKind::Tree,
             source: PathBuf::from("/source"),
             destination: PathBuf::from("/destination"),

@@ -10,7 +10,7 @@ fn file_fixture() -> (
     std::path::PathBuf,
 ) {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::write(&source, "same").unwrap();
@@ -20,15 +20,15 @@ fn file_fixture() -> (
         &destination,
         grip::discovery::model::NodeKind::File,
     );
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
-    (root, grip_home, source, destination)
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    (root, metadata_dir, source, destination)
 }
 
 #[test]
 fn status_check_diff_and_baseline_share_the_versioned_result_contract() {
-    let (root, grip_home, source, _) = file_fixture();
+    let (root, metadata_dir, _, _) = file_fixture();
     let status =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "status"]);
+        support::project_command(root.path(), &metadata_dir, &["--output", "json", "status"]);
     assert_eq!(status.status.code(), Some(0));
     let status_json = support::json(&status);
     assert_eq!(
@@ -40,24 +40,23 @@ fn status_check_diff_and_baseline_share_the_versioned_result_contract() {
         20
     );
 
-    let check = support::command_with_grip_home(
+    let check = support::project_command(
         root.path(),
-        &grip_home,
-        &["--output", "json", "check", source.to_str().unwrap()],
+        &metadata_dir,
+        &["--output", "json", "check", "source"],
     );
     assert_eq!(check.status.code(), Some(1));
     assert_eq!(support::json(&check)["code"], "attention_required");
 
-    let accept = support::command_with_grip_home(
+    let accept = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "baseline", "accept"],
     );
     assert_eq!(accept.status.code(), Some(0));
     assert_eq!(support::json(&accept)["details"]["generation"], 0);
 
-    let diff =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "diff"]);
+    let diff = support::project_command(root.path(), &metadata_dir, &["--output", "json", "diff"]);
     let diff_json = support::json(&diff);
     assert_eq!(
         diff_json["details"]["records"][0]["classification"],
@@ -68,20 +67,20 @@ fn status_check_diff_and_baseline_share_the_versioned_result_contract() {
         serde_json::json!([])
     );
 
-    let validate = support::command_with_grip_home(root.path(), &grip_home, &["validate"]);
+    let validate = support::project_command(root.path(), &metadata_dir, &["validate"]);
     assert_eq!(validate.status.code(), Some(0));
 }
 
 #[test]
 fn baseline_noop_preserves_exact_state_bytes_and_generation() {
-    let (root, grip_home, _, _) = file_fixture();
-    let first = support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"]);
+    let (root, metadata_dir, _, _) = file_fixture();
+    let first = support::project_command(root.path(), &metadata_dir, &["baseline", "accept"]);
     assert_eq!(first.status.code(), Some(0));
-    let path = grip_home.join("state/state.json");
+    let path = metadata_dir.join("state/state.json");
     let before = fs::read(&path).unwrap();
-    let second = support::command_with_grip_home(
+    let second = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "baseline", "accept"],
     );
     assert_eq!(second.status.code(), Some(0));
@@ -90,16 +89,16 @@ fn baseline_noop_preserves_exact_state_bytes_and_generation() {
         "already_current"
     );
     assert_eq!(fs::read(path).unwrap(), before);
-    assert!(!grip_home.join("state/recovery/generation-0").exists());
+    assert!(!metadata_dir.join("state/recovery/generation-0").exists());
 }
 
 #[test]
 fn grammar_and_selector_boundaries_are_stable() {
-    let (root, grip_home, source, destination) = file_fixture();
-    let selected = support::command_with_grip_home(
+    let (root, metadata_dir, source, destination) = file_fixture();
+    let selected = support::project_command(
         root.path(),
-        &grip_home,
-        &["--output", "json", "status", "--", source.to_str().unwrap()],
+        &metadata_dir,
+        &["--output", "json", "status", "--", "source"],
     );
     assert_eq!(selected.status.code(), Some(0));
     assert_eq!(
@@ -107,30 +106,30 @@ fn grammar_and_selector_boundaries_are_stable() {
         "entry"
     );
 
-    let destination_selected = support::command_with_grip_home(
+    let destination_selected = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output",
             "json",
             "status",
             "--destination",
-            destination.to_str().unwrap(),
+            "~/destination",
         ],
     );
     assert_eq!(destination_selected.status.code(), Some(0));
 
     let outside = root.path().join("outside");
-    let invalid = support::command_with_grip_home(
+    let invalid = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output", "json", "status", outside.to_str().unwrap()],
     );
     assert_eq!(invalid.status.code(), Some(10));
 
-    let extra = support::command_with_grip_home(
+    let extra = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output",
             "json",
@@ -145,7 +144,7 @@ fn grammar_and_selector_boundaries_are_stable() {
 #[test]
 fn ignored_and_destination_only_selectors_return_explicit_unmanaged_records() {
     let root = tempfile::tempdir().unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
@@ -153,17 +152,12 @@ fn ignored_and_destination_only_selectors_return_explicit_unmanaged_records() {
     fs::write(source.join("ignored"), "source").unwrap();
     fs::write(source.join(".gripignore"), "ignored\n").unwrap();
     fs::write(destination.join("unmanaged"), "destination").unwrap();
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let ignored = support::command_with_grip_home(
+    let ignored = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output",
-            "json",
-            "status",
-            source.join("ignored").to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output", "json", "status", "source/ignored"],
     );
     assert_eq!(ignored.status.code(), Some(0));
     assert_eq!(
@@ -171,15 +165,15 @@ fn ignored_and_destination_only_selectors_return_explicit_unmanaged_records() {
         "ignored"
     );
 
-    let unmanaged = support::command_with_grip_home(
+    let unmanaged = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "--output",
             "json",
             "status",
             "--destination",
-            destination.join("unmanaged").to_str().unwrap(),
+            "~/destination/unmanaged",
         ],
     );
     assert_eq!(unmanaged.status.code(), Some(0));
@@ -191,23 +185,23 @@ fn ignored_and_destination_only_selectors_return_explicit_unmanaged_records() {
 
 #[test]
 fn check_has_distinct_clean_attention_usage_configuration_schema_and_corruption_exits() {
-    let (root, grip_home, source, destination) = file_fixture();
+    let (root, metadata_dir, source, destination) = file_fixture();
     let attention =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "check"]);
+        support::project_command(root.path(), &metadata_dir, &["--output", "json", "check"]);
     assert_eq!(attention.status.code(), Some(1));
     assert_eq!(support::json(&attention)["status"], "ok");
     assert_eq!(support::json(&attention)["code"], "attention_required");
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
+        support::project_command(root.path(), &metadata_dir, &["baseline", "accept"])
             .status
             .success()
     );
-    let clean = support::command_with_grip_home(root.path(), &grip_home, &["check"]);
+    let clean = support::project_command(root.path(), &metadata_dir, &["check"]);
     assert_eq!(clean.status.code(), Some(0));
 
-    let usage = support::command_with_grip_home(
+    let usage = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &[
             "check",
             source.to_str().unwrap(),
@@ -215,27 +209,27 @@ fn check_has_distinct_clean_attention_usage_configuration_schema_and_corruption_
         ],
     );
     assert_eq!(usage.status.code(), Some(2));
-    let invalid = support::command_with_grip_home(
+    let invalid = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["check", root.path().join("outside").to_str().unwrap()],
     );
     assert_eq!(invalid.status.code(), Some(10));
 
-    let state_path = grip_home.join("state/state.json");
+    let state_path = metadata_dir.join("state/state.json");
     fs::write(&state_path, br#"{"schema_version":99}"#).unwrap();
-    let unsupported = support::command_with_grip_home(root.path(), &grip_home, &["check"]);
+    let unsupported = support::project_command(root.path(), &metadata_dir, &["check"]);
     assert_eq!(unsupported.status.code(), Some(11));
     fs::write(&state_path, b"{}").unwrap();
-    let corrupt = support::command_with_grip_home(root.path(), &grip_home, &["check"]);
+    let corrupt = support::project_command(root.path(), &metadata_dir, &["check"]);
     assert_eq!(corrupt.status.code(), Some(12));
 }
 
 #[test]
 fn diff_reports_three_safe_comparisons_without_payload_content() {
-    let (root, grip_home, source, destination) = file_fixture();
+    let (root, metadata_dir, source, destination) = file_fixture();
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
+        support::project_command(root.path(), &metadata_dir, &["baseline", "accept"])
             .status
             .success()
     );
@@ -248,7 +242,7 @@ fn diff_reports_three_safe_comparisons_without_payload_content() {
         grip::discovery::model::NodeKind::File,
     );
     let output =
-        support::command_with_grip_home(root.path(), &grip_home, &["--output", "json", "diff"]);
+        support::project_command(root.path(), &metadata_dir, &["--output", "json", "diff"]);
     assert_eq!(output.status.code(), Some(0));
     let value = support::json(&output);
     let changed = &value["details"]["records"][0]["changed_dimensions"];
@@ -265,7 +259,7 @@ fn diff_reports_three_safe_comparisons_without_payload_content() {
     assert!(!rendered.contains(secret));
     assert!(rendered.contains("sha256"));
 
-    let human = support::command_with_grip_home(root.path(), &grip_home, &["diff"]);
+    let human = support::project_command(root.path(), &metadata_dir, &["diff"]);
     let human_text = String::from_utf8(human.stdout).unwrap();
     assert!(human_text.contains("source_to_baseline content"));
     assert!(!human_text.contains(secret));
@@ -273,11 +267,10 @@ fn diff_reports_three_safe_comparisons_without_payload_content() {
 
 #[test]
 fn closed_result_channel_returns_operational_failure() {
-    let (root, grip_home, _, _) = file_fixture();
+    let (root, _, _, _) = file_fixture();
     let mut child = Command::new(env!("CARGO_BIN_EXE_grip"))
         .env_clear()
         .env("HOME", root.path())
-        .env("GRIP_HOME", &grip_home)
         .arg("status")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -289,24 +282,21 @@ fn closed_result_channel_returns_operational_failure() {
 
 #[test]
 fn read_only_commands_are_byte_deterministic_and_mutation_free_for_100_runs() {
-    let (root, grip_home, _, _) = file_fixture();
+    let (root, metadata_dir, _, _) = file_fixture();
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
+        support::project_command(root.path(), &metadata_dir, &["baseline", "accept"])
             .status
             .success()
     );
     let before = support::snapshot(root.path());
     for operation in ["status", "check", "diff"] {
-        let expected = support::command_with_grip_home(
-            root.path(),
-            &grip_home,
-            &["--output", "json", operation],
-        );
+        let expected =
+            support::project_command(root.path(), &metadata_dir, &["--output", "json", operation]);
         assert_eq!(expected.status.code(), Some(0));
         for _ in 0..100 {
-            let actual = support::command_with_grip_home(
+            let actual = support::project_command(
                 root.path(),
-                &grip_home,
+                &metadata_dir,
                 &["--output", "json", operation],
             );
             assert_eq!(actual.status.code(), Some(0));
@@ -319,20 +309,20 @@ fn read_only_commands_are_byte_deterministic_and_mutation_free_for_100_runs() {
 
 #[test]
 fn human_classification_output_includes_dimensions_and_blocking_reasons() {
-    let (root, grip_home, source, _) = file_fixture();
+    let (root, metadata_dir, source, _) = file_fixture();
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["baseline", "accept"])
+        support::project_command(root.path(), &metadata_dir, &["baseline", "accept"])
             .status
             .success()
     );
     fs::write(&source, "changed").unwrap();
-    let status = support::command_with_grip_home(root.path(), &grip_home, &["status"]);
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
     let status_text = String::from_utf8(status.stdout).unwrap();
     assert!(status_text.contains("source_to_baseline content"));
     assert!(status_text.contains("reasons source_changed"));
 
     let tree_root = tempfile::tempdir().unwrap();
-    let tree_home = support::minimal_home(tree_root.path());
+    let tree_home = support::initialize_project_metadata(tree_root.path());
     let tree_source = tree_root.path().join("source");
     let tree_destination = tree_root.path().join("destination");
     fs::create_dir(&tree_source).unwrap();
@@ -340,21 +330,18 @@ fn human_classification_output_includes_dimensions_and_blocking_reasons() {
     fs::write(tree_source.join("entry"), "same").unwrap();
     fs::write(tree_destination.join("entry"), "same").unwrap();
     support::copy_tree_entry_metadata(&tree_source, &tree_destination);
-    support::write_registry(&tree_home, &[("tree", &tree_source, &tree_destination)]);
+    support::write_descriptor(&tree_home, &[("tree", &tree_source, &tree_destination)]);
     assert!(
-        support::command_with_grip_home(tree_root.path(), &tree_home, &["baseline", "accept"])
+        support::project_command(tree_root.path(), &tree_home, &["baseline", "accept"])
             .status
             .success()
     );
     fs::remove_file(tree_destination.join("entry")).unwrap();
     std::os::unix::fs::symlink("missing", tree_destination.join("entry")).unwrap();
-    let check = support::command_with_grip_home(tree_root.path(), &tree_home, &["check"]);
+    let check = support::project_command(tree_root.path(), &tree_home, &["check"]);
     let check_text = String::from_utf8(check.stdout).unwrap();
-    let check_json = support::command_with_grip_home(
-        tree_root.path(),
-        &tree_home,
-        &["--output", "json", "check"],
-    );
+    let check_json =
+        support::project_command(tree_root.path(), &tree_home, &["--output", "json", "check"]);
     let check_value = support::json(&check_json);
     let reasons = check_value["details"]["records"]
         .as_array()
@@ -373,8 +360,8 @@ fn human_classification_output_includes_dimensions_and_blocking_reasons() {
 fn read_only_commands_reject_unsafe_state_directories() {
     for kind in ["mode", "file", "symlink"] {
         let root = tempfile::tempdir().unwrap();
-        let grip_home = support::minimal_home(root.path());
-        let state_path = grip_home.join("state");
+        let metadata_dir = support::initialize_project_metadata(root.path());
+        let state_path = metadata_dir.join("state");
         match kind {
             "mode" => {
                 fs::create_dir(&state_path).unwrap();
@@ -388,9 +375,9 @@ fn read_only_commands_reject_unsafe_state_directories() {
             "symlink" => {
                 let outside = tempfile::tempdir().unwrap();
                 std::os::unix::fs::symlink(outside.path(), &state_path).unwrap();
-                let output = support::command_with_grip_home(
+                let output = support::project_command(
                     root.path(),
-                    &grip_home,
+                    &metadata_dir,
                     &["--output", "json", "status"],
                 );
                 assert_eq!(output.status.code(), Some(12));
@@ -398,11 +385,8 @@ fn read_only_commands_reject_unsafe_state_directories() {
             }
             _ => unreachable!(),
         }
-        let output = support::command_with_grip_home(
-            root.path(),
-            &grip_home,
-            &["--output", "json", "status"],
-        );
+        let output =
+            support::project_command(root.path(), &metadata_dir, &["--output", "json", "status"]);
         assert_eq!(output.status.code(), Some(12));
     }
 }

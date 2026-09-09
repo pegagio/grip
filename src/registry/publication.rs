@@ -1,9 +1,9 @@
 //! Safe loading and atomic publication of the user-authored registry.
 
-use super::{Registry, decode, decode_mappings, encode};
+use super::{ProjectDescriptorV2, ResolvedRegistry, decode_descriptor, encode_descriptor};
 use crate::error::GripError;
-use crate::home::GripHome;
 use crate::path_policy::{self, PathEvidence};
+use crate::project::ProjectPaths;
 use crate::state::lock::PublicationLock;
 use rustix::fs::{CWD, Mode, OFlags, RenameFlags, open, renameat_with};
 use sha2::{Digest, Sha256};
@@ -25,14 +25,30 @@ struct FileIdentity {
 /// An accepted registry plus the evidence needed to reject stale publication.
 #[derive(Debug, Clone)]
 pub struct RegistrySnapshot {
-    pub registry: Registry,
+    pub registry: ResolvedRegistry,
     pub bytes: Vec<u8>,
     pub mode: u32,
     identity: FileIdentity,
     evidence: Vec<PathEvidence>,
+    portable_descriptor: Option<ProjectDescriptorV2>,
 }
 
 impl RegistrySnapshot {
+    /// Return the accepted portable declarations paired with their resolved runtime endpoints.
+    pub fn mapping_details(&self) -> Result<Vec<crate::result::MappingResultDetails>, GripError> {
+        let descriptor = self.portable_descriptor.as_ref().ok_or_else(|| {
+            GripError::UnsupportedSchema("project descriptors must use schema version 2".into())
+        })?;
+        Ok(descriptor
+            .mappings()
+            .iter()
+            .zip(self.registry.mappings())
+            .map(|(declared, resolved)| {
+                crate::result::MappingResultDetails::from_parts(declared, resolved)
+            })
+            .collect())
+    }
+
     /// Return missing destination parents captured during validated registry loading.
     pub fn missing_destination_parents(&self) -> Vec<crate::push::plan::ParentRequirement> {
         let mut requirements = Vec::new();
@@ -44,7 +60,7 @@ impl RegistrySnapshot {
             {
                 requirements.extend(evidence.missing_destination_parents().into_iter().map(
                     |path| crate::push::plan::ParentRequirement {
-                        mapping: crate::observation::model::MappingSnapshot::from(mapping),
+                        mapping: crate::observation::model::ResolvedMapping::from(mapping),
                         path,
                     },
                 ));
@@ -56,35 +72,13 @@ impl RegistrySnapshot {
 
 /// Validate a recovered registry against live endpoints and accepted state without publishing it.
 pub fn validate_recovered_compatibility(
-    home: &GripHome,
-    registry: &Registry,
+    home: &ProjectPaths,
+    registry: &ResolvedRegistry,
     bytes: &[u8],
     accepted: &crate::state::AcceptedState,
 ) -> Result<(), GripError> {
     let evidence = inspect_mappings(registry.mappings(), "recovery_restore")?;
     let _ = (home, bytes, evidence);
-    for (identity, baseline) in &accepted.baselines {
-        for path in [identity.source_path(), identity.destination_path()] {
-            match std::fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.file_type().is_symlink() => {
-                    return Err(GripError::InvalidConfiguration(
-                        "recovered registry resolves an accepted identity through a symbolic link"
-                            .into(),
-                    ));
-                }
-                Ok(_) => {
-                    crate::observation::fingerprint::inspect(&path, baseline.node_kind)?;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(GripError::from_io(
-                        "could not inspect recovered registry payload compatibility",
-                        error,
-                    ));
-                }
-            }
-        }
-    }
     for (identity, baseline) in &accepted.complete_baselines {
         for path in [identity.source_path(), identity.destination_path()] {
             match std::fs::symlink_metadata(&path) {
@@ -116,14 +110,15 @@ pub struct RegistryGuard {
 }
 
 /// Acquire the bounded registry publication lock for a compound state transaction.
-pub fn acquire_guard(home: &GripHome, operation: &str) -> Result<RegistryGuard, GripError> {
-    PublicationLock::acquire(&home.path().join(".registry.lock"))
+pub fn acquire_guard(home: &ProjectPaths, operation: &str) -> Result<RegistryGuard, GripError> {
+    let lock_path = crate::state::lock::project_lock_path(home, "registry.lock")?;
+    PublicationLock::acquire(&lock_path)
         .map(|lock| RegistryGuard { _lock: lock })
         .map_err(|error| match error {
             GripError::StateContention => GripError::mapping(
                 operation,
                 "registry_contention",
-                vec![home.path().join(".registry.lock").display().to_string()],
+                vec![lock_path.display().to_string()],
                 "registry publication is already in progress",
             ),
             other => other,
@@ -225,7 +220,7 @@ fn ensure_owned_dir(path: &Path) -> Result<(), GripError> {
     }
 }
 
-fn read_accepted(home: &GripHome, writable: bool) -> Result<AcceptedFile, GripError> {
+fn read_accepted(home: &ProjectPaths, writable: bool) -> Result<AcceptedFile, GripError> {
     let path = home.path().join("config.toml");
     let path_metadata = fs::symlink_metadata(&path).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => {
@@ -278,12 +273,27 @@ fn read_accepted(home: &GripHome, writable: bool) -> Result<AcceptedFile, GripEr
 }
 
 /// Read and completely validate the accepted registry and its safety metadata.
-pub fn load(home: &GripHome, writable: bool) -> Result<RegistrySnapshot, GripError> {
+pub fn load(home: &ProjectPaths, writable: bool) -> Result<RegistrySnapshot, GripError> {
     let accepted = read_accepted(home, writable)?;
     let text = std::str::from_utf8(&accepted.bytes)
         .map_err(|_| GripError::InvalidConfiguration("config.toml must be UTF-8 TOML".into()))?;
-    let mappings = decode_mappings(text)?;
-    let evidence = inspect_mappings(&mappings, "registry_validate")?;
+    let descriptor = decode_descriptor(text)?;
+    let project_root = project_root(home)?;
+    let user_home = destination_home(home)?;
+    let resolved = descriptor.resolve(&project_root, &user_home, "registry_validate")?;
+    let evidence: Vec<PathEvidence> = resolved
+        .iter()
+        .flat_map(|mapping| {
+            [
+                mapping.source_evidence.clone(),
+                mapping.destination_evidence.clone(),
+            ]
+        })
+        .collect();
+    let mappings: Vec<crate::mapping::Mapping> = resolved
+        .iter()
+        .map(crate::mapping::ResolvedMapping::ownership_mapping)
+        .collect();
     let (endpoint_pairs, remainder) = evidence.as_chunks::<2>();
     debug_assert!(remainder.is_empty());
     let canonical_mappings: Vec<_> = mappings
@@ -297,7 +307,7 @@ pub fn load(home: &GripHome, writable: bool) -> Result<RegistrySnapshot, GripErr
             )
         })
         .collect();
-    let canonical_registry = Registry::new(canonical_mappings.clone())?;
+    let canonical_registry = ResolvedRegistry::new(canonical_mappings.clone())?;
     for (stored, canonical) in mappings.iter().zip(&canonical_mappings) {
         for (stored_path, canonical_path) in [
             (&stored.source, &canonical.source),
@@ -322,12 +332,67 @@ pub fn load(home: &GripHome, writable: bool) -> Result<RegistrySnapshot, GripErr
         mode: accepted.identity.mode,
         identity: accepted.identity,
         evidence,
+        portable_descriptor: Some(descriptor),
     })
+}
+
+fn project_root(home: &ProjectPaths) -> Result<PathBuf, GripError> {
+    home.path()
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| GripError::InvalidConfiguration("project metadata has no root".into()))
+}
+
+fn destination_home(home: &ProjectPaths) -> Result<PathBuf, GripError> {
+    home.destination_home()
+        .map(Path::to_path_buf)
+        .map(Ok)
+        .unwrap_or_else(|| project_root(home))
+}
+
+fn encode_candidate(
+    home: &ProjectPaths,
+    candidate: &ResolvedRegistry,
+) -> Result<Vec<u8>, GripError> {
+    let project_root = project_root(home)?;
+    let user_home = destination_home(home)?;
+    let portable = candidate
+        .mappings()
+        .iter()
+        .map(|mapping| {
+            let source = mapping.source.strip_prefix(&project_root).map_err(|_| {
+                mapping_error(
+                    "invalid_project_relative_path",
+                    "mapping source is outside project",
+                )
+            })?;
+            let source = if source.as_os_str().is_empty() {
+                std::ffi::OsString::from(".")
+            } else {
+                source.as_os_str().to_owned()
+            };
+            let destination = mapping.destination.strip_prefix(&user_home).map_err(|_| {
+                mapping_error(
+                    "invalid_home_relative_path",
+                    "mapping destination is outside home",
+                )
+            })?;
+            let destination = if destination.as_os_str().is_empty() {
+                std::ffi::OsString::from("~")
+            } else {
+                let mut value = std::ffi::OsString::from("~/");
+                value.push(destination);
+                value
+            };
+            crate::mapping::PortableMapping::parse(mapping.kind, &source, &destination)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    encode_descriptor(&ProjectDescriptorV2::new(portable)?)
 }
 
 /// Revalidate an accepted snapshot without acquiring a publication lock or writing state.
 pub fn revalidate_readonly(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RegistrySnapshot,
     operation: &str,
 ) -> Result<(), GripError> {
@@ -611,7 +676,7 @@ fn read_recovery_file(path: &Path) -> Result<Vec<u8>, GripError> {
 }
 
 fn retain_recovery(
-    home: &GripHome,
+    home: &ProjectPaths,
     bytes: &[u8],
     expected_post: &[u8],
     fault: Option<PublicationFault>,
@@ -626,8 +691,9 @@ fn retain_recovery(
     let generation = registry.join(format!("sha256-{digest}"));
     ensure_owned_dir(&generation)?;
     let target = generation.join("config.toml");
-    let created = !target.exists();
-    if target.exists() {
+    let target_present = fs::symlink_metadata(&target).is_ok();
+    let created = !target_present;
+    if target_present {
         if read_recovery_file(&target)? != bytes {
             return Err(mapping_error(
                 "registry_recovery_failure",
@@ -645,29 +711,31 @@ fn retain_recovery(
         ));
     }
     let manifest_path = generation.join("manifest.json");
-    if created && !manifest_path.exists() {
-        let manifest = crate::recovery::model::RecoveryEnvelopeV1::new(
-            crate::recovery::model::RecoveryManifestPayloadV1 {
+    if created && fs::symlink_metadata(&manifest_path).is_err() {
+        let manifest = crate::recovery::model::RecoveryManifestV2::new(
+            crate::recovery::model::RecoveryManifestPayloadV2 {
                 reference: crate::recovery::model::RecoveryRef::Registry {
                     digest: digest.clone(),
                 },
                 kind: crate::recovery::model::RecoveryKind::Registry,
+                identity: None,
+                endpoint_role: None,
+                private_ref: "config.toml".into(),
+                diagnostic_target: None,
                 created_at: recovery_timestamp(),
                 origin_operation: None,
                 origin_transition: "registry_publication".into(),
-                managed_identity: None,
-                bound_side: None,
-                bound_target: None,
                 prior_evidence: serde_json::json!({"sha256": digest}),
                 expected_post_evidence: serde_json::json!({"sha256": format!("{:x}", Sha256::digest(expected_post))}),
                 byte_count: bytes.len() as u64,
-                payload_ref: "config.toml".into(),
             },
         )?;
         crate::operation::publication::publish_new_component(
             &generation,
             "manifest.json",
-            &crate::recovery::model::encode(&manifest)?,
+            &serde_json::to_vec(&manifest).map_err(|error| {
+                GripError::Internal(format!("could not encode Recovery Manifest V2: {error}"))
+            })?,
         )?;
     }
     Ok(target)
@@ -705,7 +773,7 @@ fn reject_unexpected_staging(directory: &Path) -> Result<(), GripError> {
 }
 
 fn verify_final_evidence(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RegistrySnapshot,
     candidate_evidence: &[PathEvidence],
 ) -> Result<(), GripError> {
@@ -729,7 +797,7 @@ fn verify_final_evidence(
 
 fn validate_candidate_evidence(
     expected: &RegistrySnapshot,
-    candidate: &Registry,
+    candidate: &ResolvedRegistry,
     evidence: &[PathEvidence],
 ) -> Result<(), GripError> {
     let added = candidate
@@ -762,22 +830,22 @@ fn validate_candidate_evidence(
 
 /// Publish a complete candidate only when the accepted evidence is unchanged.
 pub fn publish(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RegistrySnapshot,
-    candidate: &Registry,
+    candidate: &ResolvedRegistry,
 ) -> Result<(), GripError> {
     publish_with_fault(home, expected, candidate, None)
 }
 
-/// Restore exact, validated Registry V1 bytes while the caller holds the mutation lock.
+/// Restore exact, validated Descriptor V2 bytes while the caller holds the mutation lock.
 pub(crate) fn restore_exact(
-    home: &GripHome,
+    home: &ProjectPaths,
     bytes: &[u8],
     expected_post_digest: &str,
 ) -> Result<(), GripError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| GripError::CorruptState("recovered registry is not UTF-8".into()))?;
-    let candidate = decode(text)?;
+    let candidate = load_registry_bytes_for_home(home, text)?;
     inspect_mappings(candidate.mappings(), "recovery_restore")?;
     if let Ok(current) = load(home, false)
         && format!("{:x}", Sha256::digest(&current.bytes)) != expected_post_digest
@@ -787,7 +855,8 @@ pub(crate) fn restore_exact(
             "current valid registry differs from recorded post-transition authority",
         ));
     }
-    let _lock = PublicationLock::acquire(&home.path().join(".registry.lock"))?;
+    let lock_path = crate::state::lock::project_lock_path(home, "registry.lock")?;
+    let _lock = PublicationLock::acquire(&lock_path)?;
     let mut staged = stage_bytes(home.path(), "config", bytes)?;
     verify_staged_bytes(&mut staged, bytes)?;
     set_staged_mode(&mut staged, 0o600)?;
@@ -806,9 +875,9 @@ pub(crate) fn restore_exact(
 
 /// Publish a complete candidate using endpoint evidence captured from submitted add paths.
 pub fn publish_with_evidence(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RegistrySnapshot,
-    candidate: &Registry,
+    candidate: &ResolvedRegistry,
     candidate_evidence: &[PathEvidence],
 ) -> Result<(), GripError> {
     publish_candidate(home, expected, candidate, candidate_evidence, None)
@@ -816,9 +885,9 @@ pub fn publish_with_evidence(
 
 #[doc(hidden)]
 pub fn publish_with_fault(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RegistrySnapshot,
-    candidate: &Registry,
+    candidate: &ResolvedRegistry,
     fault: Option<PublicationFault>,
 ) -> Result<(), GripError> {
     let added = candidate
@@ -833,14 +902,15 @@ pub fn publish_with_fault(
 }
 
 fn publish_candidate(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RegistrySnapshot,
-    candidate: &Registry,
+    candidate: &ResolvedRegistry,
     candidate_evidence: &[PathEvidence],
     fault: Option<PublicationFault>,
 ) -> Result<(), GripError> {
     validate_candidate_evidence(expected, candidate, candidate_evidence)?;
-    let lock = PublicationLock::acquire(&home.path().join(".registry.lock")).map_err(|error| {
+    let lock_path = crate::state::lock::project_lock_path(home, "registry.lock")?;
+    let lock = PublicationLock::acquire(&lock_path).map_err(|error| {
         if matches!(error, GripError::StateContention) {
             mapping_error(
                 "registry_contention",
@@ -852,7 +922,7 @@ fn publish_candidate(
     })?;
     reject_unexpected_staging(home.path())?;
     verify_final_evidence(home, expected, candidate_evidence)?;
-    let bytes = encode(candidate)?;
+    let bytes = encode_candidate(home, candidate)?;
     retain_recovery(home, &expected.bytes, &bytes, fault)?;
     let mut staged = stage_bytes(home.path(), "config", &bytes)?;
     let result = (|| {
@@ -873,7 +943,7 @@ fn publish_candidate(
         let decoded = std::str::from_utf8(&staged_bytes)
             .map_err(|_| publication_error("staged registry is not UTF-8", false))
             .and_then(|text| {
-                decode(text).map_err(|error| {
+                load_registry_bytes_for_home(home, text).map_err(|error| {
                     publication_error(format!("staged registry is invalid: {error}"), false)
                 })
             })?;
@@ -934,18 +1004,36 @@ fn publish_candidate(
     result
 }
 
+fn load_registry_bytes_for_home(
+    home: &ProjectPaths,
+    text: &str,
+) -> Result<ResolvedRegistry, GripError> {
+    let descriptor = decode_descriptor(text)?;
+    let user_home = destination_home(home)?;
+    let resolved = descriptor.resolve(&project_root(home)?, &user_home, "registry_validate")?;
+    ResolvedRegistry::new(
+        resolved
+            .iter()
+            .map(crate::mapping::ResolvedMapping::ownership_mapping)
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod discovery_tests {
     use super::*;
 
-    fn empty_home() -> (tempfile::TempDir, GripHome) {
+    fn empty_home() -> (tempfile::TempDir, ProjectPaths) {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(
             root.path().join("config.toml"),
-            "schema_version = 1\nmappings = []\n",
+            "schema_version = 2\nmappings = []\n",
         )
         .unwrap();
-        let home = crate::home::select(Some(root.path().as_os_str().to_owned()), None).unwrap();
+        let home = crate::project::ProjectPaths::project_metadata(
+            root.path().to_path_buf(),
+            root.path().parent().unwrap().to_path_buf(),
+        );
         (root, home)
     }
 

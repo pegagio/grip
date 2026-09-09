@@ -41,34 +41,20 @@ fn ordinary_commands_retain_non_deleting_grammars() {
 
 #[test]
 fn deletion_preview_is_deterministic_and_non_mutating_for_100_runs_per_output() {
-    let (root, grip_home, source, _) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, _) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
     let before = support::snapshot(root.path());
     for output in ["human", "json"] {
-        let expected = support::command_with_grip_home(
+        let expected = support::project_command(
             root.path(),
-            &grip_home,
-            &[
-                "--output",
-                output,
-                "delete",
-                "-n",
-                "--source",
-                source.to_str().unwrap(),
-            ],
+            &metadata_dir,
+            &["--output", output, "delete", "-n", "--source", "source"],
         );
         for _ in 0..100 {
-            let actual = support::command_with_grip_home(
+            let actual = support::project_command(
                 root.path(),
-                &grip_home,
-                &[
-                    "--output",
-                    output,
-                    "delete",
-                    "-n",
-                    "--source",
-                    source.to_str().unwrap(),
-                ],
+                &metadata_dir,
+                &["--output", output, "delete", "-n", "--source", "source"],
             );
             assert_eq!(actual.status.code(), expected.status.code());
             assert_eq!(actual.stdout, expected.stdout);
@@ -80,23 +66,17 @@ fn deletion_preview_is_deterministic_and_non_mutating_for_100_runs_per_output() 
 
 #[test]
 fn deletion_human_json_parity_and_blocked_exit_category_are_stable() {
-    let (root, grip_home, source, destination) = support::accepted_file_fixture();
+    let (root, metadata_dir, source, destination) = support::accepted_file_fixture();
     fs::remove_file(&source).unwrap();
-    let json = support::command_with_grip_home(
+    let json = support::project_command(
         root.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "-n",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "-n", "--source", "source"],
     );
-    let human = support::command_with_grip_home(
+    let human = support::project_command(
         root.path(),
-        &grip_home,
-        &["delete", "-n", "--source", source.to_str().unwrap()],
+        &metadata_dir,
+        &["delete", "-n", "--source", "source"],
     );
     assert!(String::from_utf8_lossy(&human.stdout).contains(&destination.display().to_string()));
     assert_eq!(
@@ -107,10 +87,10 @@ fn deletion_human_json_parity_and_blocked_exit_category_are_stable() {
         1
     );
     fs::write(&destination, "changed").unwrap();
-    let blocked = support::command_with_grip_home(
+    let blocked = support::project_command(
         root.path(),
-        &grip_home,
-        &["delete", "--source", source.to_str().unwrap()],
+        &metadata_dir,
+        &["delete", "--source", "source"],
     );
     assert_eq!(blocked.status.code(), Some(10));
 }

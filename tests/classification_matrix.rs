@@ -3,7 +3,7 @@ use grip::classification::model::{Classification, Direction};
 use grip::discovery::model::NodeKind;
 use grip::mapping::MappingKind;
 use grip::observation::model::{
-    ContentFingerprint, EntryIdentity, MappingSnapshot, Membership, ObservedEntry, SupportedState,
+    ContentFingerprint, EntryIdentity, Membership, ObservedEntry, ResolvedMapping, SupportedState,
 };
 use std::path::PathBuf;
 
@@ -58,9 +58,7 @@ fn complete_state_three_way_classifies_metadata_and_content_changes_indivisibly(
     let identity = complete_entry(baseline.clone(), baseline.clone()).identity;
     let accepted = grip::state::AcceptedState {
         generation: Some(1),
-        baselines: Default::default(),
         complete_baselines: std::collections::BTreeMap::from([(identity, baseline.clone())]),
-        schema_version: Some(3),
         accepted_bytes: None,
     };
     for (source, destination, expected) in [
@@ -146,9 +144,7 @@ fn every_complete_metadata_dimension_uses_the_same_three_way_semantics() {
     let identity = complete_entry(baseline.clone(), baseline.clone()).identity;
     let accepted = grip::state::AcceptedState {
         generation: Some(1),
-        baselines: Default::default(),
         complete_baselines: std::collections::BTreeMap::from([(identity, baseline.clone())]),
-        schema_version: Some(3),
         accepted_bytes: None,
     };
     for (dimension, changed) in variants {
@@ -207,7 +203,7 @@ fn entry(
     membership: Membership,
 ) -> ObservedEntry {
     let identity = EntryIdentity::new(
-        MappingSnapshot {
+        ResolvedMapping {
             kind: MappingKind::File,
             source: PathBuf::from("/source"),
             destination: PathBuf::from("/destination"),

@@ -3,12 +3,30 @@ use std::fs::{self, File, Metadata};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
-pub struct GripHome(PathBuf);
-impl GripHome {
+/// Canonical invoking-user home used only to resolve portable destinations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserHome(PathBuf);
+
+impl UserHome {
     pub fn path(&self) -> &Path {
         &self.0
     }
+}
+
+/// Select and validate the invoking user's destination home.
+pub fn select_user_home(value: Option<PathBuf>) -> Result<UserHome, GripError> {
+    let path = value.or_else(home::home_dir).ok_or_else(|| {
+        GripError::InvalidConfiguration("invoking user home is unavailable".into())
+    })?;
+    if !path.is_absolute() {
+        return Err(GripError::InvalidConfiguration(
+            "invoking user home must be absolute".into(),
+        ));
+    }
+    validate_user_home_with(&OsHomeAccess, &path)?;
+    fs::canonicalize(&path)
+        .map(UserHome)
+        .map_err(|error| GripError::InvalidConfiguration(format!("home is unavailable: {error}")))
 }
 
 pub trait HomeAccess {
@@ -25,51 +43,22 @@ impl HomeAccess for OsHomeAccess {
     }
 }
 
-pub fn select(
-    override_value: Option<std::ffi::OsString>,
-    default_home: Option<PathBuf>,
-) -> Result<GripHome, GripError> {
-    let path = match override_value {
-        Some(value) => {
-            if value.is_empty() {
-                return Err(GripError::InvalidConfiguration(
-                    "GRIP_HOME must not be empty".into(),
-                ));
-            }
-            let path = PathBuf::from(value);
-            if !path.is_absolute() {
-                return Err(GripError::InvalidConfiguration(
-                    "GRIP_HOME must be an absolute path".into(),
-                ));
-            }
-            path
-        }
-        None => default_home
-            .ok_or_else(|| GripError::InvalidConfiguration("home directory is unavailable".into()))?
-            .join(".grip"),
-    };
-    Ok(GripHome(path))
-}
-
-pub fn validate_with(access: &dyn HomeAccess, home: &GripHome) -> Result<(), GripError> {
+fn validate_user_home_with(access: &dyn HomeAccess, path: &Path) -> Result<(), GripError> {
     let metadata = access
-        .symlink_metadata(home.path())
-        .map_err(|e| GripError::InvalidConfiguration(format!("Grip home is unavailable: {e}")))?;
+        .symlink_metadata(path)
+        .map_err(|e| GripError::InvalidConfiguration(format!("home is unavailable: {e}")))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(GripError::InvalidConfiguration(
-            "Grip home must be a real directory".into(),
+            "home must be a real directory".into(),
         ));
     }
     if metadata.uid() != rustix::process::geteuid().as_raw() {
         return Err(GripError::InvalidConfiguration(
-            "Grip home must be owned by the current user".into(),
+            "home must be owned by the current user".into(),
         ));
     }
     access
-        .open_dir(home.path())
-        .map_err(|e| GripError::InvalidConfiguration(format!("Grip home is inaccessible: {e}")))?;
+        .open_dir(path)
+        .map_err(|e| GripError::InvalidConfiguration(format!("home is inaccessible: {e}")))?;
     Ok(())
-}
-pub fn validate(home: &GripHome) -> Result<(), GripError> {
-    validate_with(&OsHomeAccess, home)
 }

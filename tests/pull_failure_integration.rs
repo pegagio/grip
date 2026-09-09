@@ -56,8 +56,7 @@ fn pull_post_publication_failure_reports_visible_source_without_accepting_it() {
         fs::read(home.path().join("state/state.json")).unwrap(),
         before_state
     );
-    let status =
-        support::command_with_grip_home(root.path(), home.path(), &["--output=json", "status"]);
+    let status = support::project_command(root.path(), home.path(), &["--output=json", "status"]);
     assert!(status.status.success());
     assert!(
         support::json(&status)["details"]["attention_count"]
@@ -248,28 +247,28 @@ fn pull_prebaseline_fault_matrix_keeps_partial_work_unaccepted() {
 #[test]
 fn first_pull_action_failure_leaves_later_actions_unattempted() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source_a = root.path().join("source-a");
     let source_b = root.path().join("source-b");
     let destination_a = root.path().join("destination-a");
     let destination_b = root.path().join("destination-b");
     fs::write(&source_a, "accepted-a").unwrap();
     fs::write(&source_b, "accepted-b").unwrap();
-    support::write_registry(
-        &grip_home,
+    support::write_descriptor(
+        &metadata_dir,
         &[
             ("file", &source_a, &destination_a),
             ("file", &source_b, &destination_b),
         ],
     );
     assert!(
-        support::command_with_grip_home(root.path(), &grip_home, &["push"])
+        support::project_command(root.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&destination_a, "changed-a").unwrap();
     fs::write(&destination_b, "changed-b").unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;

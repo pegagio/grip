@@ -11,7 +11,7 @@ use std::os::unix::net::UnixListener;
 #[test]
 fn non_following_discovery_reports_special_nodes_and_preserves_symlink_referent() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
@@ -25,11 +25,11 @@ fn non_following_discovery_reports_special_nodes_and_preserves_symlink_referent(
     let fifo_name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
     // SAFETY: fifo_name is a valid, NUL-terminated path inside the disposable fixture.
     assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "mapping", "inspect"],
     );
     assert!(output.status.success());
@@ -91,7 +91,7 @@ fn raw_node_classification_covers_uncreatable_special_nodes_and_mount_boundaries
 #[test]
 fn hard_link_and_sparse_evidence_are_authoritative_and_blocking() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
-    let grip_home = support::minimal_home(root.path());
+    let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
     let destination = root.path().join("destination");
     fs::create_dir(&source).unwrap();
@@ -101,11 +101,11 @@ fn hard_link_and_sparse_evidence_are_authoritative_and_blocking() {
     let sparse = fs::File::create(source.join("sparse")).unwrap();
     sparse.set_len(1024 * 1024).unwrap();
     drop(sparse);
-    support::write_registry(&grip_home, &[("tree", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let output = support::command_with_grip_home(
+    let output = support::project_command(
         root.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "mapping", "inspect"],
     );
     let records = support::json(&output)["details"]["records"]

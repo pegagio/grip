@@ -56,7 +56,7 @@ pub fn build(
                 reason: retirement_reason(record.classification).into(),
                 force: force && !differences.is_empty(),
                 status: crate::mutation::model::ActionStatus::Unattempted,
-                milestones: crate::operation::model::ActionCheckpointEvidenceV1 {
+                milestones: crate::operation::model::ActionCheckpointEvidenceV2 {
                     revalidation: "planned".into(),
                     recovery: "not_required".into(),
                     recovery_ref: None,
@@ -187,7 +187,7 @@ mod tests {
     use crate::discovery::model::SafePath;
     use crate::mapping::MappingKind;
     use crate::observation::model::{
-        ContentFingerprint, EntryIdentity, MappingSnapshot, PathSpace, SupportedState,
+        ContentFingerprint, EntryIdentity, PathSpace, ResolvedMapping, SupportedState,
     };
     use std::path::PathBuf;
 
@@ -203,7 +203,7 @@ mod tests {
         }
     }
     fn record(classification: Classification, changed: bool) -> ClassificationRecord {
-        let mapping = MappingSnapshot {
+        let mapping = ResolvedMapping {
             kind: MappingKind::File,
             source: PathBuf::from("/source"),
             destination: PathBuf::from("/destination"),

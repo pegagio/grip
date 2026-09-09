@@ -13,7 +13,7 @@ pub enum RetirementFault {
 
 /// Execute an unchanged state-only retirement plan.
 pub fn execute(
-    home: &crate::home::GripHome,
+    home: &crate::project::ProjectPaths,
     expected_registry: &crate::registry::publication::RegistrySnapshot,
     expected_state: &crate::state::publication::StateSnapshot,
     selection: &Selection,
@@ -31,7 +31,7 @@ pub fn execute(
 
 #[doc(hidden)]
 pub fn execute_with_fault(
-    home: &crate::home::GripHome,
+    home: &crate::project::ProjectPaths,
     expected_registry: &crate::registry::publication::RegistrySnapshot,
     expected_state: &crate::state::publication::StateSnapshot,
     selection: &Selection,
@@ -39,6 +39,7 @@ pub fn execute_with_fault(
     fault: Option<RetirementFault>,
 ) -> Result<RetirementResult, GripError> {
     let _mutation_guard = crate::state::mutation_lock::MutationLock::acquire(home, "retire")?;
+    crate::revalidate_project_for_mutation()?;
     let registry = crate::registry::publication::load(home, false)
         .map_err(|error| error.for_mapping_operation("retire"))?;
     if registry.bytes != expected_registry.bytes || registry.registry != expected_registry.registry
@@ -66,12 +67,27 @@ pub fn execute_with_fault(
             "retirement plan changed before execution",
         ));
     }
-    let mut receipt = crate::operation::publication::initialize_typed(
+    let portable_actions = plan
+        .actions
+        .iter()
+        .map(|action| {
+            Ok(crate::operation::model::PortableActionV2 {
+                index: action.index,
+                identity: Some(crate::state::portable_identity_from_runtime(
+                    home,
+                    &action.identity,
+                )?),
+                endpoint_role: crate::state::EndpointRoleV1::AcceptedState,
+                diagnostic_path: Some(action.path.clone().into()),
+            })
+        })
+        .collect::<Result<Vec<_>, GripError>>()?;
+    let mut receipt = crate::operation::publication::initialize_typed_with_actions(
         home,
         "retire",
         &plan.plan_id,
         plan,
-        plan.actions.len(),
+        portable_actions,
     )?;
     let mut applied = plan.clone();
     let mut next = expected_state.accepted.clone();
@@ -83,18 +99,16 @@ pub fn execute_with_fault(
         {
             return fail(&mut receipt, &mut applied, expected_state, error);
         }
-        next.baselines.remove(&action.identity);
         next.complete_baselines.remove(&action.identity);
     }
-    let state_directory = match crate::state::publication::prepare_directory(home) {
+    let state_lock = match crate::state::lock::project_lock_path(home, "state.lock") {
         Ok(value) => value,
         Err(error) => return fail(&mut receipt, &mut applied, expected_state, error),
     };
-    let _state_guard =
-        match crate::state::lock::PublicationLock::acquire(&state_directory.join("state.lock")) {
-            Ok(value) => value,
-            Err(error) => return fail(&mut receipt, &mut applied, expected_state, error),
-        };
+    let _state_guard = match crate::state::lock::PublicationLock::acquire(&state_lock) {
+        Ok(value) => value,
+        Err(error) => return fail(&mut receipt, &mut applied, expected_state, error),
+    };
     if fault == Some(RetirementFault::StatePublication) {
         return fail(
             &mut receipt,
@@ -200,8 +214,8 @@ fn fail_after_publication(
 fn checkpoint(
     publication: &str,
     durable: bool,
-) -> crate::operation::model::ActionCheckpointEvidenceV1 {
-    crate::operation::model::ActionCheckpointEvidenceV1 {
+) -> crate::operation::model::ActionCheckpointEvidenceV2 {
+    crate::operation::model::ActionCheckpointEvidenceV2 {
         revalidation: "passed".into(),
         recovery: "not_required".into(),
         recovery_ref: None,

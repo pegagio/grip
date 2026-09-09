@@ -1,8 +1,8 @@
 ---
 title: Mappings and managed membership
 type: concept
-sources: [S001, S004, S005, S006, S011]
-updated: 2026-09-06
+sources: [S001, S004, S005, S006, S011, S013]
+updated: 2026-09-09
 ---
 
 # Mappings and managed membership
@@ -11,9 +11,7 @@ A mapping declares a source-to-destination relationship. A file mapping pairs tw
 
 The canonical source path is the user-facing identity of a mapping; Grip does not assign a separate mapping ID. Stored state must still retain and validate the mapping kind, source, and destination, and mappings that overlap or could own the same entry are rejected before discovery or mutation. (S001)
 
-Feature 002 makes that namespace rule concrete. File mappings own one exact path, tree mappings own a root and every possible descendant, and comparisons are component-aware. The complete accepted registry is validated as one graph: equal or nested source namespaces, equal or nested destination namespaces, same-mapping source/destination overlap, and cross-mapping source/destination overlap in either direction all block publication. This conservative cross-side rule also prevents longer ownership cycles without a separate graph traversal. (S005)
-
-Canonical source identity is the only lookup key for `show` and `remove`; aliases resolving to the same source cannot coexist. Adding and removing mappings changes registry intent only: it does not traverse tree members, create absent destinations, copy or delete payloads, or create synchronization state. (S005)
+The complete accepted registry is validated as one graph. Equal or nested namespaces, same-mapping overlap, and cross-mapping overlap all block publication. Adding and removing mappings changes registry intent only; it does not touch payloads or synchronization state. (S005)
 
 For tree mappings, the dynamically discovered, non-ignored source namespace determines membership. New source entries can be proposed for management, while destination-only entries remain unmanaged unless their relative paths previously entered the managed namespace. Tracking establishes ownership but must not imply an unreviewed bulk mutation, and untracking removes ownership without silently deleting either copy. (S001)
 
@@ -21,11 +19,17 @@ Source-side `.gripignore` files may appear at the mapping root or in nested dire
 
 The implemented inspection derives tree membership fresh without creating a manifest or baseline. It includes ordinary files and directories, reports an ignored directory once without traversing descendants, and exposes eligible, ignored, destination-only, unsupported-source, and unsafe-destination-collision categories. File mappings contribute only their exact source and do not enumerate parent directories. (S004)
 
-Feature 003 fixes ignore evaluation to source-relative, hierarchical policy: root and nested `.gripignore` files apply in traversal order, later matches override earlier ones, negation can re-include entries, and neither ordinary Git exclusions nor destination-side policy participates. Ignored directories prune their descendants from both discovery and destination-only reporting. (S006)
-
 Accepted entries that later become newly ignored or lose their mapping remain visible as pending-retirement evidence. Scoped baseline acceptance preserves every accepted record outside the selected source or destination subtree and cannot silently retire prior membership. (S004)
 
 Retirement is a state-only transition selected by an exact path or explicit `--all`; it never changes source or destination payloads. Newly ignored, untracked, and converged-deletion records are eligible, active records are rejected, and differing surviving copies require `--force` after their differences are reported. (S011)
+
+## Portable mapping identity
+
+The current mapping identity is `(kind, normalized project-relative source, normalized home-relative destination)`, with entry-relative bytes appended for managed-entry identity. Absolute resolved endpoints exist only in the selected runtime context and are not durable mapping authority. Declared and resolved values are rendered separately. (S013)
+
+Exact `.` is valid only for a tree source and makes the project root the source tree. `.grip/` is pruned structurally before ignore evaluation, so configuration, state, operations, and recovery can never become managed payload. (S013)
+
+> ⚠ conflict: S001, S004, and S005 describe canonical absolute source identity; S013 replaces that current identity with the portable tuple while preserving source-defined membership semantics.
 
 ## Related pages
 

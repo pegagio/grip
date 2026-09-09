@@ -11,16 +11,16 @@ use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
-/// Durable mapping identity stored with every accepted baseline.
+/// Context-bound resolved mapping used only while inspecting the selected project.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MappingSnapshot {
+pub struct ResolvedMapping {
     pub kind: MappingKind,
     pub source: PathBuf,
     pub destination: PathBuf,
 }
 
-impl From<&Mapping> for MappingSnapshot {
+impl From<&Mapping> for ResolvedMapping {
     fn from(value: &Mapping) -> Self {
         Self {
             kind: value.kind,
@@ -30,15 +30,15 @@ impl From<&Mapping> for MappingSnapshot {
     }
 }
 
-/// Lossless identity of one entry within a mapping.
+/// Runtime identity of one entry within a context-bound resolved mapping.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EntryIdentity {
-    pub mapping: MappingSnapshot,
+    pub mapping: ResolvedMapping,
     pub relative_path: Vec<u8>,
 }
 
 impl EntryIdentity {
-    pub fn new(mapping: MappingSnapshot, relative_path: Vec<u8>) -> Result<Self, &'static str> {
+    pub fn new(mapping: ResolvedMapping, relative_path: Vec<u8>) -> Result<Self, &'static str> {
         validate_relative(&relative_path, mapping.kind)?;
         Ok(Self {
             mapping,
@@ -174,7 +174,7 @@ pub enum PathSpace {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selection {
     All,
-    Mapping(MappingSnapshot),
+    Mapping(ResolvedMapping),
     Entry(EntryIdentity),
     Subtree(EntryIdentity),
     Unmanaged(SafePath),
@@ -211,7 +211,7 @@ pub fn resolve_selection(
     };
     let canonical = crate::path_policy::resolve_selector(selector, operation)?;
     for mapping in registry.registry.mappings() {
-        let snapshot = MappingSnapshot::from(mapping);
+        let snapshot = ResolvedMapping::from(mapping);
         let root = match path_space {
             PathSpace::Source => &mapping.source,
             PathSpace::Destination => &mapping.destination,
@@ -234,11 +234,7 @@ pub fn resolve_selection(
             ));
         }
     }
-    for identity in accepted
-        .baselines
-        .keys()
-        .chain(accepted.complete_baselines.keys())
-    {
+    for identity in accepted.complete_baselines.keys() {
         let path = match path_space {
             PathSpace::Source => identity.source_path(),
             PathSpace::Destination => identity.destination_path(),

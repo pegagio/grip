@@ -1,10 +1,7 @@
 mod support;
 
 use grip::discovery::model::NodeKind;
-use grip::mapping::MappingKind;
 use grip::metadata::model::{EndpointRole, Evidence};
-use grip::observation::model::{EntryIdentity, MappingSnapshot};
-use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -37,35 +34,35 @@ fn assert_case_behavior(root: &Path, expected_case_sensitive: bool) {
 fn run_product_lifecycle(root: &Path, expected_case_sensitive: bool) {
     assert_case_behavior(root, expected_case_sensitive);
     let fixture = tempfile::tempdir_in(root).unwrap();
-    let grip_home = support::minimal_home(fixture.path());
+    let metadata_dir = support::initialize_project_metadata(fixture.path());
     let source = fixture.path().join("source");
     let destination = fixture.path().join("destination");
     fs::write(&source, b"accepted").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
 
-    let initial = support::command_with_grip_home(fixture.path(), &grip_home, &["push"]);
+    let initial = support::project_command(fixture.path(), &metadata_dir, &["push"]);
     assert!(initial.status.success());
     support::set_fixture_mode(&source, 0o740);
     let source_only =
-        support::command_with_grip_home(fixture.path(), &grip_home, &["--output=json", "status"]);
+        support::project_command(fixture.path(), &metadata_dir, &["--output=json", "status"]);
     assert_eq!(
         support::json(&source_only)["details"]["records"][0]["classification"],
         "source_only_change"
     );
     assert!(
-        support::command_with_grip_home(fixture.path(), &grip_home, &["push"])
+        support::project_command(fixture.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     support::set_fixture_xattr(&destination, "com.apple.TextEncoding", b"utf-8");
     let destination_only =
-        support::command_with_grip_home(fixture.path(), &grip_home, &["--output=json", "status"]);
+        support::project_command(fixture.path(), &metadata_dir, &["--output=json", "status"]);
     assert_eq!(
         support::json(&destination_only)["details"]["records"][0]["classification"],
         "destination_only_change"
     );
     assert!(
-        support::command_with_grip_home(fixture.path(), &grip_home, &["pull"])
+        support::project_command(fixture.path(), &metadata_dir, &["pull"])
             .status
             .success()
     );
@@ -74,13 +71,13 @@ fn run_product_lifecycle(root: &Path, expected_case_sensitive: bool) {
     fs::write(&destination, b"converged change").unwrap();
     support::copy_complete_metadata(&source, &destination, NodeKind::File);
     let converged =
-        support::command_with_grip_home(fixture.path(), &grip_home, &["--output=json", "status"]);
+        support::project_command(fixture.path(), &metadata_dir, &["--output=json", "status"]);
     assert_eq!(
         support::json(&converged)["details"]["records"][0]["classification"],
         "converged_two_sided_change"
     );
     assert!(
-        support::command_with_grip_home(fixture.path(), &grip_home, &["sync"])
+        support::project_command(fixture.path(), &metadata_dir, &["sync"])
             .status
             .success()
     );
@@ -88,15 +85,15 @@ fn run_product_lifecycle(root: &Path, expected_case_sensitive: bool) {
     fs::write(&source, b"source winner").unwrap();
     fs::write(&destination, b"destination loser").unwrap();
     let conflict =
-        support::command_with_grip_home(fixture.path(), &grip_home, &["--output=json", "status"]);
+        support::project_command(fixture.path(), &metadata_dir, &["--output=json", "status"]);
     assert_eq!(
         support::json(&conflict)["details"]["records"][0]["classification"],
         "divergent_conflict"
     );
-    let resolved = support::command_with_grip_home(
+    let resolved = support::project_command(
         fixture.path(),
-        &grip_home,
-        &["resolve", source.to_str().unwrap(), "--source"],
+        &metadata_dir,
+        &["resolve", "source", "--source"],
     );
     assert!(resolved.status.success());
     assert_eq!(
@@ -109,15 +106,10 @@ fn run_product_lifecycle(root: &Path, expected_case_sensitive: bool) {
     );
 
     fs::remove_file(&source).unwrap();
-    let deleted = support::command_with_grip_home(
+    let deleted = support::project_command(
         fixture.path(),
-        &grip_home,
-        &[
-            "--output=json",
-            "delete",
-            "--source",
-            source.to_str().unwrap(),
-        ],
+        &metadata_dir,
+        &["--output=json", "delete", "--source", "source"],
     );
     assert!(deleted.status.success());
     assert!(!destination.exists());
@@ -127,9 +119,9 @@ fn run_product_lifecycle(root: &Path, expected_case_sensitive: bool) {
         .to_owned();
     let reference = format!("payload:{operation}:0");
     assert!(
-        support::command_with_grip_home(
+        support::project_command(
             fixture.path(),
-            &grip_home,
+            &metadata_dir,
             &["recovery", "restore", &reference],
         )
         .status
@@ -140,92 +132,74 @@ fn run_product_lifecycle(root: &Path, expected_case_sensitive: bool) {
 
 fn run_operational_boundaries(root: &Path) {
     let fixture = tempfile::tempdir_in(root).unwrap();
-    let grip_home = support::minimal_home(fixture.path());
+    let metadata_dir = support::initialize_project_metadata(fixture.path());
     let source = fixture.path().join("source");
     let destination = fixture.path().join("destination");
     fs::write(&source, b"accepted").unwrap();
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::command_with_grip_home(fixture.path(), &grip_home, &["push"])
+        support::project_command(fixture.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
 
     fs::write(&source, b"contended change").unwrap();
     let destination_before = fs::read(&destination).unwrap();
-    let home = grip::home::select(Some(grip_home.clone().into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let guard = grip::state::mutation_lock::MutationLock::acquire(&home, "qualification").unwrap();
     let contended =
-        support::command_with_grip_home(fixture.path(), &grip_home, &["--output=json", "push"]);
+        support::project_command(fixture.path(), &metadata_dir, &["--output=json", "push"]);
     assert_eq!(contended.status.code(), Some(13));
     assert_eq!(fs::read(&destination).unwrap(), destination_before);
     drop(guard);
     assert!(
-        support::command_with_grip_home(fixture.path(), &grip_home, &["push"])
+        support::project_command(fixture.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
 
     fs::remove_file(&source).unwrap();
     fs::remove_file(&destination).unwrap();
-    let retired = support::command_with_grip_home(
+    let retired = support::project_command(
         fixture.path(),
-        &grip_home,
+        &metadata_dir,
         &["--output=json", "retire", "--all"],
     );
     assert!(retired.status.success());
     assert_eq!(support::json(&retired)["details"]["result"], "applied");
 }
 
-fn run_migration_and_blocker_flows(root: &Path) {
+fn run_state_and_blocker_flows(root: &Path) {
     let migration = tempfile::tempdir_in(root).unwrap();
-    let migration_home = support::minimal_home(migration.path());
+    let migration_home = support::initialize_project_metadata(migration.path());
     let source = migration.path().join("source");
     let destination = migration.path().join("destination");
-    fs::write(&source, b"legacy").unwrap();
-    fs::write(&destination, b"legacy").unwrap();
+    fs::write(&source, b"accepted").unwrap();
+    fs::write(&destination, b"accepted").unwrap();
     support::copy_complete_metadata(&source, &destination, NodeKind::File);
-    support::write_registry(&migration_home, &[("file", &source, &destination)]);
-    let identity = EntryIdentity::new(
-        MappingSnapshot {
-            kind: MappingKind::File,
-            source: source.clone(),
-            destination: destination.clone(),
-        },
-        Vec::new(),
-    )
-    .unwrap();
-    support::write_v2_state(
-        &migration_home,
-        4,
-        BTreeMap::from([(identity, support::supported_file_state(&source))]),
+    support::write_descriptor(&migration_home, &[("file", &source, &destination)]);
+    assert!(
+        support::project_command(migration.path(), &migration_home, &["baseline", "accept"])
+            .status
+            .success()
     );
-    let status = support::command_with_grip_home(
+    let status = support::project_command(
         migration.path(),
         &migration_home,
         &["--output=json", "status"],
     );
     assert_eq!(
         support::json(&status)["details"]["records"][0]["classification"],
-        "metadata_migration_ready"
-    );
-    assert!(
-        support::command_with_grip_home(
-            migration.path(),
-            &migration_home,
-            &["baseline", "accept"],
-        )
-        .status
-        .success()
+        "synchronized"
     );
     let state = fs::read(migration_home.join("state/state.json")).unwrap();
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&state).unwrap()["schema_version"],
-        3
+        4
     );
 
     let blocked = tempfile::tempdir_in(root).unwrap();
-    let blocked_home = support::minimal_home(blocked.path());
+    let blocked_home = support::initialize_project_metadata(blocked.path());
     let blocked_source = blocked.path().join("source");
     let blocked_destination = blocked.path().join("destination");
     fs::create_dir(&blocked_source).unwrap();
@@ -234,11 +208,11 @@ fn run_migration_and_blocker_flows(root: &Path) {
     let sentinel = blocked.path().join("sentinel");
     fs::write(&sentinel, b"must remain untouched").unwrap();
     std::os::unix::fs::symlink(&sentinel, blocked_source.join("unsupported-link")).unwrap();
-    support::write_registry(
+    support::write_descriptor(
         &blocked_home,
         &[("tree", &blocked_source, &blocked_destination)],
     );
-    let inspection = support::command_with_grip_home(
+    let inspection = support::project_command(
         blocked.path(),
         &blocked_home,
         &["--output=json", "mapping", "inspect"],
@@ -252,7 +226,7 @@ fn run_migration_and_blocker_flows(root: &Path) {
     );
     fs::remove_file(blocked_source.join("unsupported-link")).unwrap();
     assert!(
-        support::command_with_grip_home(blocked.path(), &blocked_home, &["push"])
+        support::project_command(blocked.path(), &blocked_home, &["push"])
             .status
             .success()
     );
@@ -260,31 +234,27 @@ fn run_migration_and_blocker_flows(root: &Path) {
     assert_eq!(fs::read(sentinel).unwrap(), b"must remain untouched");
 
     let capability = tempfile::tempdir_in(root).unwrap();
-    let capability_home = support::minimal_home(capability.path());
+    let capability_home = support::initialize_project_metadata(capability.path());
     let capability_source = capability.path().join("source");
     let capability_destination = capability.path().join("destination");
     fs::write(&capability_source, b"accepted").unwrap();
     fs::write(&capability_destination, b"accepted").unwrap();
     support::copy_complete_metadata(&capability_source, &capability_destination, NodeKind::File);
-    support::write_registry(
+    support::write_descriptor(
         &capability_home,
         &[("file", &capability_source, &capability_destination)],
     );
     assert!(
-        support::command_with_grip_home(
-            capability.path(),
-            &capability_home,
-            &["baseline", "accept"],
-        )
-        .status
-        .success()
+        support::project_command(capability.path(), &capability_home, &["baseline", "accept"],)
+            .status
+            .success()
     );
     support::set_fixture_xattr(
         &capability_source,
         "com.example.unknown",
         b"must-not-render",
     );
-    let status = support::command_with_grip_home(
+    let status = support::project_command(
         capability.path(),
         &capability_home,
         &["--output=json", "status"],
@@ -292,7 +262,7 @@ fn run_migration_and_blocker_flows(root: &Path) {
     let rendered = String::from_utf8_lossy(&status.stdout);
     assert!(rendered.contains("unknown_xattr"));
     assert!(!rendered.contains("must-not-render"));
-    let preview = support::command_with_grip_home(
+    let preview = support::project_command(
         capability.path(),
         &capability_home,
         &["--output=json", "push", "--dry-run"],
@@ -303,28 +273,28 @@ fn run_migration_and_blocker_flows(root: &Path) {
 #[allow(clippy::result_large_err)]
 fn run_partial_failure_flow(root: &Path) {
     let fixture = tempfile::tempdir_in(root).unwrap();
-    let grip_home = support::minimal_home(fixture.path());
+    let metadata_dir = support::initialize_project_metadata(fixture.path());
     let source_a = fixture.path().join("source-a");
     let destination_a = fixture.path().join("destination-a");
     let source_b = fixture.path().join("source-b");
     let destination_b = fixture.path().join("destination-b");
     fs::write(&source_a, b"accepted-a").unwrap();
     fs::write(&source_b, b"accepted-b").unwrap();
-    support::write_registry(
-        &grip_home,
+    support::write_descriptor(
+        &metadata_dir,
         &[
             ("file", &source_a, &destination_a),
             ("file", &source_b, &destination_b),
         ],
     );
     assert!(
-        support::command_with_grip_home(fixture.path(), &grip_home, &["push"])
+        support::project_command(fixture.path(), &metadata_dir, &["push"])
             .status
             .success()
     );
     fs::write(&source_a, b"changed-a").unwrap();
     fs::write(&source_b, b"changed-b").unwrap();
-    let home = grip::home::select(Some(grip_home.into_os_string()), None).unwrap();
+    let home = support::project_home(&metadata_dir);
     let registry = grip::registry::publication::load(&home, false).unwrap();
     let state = grip::state::publication::load(&home).unwrap();
     let selection = grip::observation::model::Selection::All;
@@ -370,7 +340,7 @@ fn case_insensitive_apfs_product_matrix() {
     let root = configured_root("GRIP_APFS_CASE_INSENSITIVE_ROOT");
     run_product_lifecycle(&root, false);
     run_operational_boundaries(&root);
-    run_migration_and_blocker_flows(&root);
+    run_state_and_blocker_flows(&root);
     run_partial_failure_flow(&root);
 }
 
@@ -380,7 +350,7 @@ fn case_sensitive_apfs_product_matrix() {
     let root = configured_root("GRIP_APFS_CASE_SENSITIVE_ROOT");
     run_product_lifecycle(&root, true);
     run_operational_boundaries(&root);
-    run_migration_and_blocker_flows(&root);
+    run_state_and_blocker_flows(&root);
     run_partial_failure_flow(&root);
 }
 
@@ -404,11 +374,15 @@ fn cross_volume_apfs_transfer_preserves_logical_complete_state() {
         fs::metadata(source_fixture.path()).unwrap().dev(),
         fs::metadata(destination_fixture.path()).unwrap().dev()
     );
-    let grip_home = support::minimal_home(source_fixture.path());
-    support::write_registry(&grip_home, &[("file", &source, &destination)]);
+    let metadata_dir = support::initialize_project_metadata(source_fixture.path());
+    support::write_descriptor_for_home(
+        &metadata_dir,
+        destination_fixture.path(),
+        &[("file", &source, &destination)],
+    );
     support::set_fixture_mode(&source, 0o741);
     support::set_fixture_xattr(&source, "com.apple.TextEncoding", b"utf-8");
-    let push = support::command_with_grip_home(source_fixture.path(), &grip_home, &["push"]);
+    let push = support::project_command(destination_fixture.path(), &metadata_dir, &["push"]);
     assert!(
         push.status.success(),
         "{}",
@@ -430,13 +404,14 @@ fn cross_volume_apfs_transfer_preserves_logical_complete_state() {
     fs::create_dir(&collision_source).unwrap();
     fs::write(collision_source.join("Readme"), b"one").unwrap();
     fs::write(collision_source.join("README"), b"two").unwrap();
-    let collision_home = support::minimal_home(collision_source_fixture.path());
-    support::write_registry(
+    let collision_home = support::initialize_project_metadata(collision_source_fixture.path());
+    support::write_descriptor_for_home(
         &collision_home,
+        collision_destination_fixture.path(),
         &[("tree", &collision_source, &collision_destination)],
     );
-    let collision = support::command_with_grip_home(
-        collision_source_fixture.path(),
+    let collision = support::project_command(
+        collision_destination_fixture.path(),
         &collision_home,
         &["--output=json", "mapping", "inspect"],
     );

@@ -2,12 +2,12 @@
 
 use crate::classification;
 use crate::error::GripError;
-use crate::home::GripHome;
 use crate::mutation::model::{
     ActionKind, Disposition, MutationDirection, MutationOperation, MutationPlan,
 };
 use crate::observation::model::Selection;
-use crate::operation::model::ActionCheckpointEvidenceV1;
+use crate::operation::model::ActionCheckpointEvidenceV2;
+use crate::project::ProjectPaths;
 use crate::registry::publication::RegistrySnapshot;
 use crate::state::publication::StateSnapshot;
 use std::collections::BTreeSet;
@@ -21,9 +21,9 @@ pub struct ExecutionSuccess {
     pub prior_generation: Option<u64>,
 }
 
-/// Execute one actionful, unblocked plan under the global writer lock.
+/// Execute one actionful, unblocked plan under the selected project's writer lock.
 pub fn execute(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected_registry: &RegistrySnapshot,
     expected_state: &StateSnapshot,
     selection: &Selection,
@@ -42,7 +42,7 @@ pub fn execute(
 /// Execute with deterministic test-only failures at typed mutation boundaries.
 #[doc(hidden)]
 pub fn execute_with_fault_hook<F>(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected_registry: &RegistrySnapshot,
     expected_state: &StateSnapshot,
     selection: &Selection,
@@ -66,7 +66,7 @@ where
 /// Execute with both pipeline and accepted-state publication fault injection.
 #[doc(hidden)]
 pub fn execute_with_faults<F>(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected_registry: &RegistrySnapshot,
     expected_state: &StateSnapshot,
     selection: &Selection,
@@ -80,6 +80,7 @@ where
     let operation = initial_plan.operation;
     let operation_name = operation.as_str();
     let _mutation_guard = crate::state::mutation_lock::MutationLock::acquire(home, operation_name)?;
+    crate::revalidate_project_for_mutation()?;
     fault(crate::mutation::FaultPhase::AfterMutationLock)?;
     let locked_registry = crate::registry::publication::load(home, false)
         .map_err(|error| error.for_mapping_operation(operation_name))?;
@@ -517,12 +518,12 @@ where
         crate::registry::publication::acquire_guard(home, operation_name),
         "coordination_failure"
     );
-    let state_directory = finish_or_fail!(
-        crate::state::publication::prepare_directory(home),
+    let state_lock = finish_or_fail!(
+        crate::state::lock::project_lock_path(home, "state.lock"),
         "coordination_failure"
     );
     let _state_guard = finish_or_fail!(
-        crate::state::lock::PublicationLock::acquire(&state_directory.join("state.lock")),
+        crate::state::lock::PublicationLock::acquire(&state_lock),
         "coordination_failure"
     );
     finish_or_fail!(
@@ -705,7 +706,7 @@ where
 }
 
 fn rebuild_plan(
-    home: &GripHome,
+    home: &ProjectPaths,
     registry: &RegistrySnapshot,
     state: &StateSnapshot,
     selection: &Selection,
@@ -746,7 +747,7 @@ fn rebuild_plan(
 }
 
 fn revalidate_action(
-    home: &GripHome,
+    home: &ProjectPaths,
     registry: &RegistrySnapshot,
     state: &StateSnapshot,
     action: &crate::mutation::model::MutationAction,
@@ -843,8 +844,8 @@ fn revalidate_action(
     Ok(())
 }
 
-fn evidence(action: &crate::mutation::model::MutationAction) -> ActionCheckpointEvidenceV1 {
-    ActionCheckpointEvidenceV1 {
+fn evidence(action: &crate::mutation::model::MutationAction) -> ActionCheckpointEvidenceV2 {
+    ActionCheckpointEvidenceV2 {
         revalidation: action.milestones.revalidation.clone(),
         recovery: action.milestones.recovery.clone(),
         recovery_ref: action.milestones.recovery_ref.clone(),
@@ -883,7 +884,7 @@ fn stable_reason(error: &GripError, fallback: &str) -> String {
 }
 
 fn revalidate_registry_bytes(
-    home: &GripHome,
+    home: &ProjectPaths,
     expected: &RegistrySnapshot,
     operation: MutationOperation,
 ) -> Result<(), GripError> {
@@ -1022,7 +1023,7 @@ fn mutation_failure(
 }
 
 fn observe_action_state(
-    home: &GripHome,
+    home: &ProjectPaths,
     _registry: &RegistrySnapshot,
     state: &StateSnapshot,
     action: &crate::mutation::model::MutationAction,
