@@ -3,13 +3,14 @@ mod support;
 use support::project::ProjectFixture;
 
 #[test]
-fn help_and_versions_are_independent_of_projects_home_and_legacy_traps() {
+fn help_and_versions_are_independent_of_projects_home() {
     let fixture = ProjectFixture::new();
     for arguments in [
         vec!["--help"],
         vec!["--version"],
         vec!["version"],
-        vec!["mapping", "--help"],
+        vec!["add", "--help"],
+        vec!["push", "--help"],
     ] {
         let before = fixture.snapshot_all();
         let output = fixture.command(&arguments);

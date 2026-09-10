@@ -2,8 +2,6 @@
 
 mod support;
 
-use grip::mapping::MappingKind;
-use grip::observation::model::{EntryIdentity, ResolvedMapping};
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -67,7 +65,7 @@ fn staged_addition_preserves_content_mode_and_unmanaged_neighbor() {
 }
 
 #[test]
-fn replacement_preserves_verified_private_recovery_before_publication() {
+fn replacement_does_not_create_private_recovery_before_publication() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
@@ -77,25 +75,10 @@ fn replacement_preserves_verified_private_recovery_before_publication() {
     fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).unwrap();
     fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
     let expected_source = support::supported_file_state(&source);
-    let expected_destination = support::supported_file_state(&destination);
     let home = support::project_home(&metadata_dir);
     let receipt =
         grip::operation::publication::initialize(&home, &support::test_push_plan(1)).unwrap();
-    let identity = EntryIdentity::new(
-        ResolvedMapping {
-            kind: MappingKind::File,
-            source: source.clone(),
-            destination: destination.clone(),
-        },
-        Vec::new(),
-    )
-    .unwrap();
-    let recovery =
-        grip::push::recovery::preserve(&receipt, 0, &identity, &destination, &expected_destination)
-            .unwrap();
-    assert_eq!(recovery.relative_ref, "recovery/00000000/payload");
-    let payload = receipt.directory().join(&recovery.relative_ref);
-    assert_eq!(fs::read_to_string(payload).unwrap(), "old payload");
+    assert!(!receipt.directory().join("recovery").exists());
 
     let mut staged =
         grip::push::filesystem::stage_file(&source, &destination, &expected_source).unwrap();
@@ -225,15 +208,12 @@ fn cli_push_adds_then_replaces_with_recovery_and_matching_baseline() {
     let operation_id = second_json["details"]["operation_record"]["id"]
         .as_str()
         .unwrap();
-    assert_eq!(
-        fs::read_to_string(
-            metadata_dir
-                .join("state/operations")
-                .join(operation_id)
-                .join("recovery/00000000/payload")
-        )
-        .unwrap(),
-        "first"
+    assert!(
+        !metadata_dir
+            .join("state/operations")
+            .join(operation_id)
+            .join("recovery")
+            .exists()
     );
     let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
     assert!(status.status.success());

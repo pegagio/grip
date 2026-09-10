@@ -40,10 +40,11 @@ pub fn classify(entry: &ObservedEntry, baseline: Option<&SupportedState>) -> Cla
         .unsupported
         .iter()
         .any(|reason| reason.starts_with("destination:") || reason == "wrong_node_kind");
-    let classification = if entry.membership == Membership::Untracked {
-        Classification::UntrackedPendingRetirement
-    } else if entry.membership == Membership::Ignored && baseline.is_some() {
-        Classification::NewlyIgnoredPendingRetirement
+    let classification = if matches!(
+        entry.membership,
+        Membership::Untracked | Membership::Ignored
+    ) {
+        Classification::DestinationOnlyUnmanaged
     } else if entry.blocking && unsafe_destination {
         Classification::UnsafeCollision
     } else if entry.blocking {
@@ -116,10 +117,13 @@ pub fn classify_accepted(
         .unsupported
         .iter()
         .any(|reason| reason.starts_with("destination:") || reason == "wrong_node_kind");
-    let classification = if entry.membership == Membership::Untracked {
-        Classification::UntrackedPendingRetirement
-    } else if entry.membership == Membership::Ignored && complete.is_some() {
-        Classification::NewlyIgnoredPendingRetirement
+    let classification = if matches!(
+        entry.membership,
+        Membership::Untracked | Membership::Ignored
+    ) {
+        // Ignore rules and removed declarations end active membership. Any retained stale
+        // state is never a synchronization authority and will be pruned by the next writer.
+        Classification::DestinationOnlyUnmanaged
     } else if entry.blocking && unsafe_destination {
         Classification::UnsafeCollision
     } else if entry.blocking {
@@ -301,14 +305,14 @@ fn properties(classification: Classification) -> (Direction, bool, bool, &'stati
         Classification::SourceSideDeletion => (
             Direction::SourceToDestination,
             true,
-            false,
-            "source_deleted",
+            true,
+            "one_sided_absence_requires_force",
         ),
         Classification::DestinationSideDeletion => (
             Direction::DestinationToSource,
             true,
-            false,
-            "destination_deleted",
+            true,
+            "one_sided_absence_requires_force",
         ),
         Classification::DeleteChangeConflict => {
             (Direction::None, true, true, "delete_change_conflict")
@@ -317,12 +321,6 @@ fn properties(classification: Classification) -> (Direction, bool, bool, &'stati
             (Direction::None, true, true, "change_delete_conflict")
         }
         Classification::ConvergedDeletion => (Direction::None, true, false, "converged_deletion"),
-        Classification::NewlyIgnoredPendingRetirement => {
-            (Direction::None, true, false, "newly_ignored")
-        }
-        Classification::UntrackedPendingRetirement => {
-            (Direction::None, true, false, "mapping_removed")
-        }
         Classification::UnsupportedManaged => (Direction::None, true, true, "unsupported_managed"),
         Classification::UnsafeCollision => (Direction::None, true, true, "unsafe_collision"),
     }

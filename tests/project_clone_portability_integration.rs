@@ -17,11 +17,11 @@ fn copied_descriptor_is_byte_identical_but_resolves_to_each_root_and_home() {
     let second_home = first.root.path().join("second-home");
     fs::create_dir(&second_home).unwrap();
 
-    let first_result = first.command(&["--output=json", "mapping", "list"]);
+    let first_result = first.command(&["--output=json", "list"]);
     let second_result = first
         .command_builder(&second_root)
         .env("HOME", &second_home)
-        .args(["--output=json", "mapping", "list"])
+        .args(["--output=json", "list"])
         .output()
         .unwrap();
     assert!(first_result.status.success());

@@ -213,37 +213,6 @@ impl CommandOutcome {
         )
     }
 
-    /// Build a stable result for retirement planning or execution.
-    pub fn retirement(
-        plan: &crate::retire::model::RetirementPlan,
-        mode: &str,
-        operation_record: Option<&str>,
-        baseline: crate::mutation::model::BaselineOutcome,
-    ) -> Self {
-        let (category, completion, result) = if !plan.blockers.is_empty() {
-            (ResultCategory::InvalidConfiguration, "blocked", "blocked")
-        } else if plan.actions.is_empty() {
-            (ResultCategory::Success, "complete", "no_op")
-        } else if mode == "dry_run" {
-            (ResultCategory::Success, "complete", "planned")
-        } else {
-            (ResultCategory::Success, "complete", "applied")
-        };
-        operation_outcome(
-            category,
-            format!(
-                "Retire {result}: {} record(s), {} blocker(s)",
-                plan.actions.len(),
-                plan.blockers.len()
-            ),
-            plan,
-            mode,
-            completion,
-            result,
-            operation_record,
-            &baseline,
-        )
-    }
     pub fn failure(error: &GripError) -> Self {
         let mut outcome = Self {
             category: error.category(),

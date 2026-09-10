@@ -54,24 +54,13 @@ impl Drop for StagedFile {
 
 /// Create and verify one absent directory without recursive creation.
 pub fn create_directory(path: &Path) -> Result<(), GripError> {
-    create_directory_with_collision(path, false)
+    create_directory_inner(path)
 }
 
-pub(crate) fn create_recovery_directory(path: &Path) -> Result<(), GripError> {
-    create_directory_with_collision(path, true)
-}
-
-fn create_directory_with_collision(
-    path: &Path,
-    collision_is_corrupt: bool,
-) -> Result<(), GripError> {
+fn create_directory_inner(path: &Path) -> Result<(), GripError> {
     let (parent, name) = open_parent(path)?;
     if parent.metadata(&name).is_ok() {
-        return Err(if collision_is_corrupt {
-            GripError::CorruptState("recovery action directory already exists".into())
-        } else {
-            stale("mutation target appeared before directory creation")
-        });
+        return Err(stale("mutation target appeared before directory creation"));
     }
     mkdirat(
         parent.as_fd(),
@@ -79,11 +68,7 @@ fn create_directory_with_collision(
         Mode::from_raw_mode(0o700),
     )
     .map_err(|error| {
-        if collision_is_corrupt && error == rustix::io::Errno::EXIST {
-            GripError::CorruptState("recovery action directory collision".into())
-        } else {
-            GripError::from_io("could not create mutation target directory", error.into())
-        }
+        GripError::from_io("could not create mutation target directory", error.into())
     })?;
     let created = parent.open_child_directory(&name).map_err(|error| {
         GripError::mutation_side_effect(
@@ -114,35 +99,6 @@ fn create_directory_with_collision(
     })
 }
 
-/// Read one current-user-owned private file through no-following descriptors.
-pub(crate) fn read_private_file(path: &Path) -> Result<Vec<u8>, GripError> {
-    let (parent, name) = open_parent(path)?;
-    let path_metadata = parent
-        .metadata(&name)
-        .map_err(|error| GripError::from_io("could not inspect private file", error))?;
-    let descriptor = parent
-        .open_child_file(&name)
-        .map_err(|error| GripError::from_io("could not open private file safely", error))?;
-    let mut file = File::from(descriptor);
-    let metadata = file
-        .metadata()
-        .map_err(|error| GripError::from_io("could not inspect opened private file", error))?;
-    if !metadata.is_file()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.permissions().mode() & 0o7777 != 0o600
-        || metadata.dev() != path_metadata.stat.st_dev as u64
-        || metadata.ino() != path_metadata.stat.st_ino
-    {
-        return Err(GripError::CorruptState(
-            "private file identity, ownership, or mode is unsafe".into(),
-        ));
-    }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|error| GripError::from_io("could not read private file", error))?;
-    Ok(bytes)
-}
-
 /// Stream a no-follow source into an exclusive verified destination sibling.
 pub fn stage_file(
     source: &Path,
@@ -160,21 +116,6 @@ pub fn stage_file_for(
     expected: &SupportedState,
 ) -> Result<StagedFile, GripError> {
     stage_file_with_mode(direction, origin, target, expected, None)
-}
-
-/// Stage a private recovery copy while validating the source against its captured evidence.
-pub(crate) fn stage_private_file(
-    source: &Path,
-    destination: &Path,
-    expected: &SupportedState,
-) -> Result<StagedFile, GripError> {
-    stage_file_with_mode(
-        MutationDirection::Push,
-        source,
-        destination,
-        expected,
-        Some(0o600),
-    )
 }
 
 fn stage_file_with_mode(
@@ -467,47 +408,6 @@ fn revalidate_removal(
         }
     }
     Ok((parent, name))
-}
-
-/// Remove one current-user-owned private recovery file after exact byte-count verification.
-pub(crate) fn remove_private_file(path: &Path, expected_len: u64) -> Result<bool, GripError> {
-    let (parent, name) = open_parent(path)?;
-    let metadata = parent
-        .metadata(&name)
-        .map_err(|error| GripError::from_io("could not inspect private recovery bytes", error))?;
-    let descriptor = parent
-        .open_child_file(&name)
-        .map_err(|error| GripError::from_io("could not open private recovery bytes", error))?;
-    let opened = File::from(descriptor);
-    let opened_metadata = opened
-        .metadata()
-        .map_err(|error| GripError::from_io("could not inspect opened recovery bytes", error))?;
-    if !opened_metadata.is_file()
-        || opened_metadata.uid() != rustix::process::geteuid().as_raw()
-        || opened_metadata.permissions().mode() & 0o7777 != 0o600
-        || opened_metadata.dev() != metadata.stat.st_dev as u64
-        || opened_metadata.ino() != metadata.stat.st_ino
-        || opened_metadata.len() != expected_len
-    {
-        return Err(GripError::CorruptState(
-            "private recovery bytes do not match cleanup evidence".into(),
-        ));
-    }
-    unlinkat(parent.as_fd(), OsStr::from_bytes(&name), AtFlags::empty()).map_err(|error| {
-        GripError::from_io("could not remove private recovery bytes", error.into())
-    })?;
-    fsync(parent.as_fd())
-        .map_err(|error| GripError::from_io("could not sync recovery directory", error.into()))?;
-    match parent.metadata(&name) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
-        Ok(_) => Err(GripError::CorruptState(
-            "private recovery bytes remain visible after cleanup".into(),
-        )),
-        Err(error) => Err(GripError::from_io(
-            "could not verify recovery-byte absence",
-            error,
-        )),
-    }
 }
 
 fn verify_staged_identity(staged: &StagedFile) -> Result<(), GripError> {

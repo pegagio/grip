@@ -1,7 +1,7 @@
 mod support;
 
 use std::fs;
-use support::project::{PortableFixtureMapping, ProjectFixture};
+use support::project::ProjectFixture;
 
 #[test]
 fn same_project_writer_contention_is_bounded_but_unrelated_projects_are_independent() {
@@ -11,17 +11,10 @@ fn same_project_writer_contention_is_bounded_but_unrelated_projects_are_independ
     fs::write(second.project_root.join("source"), "second").unwrap();
 
     let _held = first.hold_lock("mutation.lock");
-    let contended = first.command(&[
-        "--output=json",
-        "mapping",
-        "add",
-        "file",
-        "source",
-        "~/first",
-    ]);
+    let contended = first.command(&["--output=json", "add", "source", "~/first"]);
     assert_eq!(contended.status.code(), Some(12));
 
-    let independent = second.command(&["mapping", "add", "file", "source", "~/second"]);
+    let independent = second.command(&["add", "source", "~/second"]);
     assert!(
         independent.status.success(),
         "stdout={} stderr={}",
@@ -31,7 +24,7 @@ fn same_project_writer_contention_is_bounded_but_unrelated_projects_are_independ
 }
 
 #[test]
-fn cloned_projects_keep_baseline_operation_recovery_and_state_bytes_isolated() {
+fn cloned_projects_keep_operation_and_state_bytes_isolated() {
     let fixture = ProjectFixture::initialized();
     let source = fixture.project_root.join("source");
     let destination = fixture.home_root.join("destination");
@@ -42,12 +35,12 @@ fn cloned_projects_keep_baseline_operation_recovery_and_state_bytes_isolated() {
         &destination,
         grip::discovery::model::NodeKind::File,
     );
-    fixture.write_descriptor(&[PortableFixtureMapping {
-        kind: "file",
-        source: "source",
-        destination: "~/destination",
-    }]);
-    assert!(fixture.command(&["baseline", "accept"]).status.success());
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
 
     fs::write(&source, "first-project-change").unwrap();
     assert!(fixture.command(&["push"]).status.success());
@@ -56,14 +49,27 @@ fn cloned_projects_keep_baseline_operation_recovery_and_state_bytes_isolated() {
     let clone_root = fixture.copy_project("clone");
     let clone_home = fixture.root.path().join("clone-home");
     fs::create_dir(&clone_home).unwrap();
-    fs::copy(&destination, clone_home.join("destination")).unwrap();
-    let clone_rebind = fixture
+    let clone_destination = clone_home.join("destination");
+    fs::copy(&destination, &clone_destination).unwrap();
+    support::copy_complete_metadata(
+        &destination,
+        &clone_destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    let clone_reset = fixture
         .command_builder(&clone_root)
         .env("HOME", &clone_home)
-        .args(["baseline", "accept"])
+        .args(["remove", "source"])
         .output()
         .unwrap();
-    assert!(clone_rebind.status.success());
+    assert!(clone_reset.status.success());
+    let clone_add = fixture
+        .command_builder(&clone_root)
+        .env("HOME", &clone_home)
+        .args(["add", "source", "~/destination"])
+        .output()
+        .unwrap();
+    assert!(clone_add.status.success());
     fs::write(clone_root.join("source"), "clone-change").unwrap();
     let clone_push = fixture
         .command_builder(&clone_root)

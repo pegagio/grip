@@ -115,7 +115,7 @@ fn sync_human_and_json_blocked_results_expose_equivalent_evidence() {
 }
 
 #[test]
-fn sync_and_resolve_use_stable_terminal_exit_categories() {
+fn sync_and_forced_push_use_stable_terminal_exit_categories() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     assert_eq!(
         support::command(root.path(), &["sync", "one", "two"])
@@ -124,7 +124,7 @@ fn sync_and_resolve_use_stable_terminal_exit_categories() {
         Some(2)
     );
     assert_eq!(
-        support::command(root.path(), &["resolve", "--source"])
+        support::command(root.path(), &["push", "--not-an-option"])
             .status
             .code(),
         Some(2)
@@ -143,7 +143,7 @@ fn sync_and_resolve_use_stable_terminal_exit_categories() {
         support::project_command(
             blocked_root.path(),
             &blocked_home,
-            &["resolve", "--source", "--", "source"],
+            &["push", "-f", "source"],
         )
         .status
         .code(),

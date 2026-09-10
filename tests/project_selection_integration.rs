@@ -22,7 +22,7 @@ fn selected(fixture: &ProjectFixture) -> ProjectContext {
 fn implicit_selection_works_from_root_deep_descendant_and_one_hundred_levels() {
     let fixture = ProjectFixture::initialized();
     for cwd in [fixture.project_root.clone(), fixture.deep_descendant(100)] {
-        let output = fixture.command_from(&cwd, &["--output=json", "validate"]);
+        let output = fixture.command_from(&cwd, &["--output=json", "status"]);
         assert!(
             output.status.success(),
             "{}",
@@ -43,10 +43,10 @@ fn explicit_selection_requires_the_exact_root_and_never_falls_back() {
     let output = fixture.command_from(
         &outside,
         &[
-            "validate",
             "--project",
             fixture.project_root.to_str().unwrap(),
             "--output=json",
+            "status",
         ],
     );
     assert!(output.status.success());
@@ -54,7 +54,7 @@ fn explicit_selection_requires_the_exact_root_and_never_falls_back() {
     let descendant = fixture.deep_descendant(1);
     let output = fixture.command_from(
         &fixture.project_root,
-        &["--project", descendant.to_str().unwrap(), "validate"],
+        &["--project", descendant.to_str().unwrap(), "status"],
     );
     assert!(!output.status.success());
 }
@@ -62,20 +62,20 @@ fn explicit_selection_requires_the_exact_root_and_never_falls_back() {
 #[test]
 fn implicit_selection_fails_for_zero_multiple_and_invalid_inner_candidates() {
     let absent = ProjectFixture::new();
-    let output = absent.command(&["--output=json", "validate"]);
+    let output = absent.command(&["--output=json", "status"]);
     assert_eq!(output.status.code(), Some(10));
     assert_eq!(json(&output)["details"]["reason"], "project_not_found");
 
     let multiple = ProjectFixture::initialized();
     let nested = multiple.nested_project("nested");
-    let output = multiple.command_from(&nested, &["--output=json", "validate"]);
+    let output = multiple.command_from(&nested, &["--output=json", "status"]);
     assert_eq!(output.status.code(), Some(10));
     assert_eq!(json(&output)["details"]["reason"], "ambiguous_project");
 
     let invalid = ProjectFixture::initialized();
     let inner = invalid.project_root.join("inner");
     fs::create_dir_all(inner.join(".grip")).unwrap();
-    let output = invalid.command_from(&inner, &["--output=json", "validate"]);
+    let output = invalid.command_from(&inner, &["--output=json", "status"]);
     assert_eq!(output.status.code(), Some(10));
     assert_ne!(
         json(&output)["details"]["project"]["root"]["display"],

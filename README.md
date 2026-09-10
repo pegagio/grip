@@ -1,6 +1,6 @@
 # Grip
 
-Grip is a local, project-scoped synchronizer for explicit file and tree mappings. A Grip project keeps portable mapping intent in version-controlled metadata while keeping mutable baselines, operation records, locks, staging files, and recovery bytes local to that project.
+Grip is a local, project-scoped synchronizer for explicit file and tree mappings. A Grip project keeps portable mapping intent in version-controlled metadata while keeping mutable baselines, operation records, locks, and staging files local to that project. Git remains responsible for project history and recovery.
 
 ## Initialize a project
 
@@ -21,18 +21,18 @@ Initialization atomically creates:
 
 The descriptor starts as strict Descriptor V2 and `.grip/.gitignore` contains exactly `/state/`. Grip never runs Git itself; committing `.grip/config.toml` and `.grip/.gitignore` remains the user's choice.
 
-Project-dependent commands accept `--project PATH` or discover a project by walking upward from the current directory. An explicit path must name the exact project root. Discovery fails when it finds no project, more than one project boundary, or unsafe or invalid project metadata. `grip version`, `--version`, and `--help` remain project-independent.
+Project-dependent commands accept `-p PATH` or `--project PATH`, or discover a project by walking upward from the current directory. An explicit path must name the exact project root. Discovery fails when it finds no project, more than one project boundary, or unsafe or invalid project metadata. `grip version`, `--version`, and `--help` remain project-independent.
 
 ## Configure portable mappings
 
 Mapping sources are relative to the project root. Destinations use literal home-relative syntax (`~` or `~/...`) and resolve against the invoking user's canonical home:
 
 ```sh
-grip mapping add file shell/gitconfig "~/.gitconfig"
-grip mapping add tree editor "~/.config/editor"
-grip mapping list
-grip mapping show shell/gitconfig
-grip mapping remove shell/gitconfig
+grip add shell/gitconfig "~/.gitconfig"
+grip add editor "~/.config/editor"
+grip list
+grip list shell/gitconfig
+grip remove shell/gitconfig
 ```
 
 Grip stores only the portable declarations. Human and JSON results show declared values separately from safely rendered resolved endpoints. Absolute sources, absolute destinations, traversal, environment expansion, other-user home syntax, symbolic-link endpoints, unsafe ancestry, and overlapping ownership are rejected.
@@ -42,38 +42,20 @@ For a tree mapping, Grip discovers ordinary non-ignored source entries on every 
 ## Inspect and synchronize
 
 ```sh
-grip mapping inspect [PATH]
-grip status [PATH]
-grip check [PATH]
-grip diff [PATH]
-grip baseline accept [PATH]
-grip push [-n|--dry-run] [PATH]
-grip pull [-n|--dry-run] [PATH]
-grip sync [-n|--dry-run] [PATH]
-grip resolve [-n|--dry-run] (--source|--destination) PATH
+grip status [-e|--exit-code] [-d|--destination] [PATH]
+grip diff [-d|--destination] [PATH]
+grip push [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
+grip pull [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
+grip sync [-n|--dry-run] [-d|--destination] [PATH]
 ```
 
 Selectors use project-relative source space by default. `--destination` selects in destination space where supported; `--` terminates option parsing for dash-prefixed paths.
 
-Grip compares the current source, current destination, and last accepted baseline. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until `resolve` names the complete winning side. Destination-only content outside source-defined managed membership remains unmanaged.
+Grip compares the current source, current destination, and last accepted baseline. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until `push --force` or `pull --force` selects one exact entry and names the winning direction. Destination-only content outside source-defined managed membership remains unmanaged.
 
 Read-only commands and dry runs do not create `.grip/state`, acquire writer locks, publish operation evidence, or change payloads. An actual writer lazily creates owner-only project state, takes a bounded project-local mutation lock, repeats inspection and revalidation, stages and verifies each replacement, and publishes State V4 only after final verification.
 
-## Delete, retire, and recover
-
-Deletion and retirement are explicit:
-
-```sh
-grip delete --source [--dry-run] PATH
-grip delete --destination [--dry-run] PATH
-grip retire [--force] [--dry-run] PATH
-grip recovery list
-grip recovery show REFERENCE
-grip recovery restore REFERENCE
-grip recovery remove REFERENCE
-```
-
-Before replacing or deleting existing payload, Grip preserves verified recovery bytes under the operation that produced them. Operation Record V2, recovery manifests, and payload metadata use portable managed identities and project-relative private references. Recovery inventory and restore derive live targets from the currently selected project and endpoint role; copied project state cannot direct a restore back into the original project.
+`remove` changes only Grip's declaration and baseline; it never changes either endpoint. Normal synchronization blocks one-sided absence. An exact forced `push` or `pull` is the explicit authority to choose a winner, including an absent winner. Use Git for history and recovery.
 
 ## Project metadata and local state
 
@@ -88,7 +70,6 @@ The complete layout is:
     ├── locks/
     ├── staging/
     ├── operations/          # portable Operation Record V2 and action evidence
-    └── recovery/            # descriptor and accepted-state recovery generations
 ```
 
 State V4 stores portable entry identities plus a local binding to the resolved project root, destination home, descriptor digest, and resolved topology. Copying a project retains its state as untrusted evidence. Read-only commands may report `rebind_eligible` without writing; mutation is blocked on missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. A successful state-writing command records the new binding atomically.
@@ -97,7 +78,7 @@ There is no global Grip registry, global mutable state root, generated project i
 
 ## Output and exit codes
 
-All commands support `--output human|json`; repeat `-v` for redacted diagnostics on stderr. JSON results use stable categories and safe path values, including `raw_hex` when necessary to preserve exact non-UTF-8 identity.
+All commands support `-o json`; human-readable output is the default. Repeat `-v` for redacted diagnostics on stderr. JSON results use stable categories and safe path values, including `raw_hex` when necessary to preserve exact non-UTF-8 identity.
 
 | Exit | Symbol | Meaning |
 | ---: | --- | --- |

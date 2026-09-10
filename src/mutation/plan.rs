@@ -226,7 +226,8 @@ fn build_with_parents(
                             ActionKind::FinalizeDirectoryMetadata
                         }
                         (
-                            Classification::DivergentConflict
+                            Classification::InitialCollision
+                            | Classification::DivergentConflict
                             | Classification::MetadataMigrationConflict,
                             NodeKind::File,
                         ) if operation == MutationOperation::Resolve => {
@@ -237,7 +238,8 @@ fn build_with_parents(
                             }
                         }
                         (
-                            Classification::DivergentConflict
+                            Classification::InitialCollision
+                            | Classification::DivergentConflict
                             | Classification::MetadataMigrationConflict,
                             NodeKind::Directory,
                         ) if operation == MutationOperation::Resolve => {
@@ -327,7 +329,6 @@ fn build_with_parents(
                         changed_dimensions: all_metadata_dimensions(),
                         flags_to_clear: BTreeSet::new(),
                         capability_proofs: Vec::new(),
-                        recovery_schema_version: None,
                     }),
                     dependencies: Vec::new(),
                     status: ActionStatus::Unattempted,
@@ -617,7 +618,6 @@ fn metadata_action_evidence(
         changed_dimensions,
         flags_to_clear,
         capability_proofs: Vec::new(),
-        recovery_schema_version: before.map(|_| 2),
     })
 }
 
@@ -680,7 +680,9 @@ pub fn disposition_for_operation(
             if winner.is_some()
                 && matches!(
                     classification,
-                    Classification::DivergentConflict | Classification::MetadataMigrationConflict
+                    Classification::InitialCollision
+                        | Classification::DivergentConflict
+                        | Classification::MetadataMigrationConflict
                 )
             {
                 Disposition::Action
@@ -788,8 +790,6 @@ mod tests {
             DeleteChangeConflict,
             ChangeDeleteConflict,
             ConvergedDeletion,
-            NewlyIgnoredPendingRetirement,
-            UntrackedPendingRetirement,
             UnsupportedManaged,
             UnsafeCollision,
         ];
@@ -822,8 +822,6 @@ mod tests {
             DeleteChangeConflict,
             ChangeDeleteConflict,
             ConvergedDeletion,
-            NewlyIgnoredPendingRetirement,
-            UntrackedPendingRetirement,
             UnsupportedManaged,
             UnsafeCollision,
         ];
@@ -848,7 +846,7 @@ mod tests {
                     classification,
                     true,
                 ),
-                if classification == DivergentConflict {
+                if matches!(classification, InitialCollision | DivergentConflict) {
                     Disposition::Action
                 } else {
                     Disposition::Blocked

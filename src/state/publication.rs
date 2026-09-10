@@ -246,6 +246,7 @@ pub fn publish_current_locked(
 }
 
 /// Restore exact, integrity-valid State V2 bytes while the caller holds the mutation lock.
+#[allow(dead_code)]
 pub(crate) fn restore_exact(
     home: &ProjectPaths,
     bytes: &[u8],
@@ -346,62 +347,12 @@ pub fn publish_complete_locked_with_fault(
 }
 
 fn preserve_prior_for_complete_publication(
-    state_dir: &Path,
-    expected: &StateSnapshot,
-    next_generation: u64,
-    next_bytes: &[u8],
+    _state_dir: &Path,
+    _expected: &StateSnapshot,
+    _next_generation: u64,
+    _next_bytes: &[u8],
 ) -> Result<(), GripError> {
-    let Some(prior_bytes) = expected.bytes.as_deref() else {
-        return Ok(());
-    };
-    let prior_generation = expected.accepted.generation.ok_or_else(|| {
-        GripError::CorruptState("accepted state bytes require a generation".into())
-    })?;
-    let recovery_root = state_dir.join("recovery");
-    ensure_dir(&recovery_root)?;
-    let generation_dir = recovery_root.join(format!("generation-{prior_generation}"));
-    ensure_dir(&generation_dir)?;
-    let recovery = generation_dir.join("state.json");
-    if fs::symlink_metadata(&recovery).is_ok() {
-        if read_private_file(&recovery)? != prior_bytes {
-            return Err(GripError::CorruptState(
-                "recovery generation collision".into(),
-            ));
-        }
-    } else {
-        write_recovery_atomic(&generation_dir, &recovery, prior_bytes)?;
-    }
-    let manifest_path = generation_dir.join("manifest.json");
-    if fs::symlink_metadata(&manifest_path).is_err() {
-        let prior_digest = format!("{:x}", sha2::Sha256::digest(prior_bytes));
-        let next_digest = format!("{:x}", sha2::Sha256::digest(next_bytes));
-        let manifest = crate::recovery::model::RecoveryManifestV2::new(
-            crate::recovery::model::RecoveryManifestPayloadV2 {
-                reference: crate::recovery::model::RecoveryRef::AcceptedState {
-                    generation: prior_generation,
-                    digest: prior_digest.clone(),
-                },
-                kind: crate::recovery::model::RecoveryKind::AcceptedState,
-                identity: None,
-                endpoint_role: None,
-                private_ref: "state.json".into(),
-                diagnostic_target: None,
-                created_at: recovery_timestamp(),
-                origin_operation: None,
-                origin_transition: "state_v4_publication".into(),
-                prior_evidence: serde_json::json!({"generation":prior_generation,"sha256":prior_digest}),
-                expected_post_evidence: serde_json::json!({"generation":next_generation,"sha256":next_digest}),
-                byte_count: prior_bytes.len() as u64,
-            },
-        )?;
-        crate::operation::publication::publish_new_component(
-            &generation_dir,
-            "manifest.json",
-            &serde_json::to_vec(&manifest).map_err(|error| {
-                GripError::Internal(format!("could not encode Recovery Manifest V2: {error}"))
-            })?,
-        )?;
-    }
+    // State is current deployment evidence, not a history or recovery mechanism.
     Ok(())
 }
 
@@ -478,6 +429,7 @@ fn write_v3_atomic(
     result
 }
 
+#[allow(dead_code)]
 fn recovery_timestamp() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -485,6 +437,7 @@ fn recovery_timestamp() -> String {
         .unwrap_or_else(|_| "0Z".into())
 }
 
+#[allow(dead_code)]
 fn write_recovery_atomic(directory: &Path, target: &Path, bytes: &[u8]) -> Result<(), GripError> {
     let temp = directory.join(format!(
         ".state.tmp-{}-{}",
@@ -541,10 +494,12 @@ fn write_recovery_atomic(directory: &Path, target: &Path, bytes: &[u8]) -> Resul
     result
 }
 
+#[allow(dead_code)]
 fn same_node(first: StateFileIdentity, second: StateFileIdentity) -> bool {
     first.device == second.device && first.inode == second.inode
 }
 
+#[allow(dead_code)]
 fn verify_staged_path(file: &File, path: &Path) -> Result<(), GripError> {
     let descriptor_metadata = file
         .metadata()
@@ -561,6 +516,7 @@ fn verify_staged_path(file: &File, path: &Path) -> Result<(), GripError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn read_private_file(path: &Path) -> Result<Vec<u8>, GripError> {
     let descriptor = rustix::fs::open(
         path,

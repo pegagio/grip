@@ -175,9 +175,6 @@ pub struct ActionCheckpointPayloadV2 {
 #[serde(deny_unknown_fields)]
 pub struct ActionCheckpointEvidenceV2 {
     pub revalidation: String,
-    pub recovery: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recovery_ref: Option<String>,
     pub staging: String,
     pub publication: String,
     pub verification: String,
@@ -301,9 +298,6 @@ impl ActionCheckpointEvidenceV2 {
             self.revalidation.as_str(),
             "not_attempted" | "passed" | "failed"
         ) || !matches!(
-            self.recovery.as_str(),
-            "not_required" | "planned" | "preserved" | "failed"
-        ) || !matches!(
             self.staging.as_str(),
             "not_attempted" | "verified" | "failed"
         ) || !matches!(
@@ -314,17 +308,6 @@ impl ActionCheckpointEvidenceV2 {
             "not_attempted" | "verified" | "failed"
         ) {
             return Err(corrupt("action checkpoint milestone is invalid"));
-        }
-        if let Some(reference) = &self.recovery_ref {
-            let path = std::path::Path::new(reference);
-            if path.is_absolute()
-                || reference.is_empty()
-                || path
-                    .components()
-                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
-            {
-                return Err(corrupt("recovery reference must remain operation-local"));
-            }
         }
         Ok(())
     }
@@ -374,19 +357,8 @@ fn validate_common(
         || !operation_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        || operation.is_some_and(|value| {
-            !matches!(
-                value,
-                "push"
-                    | "pull"
-                    | "sync"
-                    | "resolve"
-                    | "delete"
-                    | "retire"
-                    | "recovery_restore"
-                    | "recovery_remove"
-            )
-        })
+        || operation
+            .is_some_and(|value| !matches!(value, "push" | "pull" | "sync" | "resolve" | "delete"))
         || !is_digest(plan_id)
     {
         return Err(corrupt("operation record identity is invalid"));
@@ -452,8 +424,6 @@ mod tests {
     fn evidence() -> ActionCheckpointEvidenceV2 {
         ActionCheckpointEvidenceV2 {
             revalidation: "passed".into(),
-            recovery: "not_required".into(),
-            recovery_ref: None,
             staging: "verified".into(),
             publication: "visible".into(),
             verification: "verified".into(),
@@ -513,22 +483,6 @@ mod tests {
     fn decode_rejects_duplicate_fields() {
         let bytes = br#"{"schema_version":1,"schema_version":1,"payload":{},"integrity":{"algorithm":"sha256","digest":"x"}}"#;
         assert!(decode::<OperationSummaryPayloadV2>(bytes).is_err());
-    }
-
-    #[test]
-    fn validate_checkpoint_rejects_escaping_recovery_reference() {
-        let payload = ActionCheckpointPayloadV2 {
-            operation_id: "operation-1".into(),
-            plan_id: "a".repeat(64),
-            action_index: 0,
-            status: "in_progress".into(),
-            milestones: ActionCheckpointEvidenceV2 {
-                recovery_ref: Some("../outside".into()),
-                ..evidence()
-            },
-            failure: None,
-        };
-        assert!(ActionCheckpointEnvelopeV2::new(payload).is_err());
     }
 
     #[test]

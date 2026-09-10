@@ -106,8 +106,6 @@ fn sync_fault_matrix_records_every_pipeline_boundary_truthfully() {
     use grip::mutation::FaultPhase;
     let phases = [
         FaultPhase::BeforeActionRevalidation(0),
-        FaultPhase::BeforeRecovery(0),
-        FaultPhase::AfterRecovery(0),
         FaultPhase::BeforeStaging(0),
         FaultPhase::AfterStaging(0),
         FaultPhase::BeforePayloadPublication(0),

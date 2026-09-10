@@ -143,7 +143,7 @@ where
                         GripError::Internal("managed file action has no identity".into())
                     })?;
                     let direction = action.direction;
-                    let (origin, expected_origin, expected_target) = match direction {
+                    let (origin, expected_origin, _expected_target) = match direction {
                         MutationDirection::Push => (
                             identity.source_path(),
                             action.expected_source.as_ref(),
@@ -158,46 +158,6 @@ where
                     let expected_origin = expected_origin.ok_or_else(|| {
                         GripError::Internal("managed file action has no origin evidence".into())
                     })?;
-                    if action.kind == ActionKind::ReplaceFile {
-                        action.milestones.recovery = "planned".into();
-                        failure_reason = "journal_failure";
-                        receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
-                        failure_reason = "recovery_failure";
-                        fault(crate::mutation::FaultPhase::BeforeRecovery(index))?;
-                        let expected_target = expected_target.ok_or_else(|| {
-                            GripError::Internal("replacement has no target evidence".into())
-                        })?;
-                        let recovery = if let Some(metadata) = action.metadata.as_ref() {
-                            crate::mutation::recovery::preserve_complete(
-                                &receipt,
-                                index,
-                                identity,
-                                &destination,
-                                expected_target,
-                                metadata.expected_before.as_ref().ok_or_else(|| {
-                                    GripError::Internal(
-                                        "replacement has no complete target evidence".into(),
-                                    )
-                                })?,
-                                &metadata.expected_after,
-                            )?
-                        } else {
-                            crate::mutation::recovery::preserve_with_post(
-                                &receipt,
-                                index,
-                                identity,
-                                &destination,
-                                expected_target,
-                                Some(expected_origin),
-                            )?
-                        };
-                        action.milestones.recovery = "preserved".into();
-                        action.milestones.recovery_ref = Some(recovery.relative_ref);
-                        failure_reason = "journal_failure";
-                        receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
-                        failure_reason = "recovery_failure";
-                        fault(crate::mutation::FaultPhase::AfterRecovery(index))?;
-                    }
                     failure_reason = "staging_failure";
                     fault(crate::mutation::FaultPhase::BeforeStaging(index))?;
                     let mut staged = crate::mutation::filesystem::stage_file_for(
@@ -278,7 +238,7 @@ where
                             "metadata action is missing complete transition evidence".into(),
                         )
                     })?;
-                    let (origin, expected_target_legacy) = match action.direction {
+                    let (origin, _expected_target_legacy) = match action.direction {
                         MutationDirection::Push => {
                             (identity.source_path(), action.expected_destination.as_ref())
                         }
@@ -286,27 +246,6 @@ where
                             (identity.destination_path(), action.expected_source.as_ref())
                         }
                     };
-                    if let Some(expected_before) = metadata.expected_before.as_ref() {
-                        action.milestones.recovery = "planned".into();
-                        receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
-                        failure_reason = "recovery_failure";
-                        fault(crate::mutation::FaultPhase::BeforeRecovery(index))?;
-                        let recovery = crate::mutation::recovery::preserve_complete(
-                            &receipt,
-                            index,
-                            identity,
-                            &destination,
-                            expected_target_legacy.ok_or_else(|| {
-                                GripError::Internal("metadata action has no target evidence".into())
-                            })?,
-                            expected_before,
-                            &metadata.expected_after,
-                        )?;
-                        action.milestones.recovery = "preserved".into();
-                        action.milestones.recovery_ref = Some(recovery.relative_ref);
-                        receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
-                        fault(crate::mutation::FaultPhase::AfterRecovery(index))?;
-                    }
                     failure_reason = "publication_failure";
                     action.milestones.publication = "visible".into();
                     crate::metadata::macos::apply_metadata_paths_with_hook(
@@ -364,9 +303,7 @@ where
                     ..
                 } = &error
                 {
-                    if side_effect_reason == "recovery_failure" {
-                        action.milestones.recovery = "failed".into();
-                    } else {
+                    if side_effect_reason != "recovery_failure" {
                         action.milestones.publication = if *publication_visible {
                             "visible".into()
                         } else {
@@ -375,10 +312,6 @@ where
                         action.milestones.verification = verification.clone();
                         action.milestones.durability_confirmed = *durability_confirmed;
                     }
-                } else if failure_reason == "recovery_failure"
-                    && action.milestones.recovery != "preserved"
-                {
-                    action.milestones.recovery = "failed".into();
                 } else if failure_reason == "staging_failure"
                     && action.milestones.staging != "verified"
                 {
@@ -824,7 +757,8 @@ fn revalidate_action(
     let classification_matches = operation != MutationOperation::Resolve
         || matches!(
             record.classification,
-            crate::classification::model::Classification::DivergentConflict
+            crate::classification::model::Classification::InitialCollision
+                | crate::classification::model::Classification::DivergentConflict
                 | crate::classification::model::Classification::MetadataMigrationConflict
         );
     if record.blocking
@@ -847,8 +781,6 @@ fn revalidate_action(
 fn evidence(action: &crate::mutation::model::MutationAction) -> ActionCheckpointEvidenceV2 {
     ActionCheckpointEvidenceV2 {
         revalidation: action.milestones.revalidation.clone(),
-        recovery: action.milestones.recovery.clone(),
-        recovery_ref: action.milestones.recovery_ref.clone(),
         staging: action.milestones.staging.clone(),
         publication: action.milestones.publication.clone(),
         verification: action.milestones.verification.clone(),

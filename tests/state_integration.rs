@@ -41,7 +41,6 @@ fn state_v4_round_trips_portable_identity_binding_and_generation() {
             (portable_identity("61"), complete_state()),
             (portable_identity("7a"), complete_state()),
         ]),
-        pending_retirements: Vec::new(),
         accepted_bytes: None,
     };
     let bytes = state::encode_v4(&accepted).unwrap();
@@ -67,7 +66,6 @@ fn state_v4_rejects_old_versions_unknown_fields_integrity_and_ordering() {
             (portable_identity("61"), complete_state()),
             (portable_identity("62"), complete_state()),
         ]),
-        pending_retirements: Vec::new(),
         accepted_bytes: None,
     };
     let bytes = state::encode_v4(&accepted).unwrap();
@@ -115,6 +113,8 @@ fn publication_fixture() -> (tempfile::TempDir, grip::project::ProjectPaths) {
         "schema_version = 2\n\n[[mappings]]\nkind = \"tree\"\nsource = \"payload\"\ndestination = \"~/destination\"\n",
     )
     .unwrap();
+    fs::create_dir(root.path().join("payload")).unwrap();
+    fs::create_dir(root.path().join("destination")).unwrap();
     let home = project_home(&metadata);
     (root, home)
 }
@@ -127,6 +127,7 @@ fn project_home(metadata: &std::path::Path) -> grip::project::ProjectPaths {
 }
 
 fn publication_identity(root: &std::path::Path, relative: &[u8]) -> EntryIdentity {
+    let root = fs::canonicalize(root).unwrap();
     EntryIdentity::new(
         ResolvedMapping {
             kind: MappingKind::Tree,
@@ -253,7 +254,7 @@ fn v4_post_rename_failure_reports_visibility_and_retry_is_noop() {
 }
 
 #[test]
-fn v4_rejects_recovery_collisions_and_unsafe_state_artifacts() {
+fn v4_ignores_recovery_artifacts_and_rejects_unsafe_state_artifacts() {
     let (root, home) = publication_fixture();
     let state_dir = state::publication::prepare_directory(&home).unwrap();
     let lock = PublicationLock::acquire(&state_dir.join("state.lock")).unwrap();
@@ -276,13 +277,14 @@ fn v4_rejects_recovery_collisions_and_unsafe_state_artifacts() {
     let recovery = recovery_dir.join("state.json");
     fs::write(&recovery, b"different").unwrap();
     fs::set_permissions(&recovery, fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(
+    assert_eq!(
         state::publication::publish_complete_locked(
             &home,
             &expected,
             &complete_baselines(root.path(), 'b'),
         )
-        .is_err()
+        .unwrap(),
+        Some(1)
     );
     drop(lock);
 

@@ -21,8 +21,6 @@ fn pull_direction_table_covers_every_inherited_classification() {
         DeleteChangeConflict,
         ChangeDeleteConflict,
         ConvergedDeletion,
-        NewlyIgnoredPendingRetirement,
-        UntrackedPendingRetirement,
         UnsupportedManaged,
         UnsafeCollision,
     ];
@@ -77,7 +75,7 @@ fn pull_plan_is_direction_bound_and_deterministic() {
 }
 
 #[test]
-fn metadata_only_pull_plan_carries_complete_transition_and_recovery_contract() {
+fn metadata_only_pull_plan_carries_complete_transition() {
     let fixture = support::MetadataFixture::file(b"same");
     support::copy_complete_metadata(
         &fixture.source,
@@ -88,7 +86,16 @@ fn metadata_only_pull_plan_carries_complete_transition_and_recovery_contract() {
         support::project_command(
             fixture.root.path(),
             &fixture.metadata_dir,
-            &["baseline", "accept"],
+            &["remove", "source"]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        support::project_command(
+            fixture.root.path(),
+            &fixture.metadata_dir,
+            &["add", "source", "~/destination"]
         )
         .status
         .success()
@@ -102,7 +109,6 @@ fn metadata_only_pull_plan_carries_complete_transition_and_recovery_contract() {
     let action = &support::json(&output)["details"]["actions"][0];
     assert_eq!(action["direction"], "pull");
     assert_eq!(action["kind"], "apply_metadata");
-    assert_eq!(action["metadata"]["recovery_schema_version"], 2);
     assert_eq!(
         action["metadata"]["changed_dimensions"],
         serde_json::json!(["permission_mode"])

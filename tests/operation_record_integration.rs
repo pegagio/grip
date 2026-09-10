@@ -97,23 +97,22 @@ fn feature_eight_nonterminal_records_are_immutable_and_do_not_block_fresh_operat
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
     let home = support::project_home(&metadata_dir);
-    for operation in ["delete", "retire", "recovery_restore", "recovery_remove"] {
-        let plan_id = "a".repeat(64);
-        let plan = serde_json::json!({
-            "operation": operation,
-            "plan_id": plan_id,
-            "actions": [{"index":0}]
-        });
-        let first =
-            grip::operation::publication::initialize_typed(&home, operation, &plan_id, &plan, 1)
-                .unwrap();
-        let before = support::snapshot(first.directory());
-        let second =
-            grip::operation::publication::initialize_typed(&home, operation, &plan_id, &plan, 1)
-                .unwrap();
-        assert_ne!(first.operation_id(), second.operation_id());
-        assert_eq!(support::snapshot(first.directory()), before);
-    }
+    let operation = "delete";
+    let plan_id = "a".repeat(64);
+    let plan = serde_json::json!({
+        "operation": operation,
+        "plan_id": plan_id,
+        "actions": [{"index":0}]
+    });
+    let first =
+        grip::operation::publication::initialize_typed(&home, operation, &plan_id, &plan, 1)
+            .unwrap();
+    let before = support::snapshot(first.directory());
+    let second =
+        grip::operation::publication::initialize_typed(&home, operation, &plan_id, &plan, 1)
+            .unwrap();
+    assert_ne!(first.operation_id(), second.operation_id());
+    assert_eq!(support::snapshot(first.directory()), before);
 }
 
 #[test]
@@ -161,7 +160,6 @@ fn pull_result_delivery_finalizes_only_its_operation_record() {
             .join("actions/00000000.json"),
     );
     assert_eq!(action.payload.status, "completed");
-    assert_eq!(action.payload.milestones.recovery, "preserved");
     assert_eq!(action.payload.milestones.publication, "visible");
     assert_eq!(action.payload.milestones.verification, "verified");
     assert!(action.payload.milestones.durability_confirmed);
@@ -218,7 +216,7 @@ fn failed_pull_record_is_immutable_and_does_not_block_a_fresh_pull() {
         &state,
         &selection,
         &plan,
-        support::fail_mutation_at(grip::mutation::FaultPhase::AfterRecovery(0)),
+        support::fail_mutation_at(grip::mutation::FaultPhase::BeforeStaging(0)),
     )
     .unwrap_err();
     let grip::GripError::MutationFailed(failure) = error else {
@@ -250,7 +248,7 @@ fn interrupted_and_failed_sync_records_remain_immutable_during_fresh_retries() {
         &state,
         &selection,
         &plan,
-        support::fail_mutation_at(grip::mutation::FaultPhase::AfterRecovery(0)),
+        support::fail_mutation_at(grip::mutation::FaultPhase::BeforeStaging(0)),
     )
     .unwrap_err();
     let grip::GripError::MutationFailed(failure) = failure else {
@@ -313,7 +311,6 @@ fn mixed_sync_checkpoints_each_direction_and_terminal_baseline_once() {
         );
         assert_eq!(action.payload.status, "completed");
         assert_eq!(action.payload.milestones.revalidation, "passed");
-        assert_eq!(action.payload.milestones.recovery, "preserved");
         assert_eq!(action.payload.milestones.publication, "visible");
         assert_eq!(action.payload.milestones.verification, "verified");
         assert!(action.payload.milestones.durability_confirmed);
@@ -339,7 +336,7 @@ fn failed_resolution_record_is_immutable_and_does_not_block_fresh_resolution() {
         &state,
         &selection,
         &plan,
-        support::fail_mutation_at(grip::mutation::FaultPhase::AfterRecovery(0)),
+        support::fail_mutation_at(grip::mutation::FaultPhase::BeforeStaging(0)),
     );
     let grip::GripError::MutationFailed(failure) = result.unwrap_err() else {
         panic!("expected resolution failure");

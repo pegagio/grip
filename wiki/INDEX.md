@@ -11,6 +11,7 @@ page files, not here.
 
 ## Decisions
 
+- [Git-inspired command hierarchy](./pages/git-inspired-command-hierarchy.md)
 - [Implementation and delivery direction](./pages/implementation-and-delivery-direction.md)
 - [Proportional engineering rigor](./pages/proportional-engineering-rigor.md)
 - [Safety and recovery model](./pages/safety-and-recovery-model.md)

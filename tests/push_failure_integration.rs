@@ -48,39 +48,6 @@ fn fixture() -> (
     (root, home, registry, state, selection, plan)
 }
 
-fn replacement_fixture() -> (
-    tempfile::TempDir,
-    grip::project::ProjectPaths,
-    grip::registry::publication::RegistrySnapshot,
-    grip::state::publication::StateSnapshot,
-    Selection,
-    grip::push::model::PushPlan,
-) {
-    let (root, home, registry, state, selection, plan) = fixture();
-    grip::push::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
-    fs::write(root.path().join("source"), "replacement").unwrap();
-    let registry = grip::registry::publication::load(&home, false).unwrap();
-    let state = grip::state::publication::load(&home).unwrap();
-    let observed =
-        grip::observation::inspect(&home, &registry, &state.accepted, &selection).unwrap();
-    let records = observed
-        .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
-        .collect();
-    let plan = grip::push::plan::build_with_parent_requirements(
-        ClassificationScope {
-            kind: "all".into(),
-            path_space: PathSpace::Source,
-            selector: None,
-            mapping_source: None,
-        },
-        records,
-        registry.missing_destination_parents(),
-    )
-    .unwrap();
-    (root, home, registry, state, selection, plan)
-}
-
 fn metadata_only_fixture() -> (
     tempfile::TempDir,
     grip::project::ProjectPaths,
@@ -254,39 +221,7 @@ fn addition_fault_matrix_never_publishes_a_partial_baseline() {
 }
 
 #[test]
-fn replacement_recovery_faults_preserve_prior_baseline_and_payload_evidence() {
-    for phase in [FaultPhase::BeforeRecovery(0), FaultPhase::AfterRecovery(0)] {
-        let (root, home, registry, state, selection, plan) = replacement_fixture();
-        let result = grip::push::execution::execute_with_fault_hook(
-            &home,
-            &registry,
-            &state,
-            &selection,
-            &plan,
-            support::fail_push_at(phase),
-        );
-        let grip::GripError::PushFailed(failure) = result.unwrap_err() else {
-            panic!("expected structured recovery failure");
-        };
-        assert_eq!(
-            fs::read_to_string(root.path().join("destination")).unwrap(),
-            "payload"
-        );
-        assert_eq!(
-            grip::state::publication::load(&home)
-                .unwrap()
-                .accepted
-                .generation,
-            Some(0)
-        );
-        if phase == FaultPhase::AfterRecovery(0) {
-            assert!(failure.plan.actions[0].milestones.recovery_ref.is_some());
-        }
-    }
-}
-
-#[test]
-fn metadata_substep_faults_preserve_recovery_and_never_publish_new_state() {
+fn metadata_substep_faults_preserve_prior_state_and_never_publish_new_state() {
     for phase in [
         FaultPhase::AfterMetadataProtectedFlagsCleared(0),
         FaultPhase::AfterMetadataOwnership(0),
@@ -314,8 +249,6 @@ fn metadata_substep_faults_preserve_recovery_and_never_publish_new_state() {
             panic!("expected structured metadata failure at {phase:?}");
         };
         assert_eq!(failure.reason, "publication_failure");
-        assert_eq!(failure.plan.actions[0].milestones.recovery, "preserved");
-        assert!(failure.plan.actions[0].milestones.recovery_ref.is_some());
         assert_eq!(failure.plan.actions[0].milestones.publication, "visible");
         assert_eq!(failure.baseline.outcome, "not_published");
         assert_eq!(

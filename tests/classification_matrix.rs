@@ -355,12 +355,12 @@ fn policy_and_safety_overrides_cover_remaining_categories() {
     let mut observed = entry(None, None, Membership::Ignored);
     assert_eq!(
         classification::classify(&observed, Some(&accepted)).classification,
-        Classification::NewlyIgnoredPendingRetirement
+        Classification::DestinationOnlyUnmanaged
     );
     observed.membership = Membership::Untracked;
     assert_eq!(
         classification::classify(&observed, Some(&accepted)).classification,
-        Classification::UntrackedPendingRetirement
+        Classification::DestinationOnlyUnmanaged
     );
     observed.membership = Membership::Active;
     observed.blocking = true;

@@ -84,7 +84,7 @@ fn destination_capability_profile() -> grip::metadata::model::EndpointCapability
 }
 
 #[test]
-fn metadata_only_change_plans_complete_transition_and_recovery_v2() {
+fn metadata_only_change_plans_complete_transition() {
     let mut record = record(0, Classification::SourceOnlyChange, false);
     record.source = Some(file_state('a'));
     record.destination = Some(file_state('a'));
@@ -98,7 +98,6 @@ fn metadata_only_change_plans_complete_transition_and_recovery_v2() {
         grip::push::model::ActionKind::ApplyMetadata
     );
     let evidence = plan.actions[0].metadata.as_ref().unwrap();
-    assert_eq!(evidence.recovery_schema_version, Some(2));
     assert!(
         evidence
             .changed_dimensions
@@ -199,19 +198,17 @@ fn build_covers_all_classifications_and_aggregates_every_blocker() {
         DeleteChangeConflict,
         ChangeDeleteConflict,
         ConvergedDeletion,
-        NewlyIgnoredPendingRetirement,
-        UntrackedPendingRetirement,
         UnsupportedManaged,
         UnsafeCollision,
     ];
-    let blocking = [2usize, 8, 11, 12, 16, 17];
+    let blocking = [2usize, 8, 11, 12, 14, 15];
     let records = classifications
         .into_iter()
         .enumerate()
         .map(|(index, classification)| record(index, classification, blocking.contains(&index)))
         .collect();
     let plan = grip::push::plan::build(scope(), records).unwrap();
-    assert_eq!(plan.entries.len(), 18);
+    assert_eq!(plan.entries.len(), 16);
     assert_eq!(plan.blockers.len(), blocking.len());
     assert_eq!(plan.actions.len(), 2);
     for entry in &plan.entries {

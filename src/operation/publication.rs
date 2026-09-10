@@ -27,6 +27,7 @@ pub struct OperationReceipt {
     directory: PathBuf,
     summary: OperationSummaryPayloadV2,
     action_count: usize,
+    #[allow(dead_code)]
     home: ProjectPaths,
 }
 
@@ -39,6 +40,7 @@ impl OperationReceipt {
         &self.directory
     }
 
+    #[allow(dead_code)]
     pub(crate) fn portable_identity(
         &self,
         identity: &crate::observation::model::EntryIdentity,
@@ -187,7 +189,6 @@ fn initialize_portable(
     ensure_private_directory(&operations)?;
     let (operation_id, directory) = allocate_directory(&operations, operation)?;
     ensure_private_directory(&directory.join("actions"))?;
-    ensure_private_directory(&directory.join("recovery"))?;
 
     let record = OperationRecordV2::new(OperationRecordPayloadV2 {
         operation_id: operation_id.clone(),
@@ -335,6 +336,7 @@ fn publish_new(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), GripErr
 }
 
 /// Atomically publish one immutable private operation-local component.
+#[allow(dead_code)]
 pub(crate) fn publish_new_component(
     directory: &Path,
     name: &str,

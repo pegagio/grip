@@ -41,9 +41,9 @@ fn assert_strict_v4_rejection(fixture: &support::MetadataFixture, arguments: &[&
 fn state_v2_is_rejected_without_implicit_migration_for_every_command_family() {
     for arguments in [
         &["--output=json", "status"][..],
-        &["--output=json", "baseline", "accept"][..],
+        &["--output=json", "diff"][..],
         &["--output=json", "push", "--dry-run"][..],
-        &["--output=json", "resolve", "source", "--source"][..],
+        &["--output=json", "pull", "--dry-run"][..],
     ] {
         let fixture = legacy_fixture(true);
         assert_strict_v4_rejection(&fixture, arguments);
@@ -55,10 +55,7 @@ fn divergent_state_v2_is_rejected_before_payload_or_operation_mutation() {
     let fixture = legacy_fixture(false);
     let source_before = std::fs::read(&fixture.source).unwrap();
     let destination_before = std::fs::read(&fixture.destination).unwrap();
-    assert_strict_v4_rejection(
-        &fixture,
-        &["--output=json", "resolve", "source", "--destination"],
-    );
+    assert_strict_v4_rejection(&fixture, &["--output=json", "push", "-f", "source"]);
     assert_eq!(std::fs::read(&fixture.source).unwrap(), source_before);
     assert_eq!(
         std::fs::read(&fixture.destination).unwrap(),

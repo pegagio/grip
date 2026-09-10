@@ -44,9 +44,6 @@ pub enum DeletionDisposition {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DeletionEvidence {
     pub revalidation: String,
-    pub recovery: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recovery_ref: Option<String>,
     pub removal: String,
     pub verification: String,
     pub durability_confirmed: bool,
@@ -56,8 +53,6 @@ impl Default for DeletionEvidence {
     fn default() -> Self {
         Self {
             revalidation: "not_attempted".into(),
-            recovery: "planned".into(),
-            recovery_ref: None,
             removal: "not_attempted".into(),
             verification: "not_attempted".into(),
             durability_confirmed: false,

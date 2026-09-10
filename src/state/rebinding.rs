@@ -4,7 +4,6 @@ use crate::error::{GripError, ResultCategory};
 use crate::project::ProjectPaths;
 use crate::result::RebindingOutcome;
 use crate::state::{AcceptedStateV4, current_binding, decode_v4_identity_path};
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RebindingAssessment {
@@ -24,22 +23,7 @@ pub fn assess(
         .map_err(|_| GripError::InvalidConfiguration("project descriptor must be UTF-8".into()))?;
     let descriptor = crate::registry::decode_descriptor(descriptor_text)?;
     let current = current_binding(home, &descriptor_bytes, &descriptor)?;
-    let retirement_identities = state
-        .pending_retirements
-        .iter()
-        .map(|retirement| &retirement.identity)
-        .collect::<BTreeSet<_>>();
-    let location_changed = current.project_root != state.binding.project_root
-        || current.user_home != state.binding.user_home;
     let mut blockers = Vec::new();
-    for retirement in &state.pending_retirements {
-        if descriptor.mappings().contains(&retirement.identity.mapping) {
-            blockers.push("contradictory_pending_retirement".into());
-        }
-        if !state.baselines.contains_key(&retirement.identity) {
-            blockers.push("missing_pending_retirement_baseline".into());
-        }
-    }
     if current == state.binding {
         blockers.sort();
         blockers.dedup();
@@ -54,16 +38,8 @@ pub fn assess(
         });
     }
     for (identity, accepted) in &state.baselines {
-        if !descriptor.mappings().contains(&identity.mapping)
-            && !retirement_identities.contains(identity)
-        {
-            if location_changed {
-                blockers.push("missing_mapping".into());
-            }
-            // A descriptor-only removal at the same root/home is an ordinary
-            // pending-retirement transition. Retirement planning reobserves
-            // both peers and applies its explicit force policy, so rebinding
-            // must not preempt that stronger command-specific check.
+        if !descriptor.mappings().contains(&identity.mapping) {
+            blockers.push("missing_mapping".into());
             continue;
         }
         let relative = decode_v4_identity_path(&identity.relative_path_hex)?;

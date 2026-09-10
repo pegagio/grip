@@ -765,32 +765,6 @@ where
     apply_metadata_from_with_hook(&origin, &target, node_kind, expected, hook)
 }
 
-/// Apply target metadata while reading ACL and xattr bytes from a private recovery file.
-pub fn apply_recovery_metadata_paths(
-    recovery_object: &std::path::Path,
-    target: &std::path::Path,
-    node_kind: crate::discovery::model::NodeKind,
-    expected: &MetadataState,
-) -> io::Result<()> {
-    let origin_flags = rustix::fs::OFlags::RDONLY
-        | rustix::fs::OFlags::CLOEXEC
-        | rustix::fs::OFlags::NOFOLLOW
-        | rustix::fs::OFlags::NONBLOCK;
-    let mut target_flags = origin_flags;
-    if node_kind == crate::discovery::model::NodeKind::Directory {
-        target_flags |= rustix::fs::OFlags::DIRECTORY;
-    }
-    let origin = File::from(
-        rustix::fs::open(recovery_object, origin_flags, rustix::fs::Mode::empty())
-            .map_err(io::Error::from)?,
-    );
-    let target = File::from(
-        rustix::fs::open(target, target_flags, rustix::fs::Mode::empty())
-            .map_err(io::Error::from)?,
-    );
-    apply_metadata_from(&origin, &target, node_kind, expected)
-}
-
 /// Copy only allowlisted xattrs between private, already-open objects and verify fingerprints.
 pub fn copy_synchronized_xattrs(origin: &File, target: &File) -> io::Result<Vec<XattrFingerprint>> {
     #[cfg(target_os = "macos")]
@@ -828,15 +802,6 @@ pub fn copy_synchronized_xattrs(origin: &File, target: &File) -> io::Result<Vec<
             "xattrs are qualified only on macOS",
         ))
     }
-}
-
-/// Preserve and verify a native ACL on an operation-private recovery object.
-pub(crate) fn copy_recovery_acl(origin: &File, target: &File) -> io::Result<()> {
-    copy_acl(origin, target)?;
-    if raw_acl(origin)? != raw_acl(target)? {
-        return Err(io::Error::other("recovery ACL verification failed"));
-    }
-    Ok(())
 }
 
 #[cfg(target_os = "macos")]

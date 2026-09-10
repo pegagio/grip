@@ -3,6 +3,28 @@ mod support;
 use grip::discovery::model::NodeKind;
 use sha2::{Digest, Sha256};
 
+fn establish_baseline(fixture: &support::MetadataFixture) {
+    assert!(
+        support::project_command(
+            fixture.root.path(),
+            &fixture.metadata_dir,
+            &["remove", "source"]
+        )
+        .status
+        .success()
+    );
+    let added = support::project_command(
+        fixture.root.path(),
+        &fixture.metadata_dir,
+        &["add", "source", "~/destination"],
+    );
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stdout)
+    );
+}
+
 #[test]
 fn descriptor_observation_captures_complete_file_metadata_and_xattr_policy() {
     let fixture = support::MetadataFixture::file(b"payload");
@@ -211,12 +233,7 @@ fn complete_metadata_application_reproduces_exact_supported_state() {
 fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() {
     let fixture = support::MetadataFixture::file(b"same-content");
     support::copy_complete_metadata(&fixture.source, &fixture.destination, NodeKind::File);
-    let accepted = support::project_command(
-        fixture.root.path(),
-        &fixture.metadata_dir,
-        &["baseline", "accept"],
-    );
-    assert!(accepted.status.success());
+    establish_baseline(&fixture);
 
     support::set_fixture_mode(&fixture.destination, 0o740);
     support::set_fixture_modified_time(&fixture.destination, 1_510_000_000, 456_789_123);
@@ -271,12 +288,7 @@ fn directory_metadata_pull_runs_after_child_transfer_and_preserves_neighbors() {
     let fixture = support::MetadataFixture::tree();
     support::copy_tree_entry_metadata(&fixture.source, &fixture.destination);
     support::copy_complete_metadata(&fixture.source, &fixture.destination, NodeKind::Directory);
-    let accepted = support::project_command(
-        fixture.root.path(),
-        &fixture.metadata_dir,
-        &["baseline", "accept"],
-    );
-    assert!(accepted.status.success());
+    establish_baseline(&fixture);
 
     let destination_directory = fixture.destination.join("nested");
     support::set_fixture_mode(&destination_directory, 0o710);
@@ -335,16 +347,7 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v4()
         )
         .unwrap();
     }
-    let accepted = support::project_command(
-        fixture.root.path(),
-        &fixture.metadata_dir,
-        &["baseline", "accept"],
-    );
-    assert!(
-        accepted.status.success(),
-        "{}",
-        String::from_utf8_lossy(&accepted.stdout)
-    );
+    establish_baseline(&fixture);
     support::set_fixture_mode(&fixture.source.join("nested"), 0o711);
     support::set_fixture_modified_time(&fixture.source.join("nested"), 1_234_567_890, 999);
     let preview = support::project_command(

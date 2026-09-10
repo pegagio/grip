@@ -128,10 +128,30 @@ fn sync_metadata_actions_are_directional_and_plan_identity_is_repeatable() {
             ("file", &source_b, &destination_b),
         ],
     );
+    for source in ["source-a", "source-b"] {
+        assert!(
+            support::project_command(root.path(), &metadata_dir, &["remove", source])
+                .status
+                .success()
+        );
+    }
     assert!(
-        support::project_command(root.path(), &metadata_dir, &["baseline", "accept"])
-            .status
-            .success()
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "source-a", "~/destination-a"]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "source-b", "~/destination-b"]
+        )
+        .status
+        .success()
     );
     support::set_fixture_mode(&source_a, 0o600);
     support::set_fixture_mode(&destination_b, 0o640);
