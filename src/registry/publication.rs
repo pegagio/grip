@@ -183,6 +183,7 @@ fn unsafe_registry_error(message: &str) -> GripError {
     mapping_error("unsafe_registry_mode", message)
 }
 
+#[allow(dead_code)]
 fn ensure_owned_dir(path: &Path) -> Result<(), GripError> {
     match fs::symlink_metadata(path) {
         Ok(metadata)
@@ -595,6 +596,7 @@ fn substitute_staging(staged: &StagedFile, fault: PublicationFault) -> Result<()
     })
 }
 
+#[allow(dead_code)]
 fn publish_recovery_file(
     directory: &Path,
     target: &Path,
@@ -637,6 +639,7 @@ fn publish_recovery_file(
     result
 }
 
+#[allow(dead_code)]
 fn read_recovery_file(path: &Path) -> Result<Vec<u8>, GripError> {
     let descriptor = open(
         path,
@@ -673,79 +676,6 @@ fn read_recovery_file(path: &Path) -> Result<Vec<u8>, GripError> {
         )
     })?;
     Ok(bytes)
-}
-
-fn retain_recovery(
-    home: &ProjectPaths,
-    bytes: &[u8],
-    expected_post: &[u8],
-    fault: Option<PublicationFault>,
-) -> Result<PathBuf, GripError> {
-    let state = home.path().join("state");
-    let recovery = state.join("recovery");
-    let registry = recovery.join("registry");
-    for directory in [&state, &recovery, &registry] {
-        ensure_owned_dir(directory)?;
-    }
-    let digest = format!("{:x}", Sha256::digest(bytes));
-    let generation = registry.join(format!("sha256-{digest}"));
-    ensure_owned_dir(&generation)?;
-    let target = generation.join("config.toml");
-    let target_present = fs::symlink_metadata(&target).is_ok();
-    let created = !target_present;
-    if target_present {
-        if read_recovery_file(&target)? != bytes {
-            return Err(mapping_error(
-                "registry_recovery_failure",
-                "registry recovery generation conflicts with accepted bytes",
-            ));
-        }
-    } else {
-        publish_recovery_file(&generation, &target, bytes, fault)?;
-    }
-    let recovered = read_recovery_file(&target)?;
-    if Sha256::digest(&recovered) != Sha256::digest(bytes) || recovered != bytes {
-        return Err(mapping_error(
-            "registry_recovery_failure",
-            "registry recovery verification failed",
-        ));
-    }
-    let manifest_path = generation.join("manifest.json");
-    if created && fs::symlink_metadata(&manifest_path).is_err() {
-        let manifest = crate::recovery::model::RecoveryManifestV2::new(
-            crate::recovery::model::RecoveryManifestPayloadV2 {
-                reference: crate::recovery::model::RecoveryRef::Registry {
-                    digest: digest.clone(),
-                },
-                kind: crate::recovery::model::RecoveryKind::Registry,
-                identity: None,
-                endpoint_role: None,
-                private_ref: "config.toml".into(),
-                diagnostic_target: None,
-                created_at: recovery_timestamp(),
-                origin_operation: None,
-                origin_transition: "registry_publication".into(),
-                prior_evidence: serde_json::json!({"sha256": digest}),
-                expected_post_evidence: serde_json::json!({"sha256": format!("{:x}", Sha256::digest(expected_post))}),
-                byte_count: bytes.len() as u64,
-            },
-        )?;
-        crate::operation::publication::publish_new_component(
-            &generation,
-            "manifest.json",
-            &serde_json::to_vec(&manifest).map_err(|error| {
-                GripError::Internal(format!("could not encode Recovery Manifest V2: {error}"))
-            })?,
-        )?;
-    }
-    Ok(target)
-}
-
-fn recovery_timestamp() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| format!("{}Z", duration.as_secs()))
-        .unwrap_or_else(|_| "0Z".into())
 }
 
 fn reject_unexpected_staging(directory: &Path) -> Result<(), GripError> {
@@ -838,6 +768,7 @@ pub fn publish(
 }
 
 /// Restore exact, validated Descriptor V2 bytes while the caller holds the mutation lock.
+#[allow(dead_code)]
 pub(crate) fn restore_exact(
     home: &ProjectPaths,
     bytes: &[u8],
@@ -923,7 +854,6 @@ fn publish_candidate(
     reject_unexpected_staging(home.path())?;
     verify_final_evidence(home, expected, candidate_evidence)?;
     let bytes = encode_candidate(home, candidate)?;
-    retain_recovery(home, &expected.bytes, &bytes, fault)?;
     let mut staged = stage_bytes(home.path(), "config", &bytes)?;
     let result = (|| {
         if fault == Some(PublicationFault::CorruptStagedCandidate) {

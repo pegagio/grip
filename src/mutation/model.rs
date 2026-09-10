@@ -127,7 +127,6 @@ pub struct MetadataActionEvidence {
     pub changed_dimensions: std::collections::BTreeSet<crate::metadata::model::MetadataDimension>,
     pub flags_to_clear: std::collections::BTreeSet<crate::metadata::model::BsdFlag>,
     pub capability_proofs: Vec<crate::metadata::model::CapabilityEvidence>,
-    pub recovery_schema_version: Option<u8>,
 }
 
 /// Precise metadata preflight blocker attached to a deterministic plan.
@@ -151,9 +150,6 @@ pub enum ActionStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionEvidence {
     pub revalidation: String,
-    pub recovery: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recovery_ref: Option<String>,
     pub staging: String,
     pub publication: String,
     pub verification: String,
@@ -164,8 +160,6 @@ impl Default for ActionEvidence {
     fn default() -> Self {
         Self {
             revalidation: "not_attempted".into(),
-            recovery: "not_required".into(),
-            recovery_ref: None,
             staging: "not_attempted".into(),
             publication: "not_attempted".into(),
             verification: "not_attempted".into(),

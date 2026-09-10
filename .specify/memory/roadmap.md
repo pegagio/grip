@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.1 -> 1.1.2
-Bump rationale: Record verified completion of Feature 010.
+Version change: 1.2.2 -> 1.2.3
+Bump rationale: Record Feature 011's successful post-implementation debrief and verified lifecycle transition.
 
 Changes this revision:
-  - Transitioned Feature 010 from in-progress to verified
-  - Added the Feature 010 debrief as verification evidence
+  - Transitioned Feature 011 from in-progress to verified
+  - Recorded the attributable debrief report as verification evidence
 
-Specs affected: 010
+Specs affected: 011
 Open questions added/resolved: none
 
-Notes: Direct active-user authorization on 2026-09-09 to verify Feature 010 after successful convergence and a PROCEED debrief with no findings.
+Notes: Direct active-user authorization on 2026-09-10 to correct the stale Feature 011 ledger state and complete the post-implementation workflow. Earlier verified feature artifacts remain historical evidence; their superseded public command contracts are not retained for compatibility.
 -->
 
 # Grip — Spec Roadmap
@@ -28,7 +28,7 @@ The initial roadmap is complete when Grip delivers the full local product descri
 
 - A user can declare exact file mappings and source-defined tree mappings, inspect their managed namespace, and trust Grip to leave unrelated destination content untouched.
 - Grip can classify current source and destination state against an accepted baseline, propagate unambiguous changes in either direction, and require an explicit complete-side choice for conflicts.
-- Every mutation supports deterministic preview, bounded revalidation, staged replacement, verification, recovery evidence, and truthful baseline publication; deletion receives separate authorization.
+- Every mutation supports deterministic preview, bounded revalidation, staged replacement, verification, and truthful baseline publication. Normal operations preserve conflict safety; an explicit force direction selects one complete endpoint state, including absence, for one exact entry.
 - The resulting CLI is responsive for representative local trees, precise for humans and automation, tested against real filesystem behavior in isolated roots, and deliberately limited to its supported macOS and Unix contracts.
 - A user can initialize a portable Grip project, commit its mapping intent, clone it on another machine, and operate only within the explicitly selected or enclosing project while machine-local operational state remains outside committed project content.
 
@@ -39,16 +39,16 @@ These constraints apply across the ledger. Each is grounded in the active user-a
 - **C-01 — Local per-user boundary:** Grip is a local CLI operating on paths visible to one invoking user. Remote transport, daemons, privileged services, and multi-user coordination are outside the initial product.
 - **C-02 — Explicit selective ownership:** A canonical source path identifies each mapping. File mappings own exact pairs; tree mappings own only eligible source-defined relative paths. Destination-only content outside that namespace remains unmanaged.
 - **C-03 — Baseline-informed synchronization:** Grip compares current source, current destination, and the last accepted baseline. Source and destination define discovery and command direction, not a permanently authoritative editing side.
-- **C-04 — Proportional rigor:** Designs must address demonstrated local failure modes with the simplest maintainable mechanism. Long-lived tree locks, watchers, persistent inode identity, kernel integration, and snapshot-isolation machinery require explicit evidence that simpler revalidation and recovery are insufficient.
-- **C-05 — Validate, revalidate, recover:** Mutations require a complete deterministic plan, relevant pre-action revalidation, staged publication where supported, recovery preservation, verification, and baseline publication only after successful acceptance.
+- **C-04 — Proportional rigor:** Designs must address demonstrated local failure modes with the simplest maintainable mechanism. Long-lived tree locks, watchers, persistent inode identity, kernel integration, and snapshot-isolation machinery require explicit evidence that simpler inspection, revalidation, and atomic publication are insufficient.
+- **C-05 — Validate, revalidate, verify:** Mutations require a complete deterministic plan, relevant pre-action revalidation, staged publication where supported, verification, and baseline publication only after successful acceptance. Git or another operator-selected system owns history and recovery; Grip does not provide a competing recovery interface.
 - **C-06 — Bounded concurrency:** External edits are handled through evidence capture, revalidation, and explicit drift errors. Only short-lived coordination around Grip-owned registry or state publication may be introduced without a separately justified governance exception.
-- **C-07 — Explicit mutation semantics:** `push`, `pull`, and `sync` mutate by default; `-n` and `--dry-run` do not mutate. Deletion requires additional explicit authorization, and conflicts or known unsafe conditions block before the first mutation.
+- **C-07 — Explicit mutation semantics:** `push`, `pull`, and `sync` mutate by default; `-n` and `--dry-run` do not mutate. Ordinary operations block on conflicts or known unsafe conditions before the first mutation. `push --force` and `pull --force` may select the source or destination complete state, respectively, including absence, for one exact managed entry.
 - **C-08 — Responsive by evidence:** Common inspection and planning workflows must remain responsive. Traversal, hashing, caching, parallelism, and indexing decisions are driven by representative measurements rather than speculative optimization.
 - **C-09 — Allowlisted filesystem contract:** Ordinary regular files and directories form the initial payload boundary. Unsupported nodes or unreproducible metadata transitions are reported precisely and never silently coerced; macOS and Unix contracts may precede broader portability.
 - **C-10 — Merge-bounded persistence:** Before merge, feature artifacts and implementation form one mutable, reviewable unit with accepted discoveries flowed back. Merge into the designated integration branch freezes the feature directory semantically, and later behavioral changes flow forward through new features.
 - **C-11 — Separated interfaces:** CLI parsing and presentation remain separate from Grip-owned domain behavior. Human output, machine-readable output, and diagnostics are distinct interfaces, with deterministic forms where automation depends on them.
 - **C-12 — Project-scoped operation:** Every project-dependent command operates against exactly one Grip project. `grip init [PATH]` initializes `PATH`, or the current directory when omitted. Other commands accept a global `--project PATH` selector or discover the project by walking from the current directory toward the filesystem root. Failure to find exactly one valid project fails without mutation.
-- **C-13 — Portable intent, local state:** The Grip project contains a version-controllable mapping document. Mapping sources are relative to the project root and destinations use a portable, user-relative representation. Baselines, locks, recovery data, resolved machine paths, and operation records remain machine-local and outside committed project content.
+- **C-13 — Portable intent, local state:** The Grip project contains a version-controllable mapping document. Mapping sources are relative to the project root and destinations use a portable, user-relative representation. Baselines, locks, and resolved machine paths remain machine-local and outside committed project content; they support synchronization safety rather than user-facing history or recovery.
 
 ## Planned Specs
 
@@ -174,21 +174,33 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `docs/product-definition.md` — Core Concepts, Mapping Model, Command-Line Experience, Configuration and State
 - **Notes:** This is an intentional pre-release product correction. Verified Features 001–009 remain historical evidence, but their global registry, absolute mapping, and per-user command-scope decisions are superseded where Feature 010 conflicts with them. Verification evidence: `specs/010-project-scoped-initialization/roadmap-reviews/debrief-20260909T193508Z.md` (`PROCEED`, no findings).
 
+### 011 — Git-Inspired Command Hierarchy  [status: verified]
+
+- **Spec dir:** `specs/011-git-command-hierarchy`
+- **Description:** Replace Grip's broad, nested command surface with a flat, Git-inspired synchronization interface whose public verbs describe the user's deployment workflow rather than internal state-management mechanics.
+- **Outcome:** Users can initialize or select a project; add, list, and remove mappings; inspect status and differences; and push, pull, or safely synchronize changes using a concise, consistent command contract. Human text is the default output and JSON is an explicit automation format. Git or another operator-selected system remains responsible for history and recovery.
+- **Scope (in):** The exact public hierarchy `init`, `version`, `add`, `list`, `remove`, `status`, `diff`, `push`, `pull`, and `sync`; global `-p|--project`, `-o|--output json`, and repeatable `-v|--verbose`; automatic file-or-directory mapping classification for `add`; filtered `list [SOURCE]`; `status -e|--exit-code`; consistent `-d|--destination` selector interpretation; `-n|--dry-run`; and exact-entry `-f|--force` for directional conflict resolution and accepted one-sided absence. Human output is the default. `.gripignore` directly defines exclusions inside tree mappings, while baseline data remains internal synchronization evidence.
+- **Scope (out):** A nested `mapping` command family; `show`, `check`, `validate`, `fsck`, `resolve`, `delete`, `retire`, `accept`, untracking, or recovery commands; a Grip-managed history or recovery interface; automatic conflict merging; implicit forced resolution; backward-compatible command aliases; additional output formats beyond JSON; and implementation planning or code changes.
+- **Depends on:** 010
+- **Governed by:** C-01, C-02, C-03, C-04, C-05, C-07, C-10, C-11, C-12, C-13
+- **Addresses:** Direct active-user decisions from the command-hierarchy conversation on 2026-09-09; `docs/product-definition.md` — Command-Line Experience, Synchronization Model, Tracking and Untracking, Safety and Recovery
+- **Notes:** This is an intentional pre-release interface replacement. The specification is `specs/011-git-command-hierarchy/spec.md`. It must remove superseded options and commands throughout the repository rather than preserve compatibility. Ordinary `status` validates Grip-owned metadata as a prerequisite; `-e` changes only the exit result for valid attention findings. `push -f` and `pull -f` require a single exact managed entry and make the source or destination state, respectively, the complete winner. Removing an ignore rule later must treat a newly reintroduced entry as newly discovered rather than silently revive obsolete baseline history. Direct active-user authorization is the governing provenance. Verification evidence: `specs/011-git-command-hierarchy/roadmap-reviews/debrief-20260910T153132Z.md` (`PROCEED`, no findings).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
 
 - **Q-01 — Package and executable identity (001):** Confirm the final package identity and whether `grip` remains the executable name.
 - **Q-02 — Serialization formats (001):** Select the human-managed registry and machine-owned state formats, including atomic-publication and forward-version behavior.
-- **Q-03 — Mapping command syntax (002):** Define exact commands and arguments for creating, inspecting, and removing file and tree mappings.
+- **Q-03 — Mapping command syntax (002):** Superseded by Feature 011. Its flat `add`, `list [SOURCE]`, and `remove` contract replaces the historical nested mapping syntax.
 - **Q-04 — Initial tracking behavior (002):** Decide whether tracking creates intent only or may also execute an explicitly previewed initial synchronization.
 - **Q-05 — Gripignore contract (003):** Select the normative Gitignore behavior and decide whether `.gripignore` can ever be explicitly synchronized as payload.
-- **Q-06 — Directory membership and retirement (003, 008, 009):** Decide how empty directories enter management, which directory metadata is independent, and the exact command and state transition for retirement.
+- **Q-06 — Directory membership and retirement (003, 008, 009):** Directory membership and metadata questions remain historical Feature 003/009 evidence. The retirement-command portion is superseded by Feature 011: `.gripignore` directly defines exclusions, and excluded entries do not retain separate user-managed tracking state.
 - **Q-07 — Symbolic links (003, 009):** Decide whether links are supported as non-followed link objects in the initial product or rejected entirely.
 - **Q-08 — Metadata equality (004, 009):** Select the first and final supported metadata fields, modification-time role, identity representation, and behavior when target capabilities differ.
 - **Q-09 — Recursive topology (002):** Enumerate equal, nested, and otherwise recursive source/destination relationships that mapping validation must reject.
-- **Q-10 — Operational failure policy (005):** Confirm stop-after-first-failure behavior and the exact reporting and recovery contract for remaining planned actions.
-- **Q-11 — Backup and state recovery (005, 008):** Define backup inspection and removal plus bounded recovery when registry or baseline state is absent, corrupt, unreadable, or inconsistent.
+- **Q-10 — Operational failure policy (005):** The historical stop-after-first-failure evidence remains available in Feature 005. Its Grip-managed recovery portion is superseded by Feature 011 and Constitution 2.0.0; failures remain precisely reported without creating a Grip history or recovery interface.
+- **Q-11 — Backup and state recovery (005, 008):** Superseded by Feature 011 and Constitution 2.0.0. Git or another operator-selected system owns user-facing history and recovery; Grip retains only internal synchronization evidence.
 - **Q-12 — Automation contract (001, 004):** Define stable machine-output schemas and exit codes for success, drift, conflict, invalid configuration, unsupported entries, and operational failure.
 - **Q-13 — Integration branch:** Name the branch whose acceptance freezes a feature directory under the Merge-Bounded Flow-Back model.
 - **Q-14 — Project descriptor and destination notation (010):** Select the project metadata filename and exact portable destination notation.
@@ -210,4 +222,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.1.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-09
+**Version**: 1.2.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-09

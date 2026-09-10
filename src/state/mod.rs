@@ -44,19 +44,12 @@ pub struct BaselineRecordV4 {
     pub state: SupportedEntryStateV3,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PendingRetirementV4 {
-    pub identity: EntryIdentityV4,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatePayloadV4 {
     pub generation: u64,
     pub binding: ProjectBindingV1,
     pub baselines: Vec<BaselineRecordV4>,
-    pub pending_retirements: Vec<PendingRetirementV4>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +65,6 @@ pub struct AcceptedStateV4 {
     pub generation: u64,
     pub binding: ProjectBindingV1,
     pub baselines: BTreeMap<EntryIdentityV4, SupportedEntryStateV3>,
-    pub pending_retirements: Vec<PendingRetirementV4>,
     pub accepted_bytes: Option<Vec<u8>>,
 }
 
@@ -84,8 +76,6 @@ struct IntegrityInputV4<'a> {
 
 impl StateEnvelopeV4 {
     pub fn new(state: &AcceptedStateV4) -> Self {
-        let mut pending_retirements = state.pending_retirements.clone();
-        pending_retirements.sort();
         let payload = StatePayloadV4 {
             generation: state.generation,
             binding: state.binding.clone(),
@@ -97,7 +87,6 @@ impl StateEnvelopeV4 {
                     state: state.clone(),
                 })
                 .collect(),
-            pending_retirements,
         };
         let digest = state_v4_digest(&payload).expect("typed State V4 serialization cannot fail");
         Self {
@@ -139,16 +128,6 @@ impl StateEnvelopeV4 {
                 ));
             }
             previous = Some(&record.identity);
-        }
-        let mut previous_retirement: Option<&PendingRetirementV4> = None;
-        for retirement in &self.payload.pending_retirements {
-            validate_v4_identity(&retirement.identity)?;
-            if previous_retirement.is_some_and(|value| value >= retirement) {
-                return Err(GripError::CorruptState(
-                    "pending retirements must be unique and canonically ordered".into(),
-                ));
-            }
-            previous_retirement = Some(retirement);
         }
         Ok(())
     }
@@ -215,7 +194,6 @@ pub fn decode_v4(input: &[u8]) -> Result<AcceptedStateV4, GripError> {
             .into_iter()
             .map(|record| (record.identity, record.state))
             .collect(),
-        pending_retirements: envelope.payload.pending_retirements,
         accepted_bytes: Some(input.to_vec()),
     })
 }
@@ -270,7 +248,6 @@ pub(crate) fn accepted_v4_from_runtime(
     })?;
     let resolved = descriptor.resolve(project_root, user_home, "state_publication")?;
     let mut portable_baselines = BTreeMap::new();
-    let mut pending_retirements = Vec::new();
     for (identity, state) in baselines {
         let declaration = resolved
             .iter()
@@ -280,28 +257,21 @@ pub(crate) fn accepted_v4_from_runtime(
                     && mapping.destination == identity.mapping.destination
             })
             .map(|mapping| mapping.declaration.clone())
-            .or_else(|| portable_from_runtime_identity(identity, project_root, user_home).ok())
             .ok_or_else(|| {
                 GripError::CorruptState(
-                    "accepted baseline cannot be represented as portable project identity".into(),
+                    "accepted baseline has no active mapping declaration".into(),
                 )
             })?;
         let portable = EntryIdentityV4 {
             mapping: declaration.clone(),
             relative_path_hex: encode_hex(&identity.relative_path),
         };
-        if !descriptor.mappings().contains(&declaration) {
-            pending_retirements.push(PendingRetirementV4 {
-                identity: portable.clone(),
-            });
-        }
         portable_baselines.insert(portable, state.clone());
     }
     Ok(AcceptedStateV4 {
         generation,
         binding: current_binding(home, &descriptor_bytes, &descriptor)?,
         baselines: portable_baselines,
-        pending_retirements,
         accepted_bytes: None,
     })
 }
@@ -316,11 +286,10 @@ pub(crate) fn runtime_from_accepted_v4(
     })?;
     let mut baselines = BTreeMap::new();
     for (identity, value) in &state.baselines {
-        let mapping = ResolvedMapping {
-            kind: identity.mapping.kind,
-            source: identity.mapping.source.resolve(project_root),
-            destination: identity.mapping.destination.resolve(user_home),
-        };
+        let resolved = identity
+            .mapping
+            .resolve(project_root, user_home, "state_runtime")?;
+        let mapping = ResolvedMapping::from(&resolved.ownership_mapping());
         let runtime = EntryIdentity::new(mapping, decode_hex(&identity.relative_path_hex)?)
             .map_err(|message| GripError::CorruptState(message.into()))?;
         if baselines.insert(runtime, value.clone()).is_some() {
@@ -382,6 +351,7 @@ pub(crate) fn portable_identity_from_runtime(
     })
 }
 
+#[allow(dead_code)]
 pub(crate) fn runtime_identity_from_portable(
     home: &crate::project::ProjectPaths,
     identity: &EntryIdentityV4,

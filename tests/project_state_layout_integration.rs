@@ -14,8 +14,8 @@ fn read_only_and_dry_run_commands_do_not_create_project_state() {
         destination: "~/destination",
     }]);
     for arguments in [
-        vec!["mapping", "list"],
-        vec!["mapping", "inspect"],
+        vec!["list"],
+        vec!["status"],
         vec!["status"],
         vec!["push", "--dry-run"],
     ] {
@@ -37,7 +37,7 @@ fn read_only_and_dry_run_commands_do_not_create_project_state() {
 fn mutation_creates_only_private_project_local_state_and_locks() {
     let fixture = ProjectFixture::initialized();
     fs::write(fixture.project_root.join("source"), "value").unwrap();
-    let output = fixture.command(&["mapping", "add", "file", "source", "~/destination"]);
+    let output = fixture.command(&["add", "source", "~/destination"]);
     assert!(output.status.success());
 
     let state = fixture.state_dir();
@@ -71,12 +71,7 @@ fn baseline_publication_uses_state_v4_and_rejects_legacy_state() {
         &destination,
         grip::discovery::model::NodeKind::File,
     );
-    fixture.write_descriptor(&[PortableFixtureMapping {
-        kind: "file",
-        source: "source",
-        destination: "~/destination",
-    }]);
-    let accepted = fixture.command(&["baseline", "accept"]);
+    let accepted = fixture.command(&["add", "source", "~/destination"]);
     assert!(
         accepted.status.success(),
         "{}",

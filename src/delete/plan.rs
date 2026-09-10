@@ -34,7 +34,9 @@ pub fn build(
     let mut blockers = Vec::new();
 
     for record in records {
-        let disposition = if !record.blocking && record.classification == eligible {
+        // This internal planner is called only after `push --force` or `pull --force`
+        // established exact-entry authority. Ordinary directional operations never enter it.
+        let disposition = if record.classification == eligible {
             DeletionDisposition::Action
         } else if record.classification == Classification::ConvergedDeletion {
             DeletionDisposition::NoAction
@@ -298,8 +300,6 @@ mod tests {
             Classification::DeleteChangeConflict,
             Classification::ChangeDeleteConflict,
             Classification::ConvergedDeletion,
-            Classification::NewlyIgnoredPendingRetirement,
-            Classification::UntrackedPendingRetirement,
             Classification::UnsupportedManaged,
             Classification::UnsafeCollision,
         ];

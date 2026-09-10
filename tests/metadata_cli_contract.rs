@@ -18,10 +18,16 @@ fn accepted_fixture() -> support::MetadataFixture {
         &source.state.metadata,
     )
     .unwrap();
+    let removed = support::project_command(
+        fixture.root.path(),
+        &fixture.metadata_dir,
+        &["remove", "source"],
+    );
+    assert!(removed.status.success());
     let accepted = support::project_command(
         fixture.root.path(),
         &fixture.metadata_dir,
-        &["baseline", "accept"],
+        &["add", "source", "~/destination"],
     );
     assert!(
         accepted.status.success(),
@@ -127,7 +133,7 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
 
     std::fs::write(&fixture.source, b"source conflict").unwrap();
     std::fs::write(&fixture.destination, b"destination conflict").unwrap();
-    for command in ["status", "check", "diff"] {
+    for command in ["status", "diff"] {
         let output = support::project_command(
             fixture.root.path(),
             &fixture.metadata_dir,
@@ -141,13 +147,7 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
     let resolve_preview = support::project_command(
         fixture.root.path(),
         &fixture.metadata_dir,
-        &[
-            "--output=json",
-            "resolve",
-            "source",
-            "--destination",
-            "--dry-run",
-        ],
+        &["--output=json", "push", "-f", "source", "--dry-run"],
     );
     assert!(resolve_preview.status.success());
     assert_ne!(
@@ -158,7 +158,7 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
         support::project_command(
             fixture.root.path(),
             &fixture.metadata_dir,
-            &["resolve", "source", "--destination"],
+            &["push", "-f", "source"],
         )
         .status
         .success()
@@ -325,12 +325,8 @@ fn unsupported_link_output_never_reads_or_discloses_its_referent() {
     std::os::unix::fs::symlink(&sentinel, source.join("unsafe-link")).unwrap();
     support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
 
-    let json = support::project_command(
-        root.path(),
-        &metadata_dir,
-        &["--output=json", "mapping", "inspect"],
-    );
-    let human = support::project_command(root.path(), &metadata_dir, &["mapping", "inspect"]);
+    let json = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
+    let human = support::project_command(root.path(), &metadata_dir, &["status"]);
     let json_text = String::from_utf8(json.stdout).unwrap();
     let human_text = String::from_utf8(human.stdout).unwrap();
     for output in [&json_text, &human_text] {

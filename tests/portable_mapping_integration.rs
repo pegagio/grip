@@ -7,14 +7,7 @@ use support::project::ProjectFixture;
 fn mapping_add_stores_only_portable_declarations_and_resolves_per_context() {
     let fixture = ProjectFixture::initialized();
     fs::create_dir_all(fixture.project_root.join("home/editor")).unwrap();
-    let output = fixture.command(&[
-        "--output=json",
-        "mapping",
-        "add",
-        "tree",
-        "home/editor",
-        "~/.config/editor",
-    ]);
+    let output = fixture.command(&["--output=json", "add", "home/editor", "~/.config/editor"]);
     assert!(
         output.status.success(),
         "{}",
@@ -26,9 +19,9 @@ fn mapping_add_stores_only_portable_declarations_and_resolves_per_context() {
     assert!(!descriptor.contains(fixture.project_root.to_str().unwrap()));
     assert!(!descriptor.contains(fixture.home_root.to_str().unwrap()));
 
-    let listed = fixture.command(&["--output=json", "mapping", "list"]);
+    let listed = fixture.command(&["--output=json", "list"]);
     assert!(listed.status.success());
-    let inspected = fixture.command(&["--output=json", "mapping", "inspect", "home/editor"]);
+    let inspected = fixture.command(&["--output=json", "status", "home/editor"]);
     assert!(inspected.status.success());
 }
 
@@ -43,7 +36,7 @@ fn descriptor_bytes_are_deterministic_across_declaration_order() {
     for source in ["z", "a"] {
         assert!(
             first
-                .command(&["mapping", "add", "file", source, &format!("~/{source}")])
+                .command(&["add", source, &format!("~/{source}")])
                 .status
                 .success()
         );
@@ -51,7 +44,7 @@ fn descriptor_bytes_are_deterministic_across_declaration_order() {
     for source in ["a", "z"] {
         assert!(
             second
-                .command(&["mapping", "add", "file", source, &format!("~/{source}")])
+                .command(&["add", source, &format!("~/{source}")])
                 .status
                 .success()
         );
@@ -66,24 +59,9 @@ fn descriptor_bytes_are_deterministic_across_declaration_order() {
 fn mapping_commands_use_project_relative_source_identity() {
     let fixture = ProjectFixture::initialized();
     fs::write(fixture.project_root.join("file"), "payload").unwrap();
-    assert!(
-        fixture
-            .command(&["mapping", "add", "file", "file", "~/file"])
-            .status
-            .success()
-    );
-    assert!(
-        fixture
-            .command(&["mapping", "show", "file"])
-            .status
-            .success()
-    );
-    assert!(
-        fixture
-            .command(&["mapping", "remove", "file"])
-            .status
-            .success()
-    );
+    assert!(fixture.command(&["add", "file", "~/file"]).status.success());
+    assert!(fixture.command(&["list", "file"]).status.success());
+    assert!(fixture.command(&["remove", "file"]).status.success());
     assert!(
         !fs::read_to_string(fixture.descriptor_path())
             .unwrap()
@@ -104,7 +82,7 @@ fn mapping_add_rejects_absolute_traversal_environment_and_other_user_forms() {
     ] {
         assert!(
             !fixture
-                .command(&["mapping", "add", "file", source, destination])
+                .command(&["add", source, destination])
                 .status
                 .success()
         );
@@ -125,11 +103,10 @@ fn project_commands_resolve_source_and_destination_selectors_in_portable_spaces(
     );
     assert!(
         fixture
-            .command(&["mapping", "add", "file", "source", "~/destination"])
+            .command(&["add", "source", "~/destination"])
             .status
             .success()
     );
-    assert!(fixture.command(&["baseline", "accept"]).status.success());
     for arguments in [
         vec!["status", "source"],
         vec!["status", "--destination", "~/destination"],

@@ -15,7 +15,7 @@ fn inspect(root: &Path, source: &Path, policy: &str) -> BTreeMap<String, String>
     let output = support::project_command(
         root,
         &metadata_dir,
-        &["--output", "json", "mapping", "inspect", selector],
+        &["--output", "json", "status", selector],
     );
     assert_eq!(
         output.status.code(),
@@ -34,7 +34,7 @@ fn inspect(root: &Path, source: &Path, policy: &str) -> BTreeMap<String, String>
                     .as_str()
                     .unwrap()
                     .to_owned(),
-                record["category"].as_str().unwrap().to_owned(),
+                record["classification"].as_str().unwrap().to_owned(),
             )
         })
         .collect()
@@ -88,17 +88,16 @@ fn root_policy_supports_gitignore_grammar_and_policy_only_exclusion() {
         "trimmed",
         "literal ",
     ] {
-        assert_eq!(
-            records.get(ignored).map(String::as_str),
-            Some("ignored"),
-            "{ignored}"
-        );
+        assert!(!records.contains_key(ignored), "{ignored}");
     }
     assert_eq!(
         records.get("keep.tmp").map(String::as_str),
-        Some("eligible")
+        Some("source_addition")
     );
-    assert_eq!(records.get(".hidden").map(String::as_str), Some("eligible"));
+    assert_eq!(
+        records.get(".hidden").map(String::as_str),
+        Some("source_addition")
+    );
     assert!(!records.contains_key("cache/hidden.txt"));
     assert!(!records.contains_key(".gripignore"));
 }
@@ -121,19 +120,19 @@ fn nested_policy_has_deeper_precedence_but_cannot_reinclude_below_a_pruned_paren
     fs::set_permissions(source.join("pruned"), fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!(
         records.get("nested/keep.txt").map(String::as_str),
-        Some("eligible")
+        Some("source_addition")
     );
-    assert_eq!(
-        records.get("nested/drop.txt").map(String::as_str),
-        Some("ignored")
-    );
-    assert_eq!(records.get("pruned").map(String::as_str), Some("ignored"));
+    assert!(!records.contains_key("nested/drop.txt"));
+    assert!(!records.contains_key("pruned"));
     assert!(!records.contains_key("pruned/hidden.txt"));
     assert!(!records.contains_key("nested/.gripignore"));
     assert!(!records.contains_key("pruned/.gripignore"));
     assert_eq!(
         records.get(".gitignore").map(String::as_str),
-        Some("eligible")
+        Some("source_addition")
     );
-    assert_eq!(records.get(".ignore").map(String::as_str), Some("eligible"));
+    assert_eq!(
+        records.get(".ignore").map(String::as_str),
+        Some("source_addition")
+    );
 }

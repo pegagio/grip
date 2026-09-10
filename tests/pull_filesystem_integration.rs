@@ -40,15 +40,12 @@ fn pull_replaces_source_preserves_destination_and_publishes_baseline() {
     );
     let operation_id = value["details"]["operation_record"]["id"].as_str().unwrap();
     assert!(operation_id.starts_with("pull-"));
-    assert_eq!(
-        fs::read_to_string(
-            metadata_dir
-                .join("state/operations")
-                .join(operation_id)
-                .join("recovery/00000000/payload")
-        )
-        .unwrap(),
-        "accepted"
+    assert!(
+        !metadata_dir
+            .join("state/operations")
+            .join(operation_id)
+            .join("recovery")
+            .exists()
     );
     let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
     assert!(status.status.success());

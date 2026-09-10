@@ -174,8 +174,6 @@ fn pull_prebaseline_fault_matrix_keeps_partial_work_unaccepted() {
     use grip::mutation::FaultPhase;
 
     let cases = [
-        (FaultPhase::BeforeRecovery(0), false, false),
-        (FaultPhase::AfterRecovery(0), false, true),
         (FaultPhase::BeforeStaging(0), false, true),
         (FaultPhase::AfterStaging(0), false, true),
         (FaultPhase::BeforePayloadPublication(0), false, true),
@@ -201,7 +199,7 @@ fn pull_prebaseline_fault_matrix_keeps_partial_work_unaccepted() {
         (FaultPhase::BeforeFinalCoordination, true, true),
         (FaultPhase::BeforeBaselinePublication, true, true),
     ];
-    for (phase, source_changed, recovery_available) in cases {
+    for (phase, source_changed, _prior_payload_unavailable) in cases {
         let (root, home, registry, state, selection, plan) = support::pull_execution_fixture();
         let error = grip::mutation::execution::execute_with_fault_hook(
             &home,
@@ -235,12 +233,6 @@ fn pull_prebaseline_fault_matrix_keeps_partial_work_unaccepted() {
                 "accepted"
             }
         );
-        let recovery = home
-            .path()
-            .join("state/operations")
-            .join(&failure.operation_id)
-            .join("recovery/00000000/payload");
-        assert_eq!(recovery.exists(), recovery_available);
     }
 }
 

@@ -1,93 +1,56 @@
 mod support;
-use std::fs;
+
+use support::project::ProjectFixture;
 
 #[test]
-fn help_and_version_flags_do_not_mutate_home() {
+fn retained_commands_and_global_options_parse() {
     let root = tempfile::tempdir().unwrap();
-    let before = support::snapshot(root.path());
-    for arg in ["--help", "--version"] {
-        let output = support::command(root.path(), &[arg]);
-        assert!(output.status.success());
-        assert!(output.stderr.is_empty());
+    for command in [
+        "init", "version", "add", "list", "remove", "status", "diff", "push", "pull", "sync",
+    ] {
+        let output = support::command(root.path(), &[command, "--help"]);
+        assert!(output.status.success(), "{command}");
     }
-    assert_eq!(before, support::snapshot(root.path()));
+    let version = support::command(root.path(), &["-o", "json", "version"]);
+    assert!(version.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&version.stdout).unwrap()["details"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 #[test]
-fn version_supports_human_and_json_results() {
+fn project_option_applies_to_project_commands_not_init_or_version() {
+    let fixture = ProjectFixture::initialized();
+    let root = fixture.project_root.to_str().unwrap();
+    for arguments in [vec!["-p", root, "status"], vec!["status", "-p", root]] {
+        let output = fixture.command_from(fixture.root.path(), &arguments);
+        assert!(output.status.success(), "{arguments:?}");
+    }
+    for arguments in [vec!["-p", root, "init"], vec!["-p", root, "version"]] {
+        let output = fixture.command_from(fixture.root.path(), &arguments);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+    }
+}
+
+#[test]
+fn default_output_is_human_and_human_is_not_an_output_value() {
     let root = tempfile::tempdir().unwrap();
     let human = support::command(root.path(), &["version"]);
     assert!(human.status.success());
     assert!(String::from_utf8_lossy(&human.stdout).starts_with("grip "));
-    let json = support::command(root.path(), &["--output", "json", "version"]);
-    let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(value["schema_version"], 1);
-    assert_eq!(value["status"], "ok");
-    assert_eq!(value["details"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(value.as_object().unwrap().len(), 5);
+    let invalid = support::command(root.path(), &["-o", "human", "version"]);
+    assert_eq!(invalid.status.code(), Some(2));
 }
 
 #[test]
-fn global_project_option_parses_before_or_after_project_dependent_commands() {
-    let fixture = support::project::ProjectFixture::initialized();
-    let root = fixture.project_root.to_str().unwrap();
-    for arguments in [
-        vec!["--project", root, "validate"],
-        vec!["validate", "--project", root],
+fn removed_commands_are_rejected_without_aliases() {
+    let root = tempfile::tempdir().unwrap();
+    for command in [
+        "mapping", "validate", "fsck", "check", "show", "resolve", "delete", "retire", "accept",
+        "recovery", "baseline",
     ] {
-        assert!(
-            fixture
-                .command_from(fixture.root.path(), &arguments)
-                .status
-                .success()
-        );
+        let output = support::command(root.path(), &[command]);
+        assert_eq!(output.status.code(), Some(2), "{command}");
     }
-}
-
-#[test]
-fn validate_reports_success_and_public_error_categories() {
-    let fixture = support::project::ProjectFixture::initialized();
-    let ok = fixture.command(&["--output=json", "validate"]);
-    assert_eq!(ok.status.code(), Some(0));
-    let value = serde_json::from_slice::<serde_json::Value>(&ok.stdout).unwrap();
-    assert_eq!(value["code"], "ok");
-    assert_eq!(
-        value["details"]["project"]["root"]["display"],
-        fixture.project_root.display().to_string()
-    );
-    fs::write(
-        fixture.descriptor_path(),
-        "schema_version = 42\nmappings = []\n",
-    )
-    .unwrap();
-    let unsupported = fixture.command(&["--output=json", "validate"]);
-    assert_eq!(unsupported.status.code(), Some(11));
-    fs::write(fixture.descriptor_path(), "bad").unwrap();
-    let invalid = fixture.command(&["--output=json", "validate"]);
-    assert_eq!(invalid.status.code(), Some(10));
-}
-
-#[test]
-fn json_usage_errors_and_human_parser_errors_are_separated() {
-    let root = tempfile::tempdir().unwrap();
-    let json = support::command(root.path(), &["--output=json", "unknown"]);
-    assert_eq!(json.status.code(), Some(2));
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&json.stdout).unwrap()["code"],
-        "invalid_usage"
-    );
-    let malformed = support::command(root.path(), &["--output", "wat", "version"]);
-    assert_eq!(malformed.status.code(), Some(2));
-    assert!(malformed.stdout.is_empty());
-    assert!(!malformed.stderr.is_empty());
-}
-
-#[test]
-fn diagnostics_are_opt_in_and_stderr_only() {
-    let root = tempfile::tempdir().unwrap();
-    let quiet = support::command(root.path(), &["version"]);
-    assert!(quiet.stderr.is_empty());
-    let verbose = support::command(root.path(), &["-v", "version"]);
-    assert!(String::from_utf8_lossy(&verbose.stderr).contains("diagnostic:"));
-    assert!(String::from_utf8_lossy(&verbose.stdout).starts_with("grip "));
 }

@@ -1,7 +1,7 @@
 mod support;
 
 use std::fs;
-use support::project::{PortableFixtureMapping, ProjectFixture};
+use support::project::ProjectFixture;
 
 fn prepare_bound_fixture() -> ProjectFixture {
     let fixture = ProjectFixture::initialized();
@@ -14,12 +14,12 @@ fn prepare_bound_fixture() -> ProjectFixture {
         &destination,
         grip::discovery::model::NodeKind::File,
     );
-    fixture.write_descriptor(&[PortableFixtureMapping {
-        kind: "file",
-        source: "source",
-        destination: "~/destination",
-    }]);
-    assert!(fixture.command(&["baseline", "accept"]).status.success());
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
     fixture
 }
 
@@ -69,10 +69,17 @@ fn copied_state_is_read_only_eligible_until_an_authorized_publication_rebinds_it
     );
     assert_eq!(support::snapshot(fixture.root.path()), before);
 
+    let removed = fixture
+        .command_builder(&copied_root)
+        .env("HOME", &copied_home)
+        .args(["remove", "source"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success());
     let rebound = fixture
         .command_builder(&copied_root)
         .env("HOME", &copied_home)
-        .args(["baseline", "accept"])
+        .args(["add", "source", "~/destination"])
         .output()
         .unwrap();
     assert!(
@@ -217,26 +224,6 @@ fn corrupt_binding_and_incomplete_baseline_are_rejected() {
     state.baselines.values_mut().next().unwrap().content = None;
     fs::write(&state_path, grip::state::encode_v4(&state).unwrap()).unwrap();
     assert!(!fixture.command(&["status"]).status.success());
-}
-
-#[test]
-fn contradictory_accepted_evidence_blocks_rebinding() {
-    let fixture = prepare_bound_fixture();
-    let state_path = fixture.state_dir().join("state.json");
-    let mut state = grip::state::decode_v4(&fs::read(&state_path).unwrap()).unwrap();
-    let identity = state.baselines.keys().next().unwrap().clone();
-    state
-        .pending_retirements
-        .push(grip::state::PendingRetirementV4 { identity });
-    fs::write(&state_path, grip::state::encode_v4(&state).unwrap()).unwrap();
-    let value = status_json(&fixture, &fixture.project_root, &fixture.home_root);
-    assert_eq!(value["details"]["project"]["state"], "rebind_blocked");
-    assert!(
-        value["details"]["project"]["blockers"]
-            .as_array()
-            .unwrap()
-            .contains(&"contradictory_pending_retirement".into())
-    );
 }
 
 #[test]

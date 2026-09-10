@@ -5,4 +5,3 @@ pub use crate::mutation::execution;
 pub use crate::mutation::filesystem;
 pub use crate::mutation::model;
 pub use crate::mutation::plan;
-pub use crate::mutation::recovery;

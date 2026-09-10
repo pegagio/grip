@@ -4,7 +4,6 @@ pub mod execution;
 pub mod filesystem;
 pub mod model;
 pub mod plan;
-pub mod recovery;
 
 /// Test-only fault boundaries in the mutating pipeline.
 #[doc(hidden)]
@@ -12,8 +11,6 @@ pub mod recovery;
 pub enum FaultPhase {
     AfterMutationLock,
     BeforeActionRevalidation(usize),
-    BeforeRecovery(usize),
-    AfterRecovery(usize),
     BeforeStaging(usize),
     AfterStaging(usize),
     BeforePayloadPublication(usize),

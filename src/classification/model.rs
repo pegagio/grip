@@ -23,8 +23,6 @@ pub enum Classification {
     DeleteChangeConflict,
     ChangeDeleteConflict,
     ConvergedDeletion,
-    NewlyIgnoredPendingRetirement,
-    UntrackedPendingRetirement,
     UnsupportedManaged,
     UnsafeCollision,
 }
@@ -106,8 +104,6 @@ pub struct ClassificationCounts {
     pub delete_change_conflict: usize,
     pub change_delete_conflict: usize,
     pub converged_deletion: usize,
-    pub newly_ignored_pending_retirement: usize,
-    pub untracked_pending_retirement: usize,
     pub unsupported_managed: usize,
     pub unsafe_collision: usize,
 }
@@ -131,10 +127,6 @@ impl ClassificationCounts {
             Classification::DeleteChangeConflict => self.delete_change_conflict += 1,
             Classification::ChangeDeleteConflict => self.change_delete_conflict += 1,
             Classification::ConvergedDeletion => self.converged_deletion += 1,
-            Classification::NewlyIgnoredPendingRetirement => {
-                self.newly_ignored_pending_retirement += 1
-            }
-            Classification::UntrackedPendingRetirement => self.untracked_pending_retirement += 1,
             Classification::UnsupportedManaged => self.unsupported_managed += 1,
             Classification::UnsafeCollision => self.unsafe_collision += 1,
         }

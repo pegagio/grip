@@ -152,56 +152,13 @@ pub fn execute_with_hook(
                 expected_state.accepted.generation,
             );
         }
-        let recovery = if fault == Some(DeletionFault::Preservation) {
-            Err(GripError::Internal(
-                "injected deletion preservation failure".into(),
-            ))
-        } else {
-            if let Some(expected_complete) = action.expected_target_complete.as_ref() {
-                crate::mutation::recovery::preserve_complete_with_post(
-                    &receipt,
-                    index,
-                    &action.identity,
-                    &action.target,
-                    &action.expected_target,
-                    expected_complete,
-                    None,
-                )
-            } else {
-                crate::mutation::recovery::preserve_with_post(
-                    &receipt,
-                    index,
-                    &action.identity,
-                    &action.target,
-                    &action.expected_target,
-                    None,
-                )
-            }
-        };
-        let recovery = match recovery {
-            Ok(recovery) => recovery,
-            Err(error) => {
-                return fail(
-                    &mut receipt,
-                    &mut applied,
-                    index,
-                    "preservation",
-                    error,
-                    expected_state.accepted.generation,
-                );
-            }
-        };
-        action.milestones.recovery = "preserved".into();
-        action.milestones.recovery_ref = Some(recovery.relative_ref);
-        if let Err(error) =
-            receipt.checkpoint_action(index, "in_progress", checkpoint(action), None)
-        {
+        if fault == Some(DeletionFault::Preservation) {
             return fail(
                 &mut receipt,
                 &mut applied,
                 index,
-                "operation_checkpoint",
-                error,
+                "prepublication",
+                GripError::Internal("injected deletion prepublication failure".into()),
                 expected_state.accepted.generation,
             );
         }
@@ -609,8 +566,6 @@ fn checkpoint(
 ) -> crate::operation::model::ActionCheckpointEvidenceV2 {
     crate::operation::model::ActionCheckpointEvidenceV2 {
         revalidation: action.milestones.revalidation.clone(),
-        recovery: action.milestones.recovery.clone(),
-        recovery_ref: action.milestones.recovery_ref.clone(),
         staging: "not_attempted".into(),
         publication: action.milestones.removal.clone(),
         verification: action.milestones.verification.clone(),
