@@ -1,28 +1,26 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: unratified template -> 1.0.0
-Bump rationale: Initial ratification of project governance.
+Version change: 1.0.0 -> 2.0.0
+Bump rationale: Replace Grip-managed recovery as a governance obligation with a deployment-only safety boundary that leaves history and recovery to Git or another operator-selected system.
 
 Modified principles:
-  - None; the previous document was an unratified placeholder scaffold.
+  - III. Validate, Revalidate, and Recover -> III. Validate, Revalidate, and Verify
+  - I. Proportional Rigor for a Local Tool
+  - V. Fast, Observable, and Testable
+  - Product Boundaries and Engineering Constraints
+  - Governance
 
 Added principles:
-  - I. Proportional Rigor for a Local Tool
-  - II. Explicit Ownership and Least Surprise
-  - III. Validate, Revalidate, and Recover
-  - IV. Bounded Concurrency
-  - V. Fast, Observable, and Testable
+  - None
 
 Added sections:
-  - Product Boundaries and Engineering Constraints
-  - Spec Evolution and Merge-Bounded Persistence
-  - Concrete governance rules
+  - None
 
 Removed sections:
-  - Placeholder-only scaffold content
+  - None
 
-Follow-up TODOs: None
+Follow-up TODOs: Existing specifications that retain a Grip recovery namespace are historical evidence and must be superseded by a new feature before implementation changes their behavior.
 -->
 
 # Grip Constitution
@@ -31,7 +29,7 @@ Follow-up TODOs: None
 
 ### I. Proportional Rigor for a Local Tool
 
-Grip MUST use the simplest design that protects a local user's managed files and accepted state. Engineering rigor MUST be proportional to demonstrated local failure modes; complexity MUST NOT be justified by hypothetical distributed-system conditions outside the product boundary. Long-lived filesystem locks, background watchers, persistent inode identity, kernel integration, distributed coordination, and snapshot-isolation machinery MUST NOT be introduced unless a feature specification demonstrates why inspection, revalidation, atomic publication, and recovery cannot meet the requirement. Any proposal for such machinery MUST identify the concrete failure it prevents, the simpler alternatives considered, and its operational cost.
+Grip MUST use the simplest design that protects a local user's managed files and accepted state. Engineering rigor MUST be proportional to demonstrated local failure modes; complexity MUST NOT be justified by hypothetical distributed-system conditions outside the product boundary. Long-lived filesystem locks, background watchers, persistent inode identity, kernel integration, distributed coordination, and snapshot-isolation machinery MUST NOT be introduced unless a feature specification demonstrates why inspection, revalidation, and atomic publication cannot meet the requirement. Any proposal for such machinery MUST identify the concrete failure it prevents, the simpler alternatives considered, and its operational cost.
 
 **Rationale:** Grip is a local per-user file tool, not critical infrastructure. Trust comes from clear boundaries and recoverable behavior, not from simulating guarantees the local filesystem cannot provide or the product does not need.
 
@@ -41,11 +39,11 @@ Grip MUST mutate only entries owned by an explicit mapping and selected operatio
 
 **Rationale:** A selective overlay synchronizer is useful only when users can predict exactly what it owns and what it will leave alone.
 
-### III. Validate, Revalidate, and Recover
+### III. Validate, Revalidate, and Verify
 
-Every mutating operation MUST derive a deterministic plan from a complete validated inspection of its requested scope. Immediately before applying an action, Grip MUST revalidate the evidence whose change could make that action unsafe; detected drift MUST stop the affected operation before publication. Replacements MUST be staged and published atomically where the supported filesystem permits. Replaced or deleted entries MUST be retained in a recovery namespace, results MUST be verified, and a new baseline MUST be published only for a successfully completed accepted operation. Partial failure MUST be reported precisely and MUST NOT be represented as successful convergence.
+Every mutating operation MUST derive a deterministic plan from a complete validated inspection of its requested scope. Immediately before applying an action, Grip MUST revalidate the evidence whose change could make that action unsafe; detected drift MUST stop the affected operation before publication. Replacements MUST be staged and published atomically where the supported filesystem permits, results MUST be verified, and a new baseline MUST be published only for a successfully completed accepted operation. Ordinary operations MUST not overwrite divergent state. A forced directional operation MUST require an exact selected entry and explicitly choose the complete winning side, including absence. Partial failure MUST be reported precisely and MUST NOT be represented as successful convergence.
 
-**Rationale:** Grip does not need perfect filesystem snapshot isolation. It needs to detect when its evidence is stale, stop safely, and preserve enough state for recovery.
+**Rationale:** Grip does not need perfect filesystem snapshot isolation or a second history system. It needs to detect stale evidence, stop safely, and make deliberate destructive deployment actions unmistakable. Git or another operator-selected system owns history and recovery.
 
 ### IV. Bounded Concurrency
 
@@ -57,13 +55,13 @@ Grip MUST assume that users and other processes can change mapped paths between 
 
 Common read-only and planning workflows MUST remain responsive on representative local file trees. Implementations MUST avoid redundant traversal, hashing, metadata reads, and serialization within an operation. Performance work MUST be driven by measurements of representative workloads; caches, parallelism, and additional indexing MUST NOT be added without evidence that their benefit outweighs invalidation and correctness complexity. Human output, machine-readable output, and diagnostic logs MUST remain distinct and deterministic where automation depends on them.
 
-Every behavior that can change payloads, registry data, or baselines MUST have automated tests using isolated temporary roots. Tests MUST cover ownership boundaries, dry-run non-mutation, classification, conflicts, concurrent drift, partial failure, recovery, unsupported nodes, and baseline publication. Tests MUST NOT inspect or mutate the developer's real files or Grip home.
+Every behavior that can change payloads, registry data, or baselines MUST have automated tests using isolated temporary roots. Tests MUST cover ownership boundaries, dry-run non-mutation, classification, conflicts, concurrent drift, partial failure, forced direction and absence, unsupported nodes, and baseline publication. Tests MUST NOT inspect or mutate the developer's real files or Grip home.
 
 **Rationale:** A responsive Grip earns daily use without trading away operator trust. Measurement and filesystem integration tests keep performance and safety claims grounded in observable behavior.
 
 ## Product Boundaries and Engineering Constraints
 
-Grip is a local, per-user, stateful, selective, bidirectional overlay synchronizer. The initial product MUST operate only on paths visible to the invoking user and MUST preserve the distinction between user-authored mapping intent and machine-owned synchronization state. It MUST NOT require a daemon, remote transport, multi-user coordination, a privileged service, automatic conflict merging, filesystem snapshots, or automatic ownership of destination-only content.
+Grip is a local, per-user, stateful, selective, bidirectional overlay synchronizer. The initial product MUST operate only on paths visible to the invoking user and MUST preserve the distinction between user-authored mapping intent and machine-owned synchronization state. It MUST NOT require a daemon, remote transport, multi-user coordination, a privileged service, automatic conflict merging, filesystem snapshots, automatic ownership of destination-only content, or a user-facing history or recovery interface.
 
 The initial supported payload boundary MUST be explicit and allowlist-based. Unsupported node types and metadata transitions MUST be reported precisely and MUST NOT be followed, opened, copied, or silently discarded. Platform contracts MAY begin with macOS and Unix behavior rather than claiming universal cross-platform fidelity.
 
@@ -88,6 +86,6 @@ This constitution governs project specifications, plans, tasks, implementation, 
 
 Amendments require an explicit user-approved change to this file, a Sync Impact Report, and a semantic version increment. A MAJOR increment removes or incompatibly redefines a principle or governance obligation; a MINOR increment adds a principle or materially expands governance; a PATCH increment clarifies wording without changing obligations. The original ratification date MUST remain stable, and Last Amended MUST record the date of the latest semantic change.
 
-Every feature specification and plan MUST identify applicable constitutional principles and explain any justified exception. Reviews MUST verify proportional complexity, managed-path boundaries, mutation safety, concurrency behavior, recovery, performance evidence where relevant, isolated filesystem tests, and merge-bounded artifact consistency. Exceptions MUST be explicit, narrowly scoped, and approved before implementation or merge.
+Every feature specification and plan MUST identify applicable constitutional principles and explain any justified exception. Reviews MUST verify proportional complexity, managed-path boundaries, mutation safety, concurrency behavior, explicit forced-operation behavior, performance evidence where relevant, isolated filesystem tests, and merge-bounded artifact consistency. Exceptions MUST be explicit, narrowly scoped, and approved before implementation or merge.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-03
+**Version**: 2.0.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-09
