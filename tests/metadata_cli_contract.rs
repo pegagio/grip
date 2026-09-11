@@ -174,7 +174,7 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
 }
 
 #[test]
-fn excluded_and_unknown_xattrs_have_safe_human_json_parity_and_unknown_blocks_preview() {
+fn excluded_xattrs_are_quiet_in_human_status_and_unknown_xattrs_remain_blocking() {
     let fixture = accepted_fixture();
     support::set_fixture_xattr(
         &fixture.source,
@@ -200,9 +200,10 @@ fn excluded_and_unknown_xattrs_have_safe_human_json_parity_and_unknown_blocks_pr
     assert!(!json_text.contains("do-not-print"));
     let human = support::project_command(fixture.root.path(), &fixture.metadata_dir, &["status"]);
     let human_text = String::from_utf8_lossy(&human.stdout);
-    assert!(human_text.contains("excluded_xattr"));
-    assert!(human_text.contains("unknown_xattr"));
-    assert!(human_text.contains("corrective_choice="));
+    assert!(!human_text.contains("excluded_xattr"));
+    assert!(!human_text.contains("unknown_xattr"));
+    assert!(!human_text.contains("corrective_choice="));
+    assert!(human_text.contains("Blocked:"));
     assert!(human_text.contains("remove the unknown attribute explicitly"));
     assert!(!human_text.contains("do-not-print"));
     let preview = support::project_command(
@@ -329,9 +330,11 @@ fn unsupported_link_output_never_reads_or_discloses_its_referent() {
     let human = support::project_command(root.path(), &metadata_dir, &["status"]);
     let json_text = String::from_utf8(json.stdout).unwrap();
     let human_text = String::from_utf8(human.stdout).unwrap();
+    assert!(json_text.contains("unsafe-link"));
+    assert!(json_text.contains("symlink"));
+    assert!(human_text.contains("unsafe-link"));
+    assert!(human_text.contains("Blocked:"));
     for output in [&json_text, &human_text] {
-        assert!(output.contains("unsafe-link"));
-        assert!(output.contains("symlink"));
         assert!(!output.contains("payload-secret-must-not-be-read"));
     }
     assert_eq!(

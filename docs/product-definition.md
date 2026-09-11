@@ -50,7 +50,7 @@ Tree membership is defined by source-side discovery and `.gripignore`. Ignored e
 
 ## Inspection and synchronization
 
-`grip status` reports the current classification without changing state. `status -e` returns a nonzero attention exit status when an entry needs action. `grip diff` gives a non-mutating view of observed differences. `-d` interprets a path selector in destination space; without it, selectors are source-space paths.
+`grip status` reports the current classification without changing state. Its default human output is a concise summary followed only by nonempty `Conflicts`, `Changes to push`, `Changes to pull`, and `Needs baseline` sections. Rows use `SOURCE <-> DESTINATION`, `SOURCE -> DESTINATION`, `SOURCE <- DESTINATION`, and `SOURCE >-< DESTINATION` respectively; `>-<` indicates non-directional baseline or reconciliation work, not a copy direction. Detailed comparison evidence remains available through `grip diff` and `-o json`. `status -e` returns a nonzero attention exit status when an entry needs action. `-d` interprets a path selector in destination space; without it, selectors are source-space paths.
 
 Ordinary synchronization is conservative:
 

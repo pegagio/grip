@@ -1,18 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.3.2 -> 1.4.0
-Bump rationale: Record the approved and verified Feature 014 destination-path expansion, reconcile the prior Feature 012 version-report mismatch, and supersede the relative-destination restriction in C-14 and Q-14.
+Version change: 1.5.0 -> 1.5.1
+Bump rationale: Record the successful source-preserving debrief and authorized verification of Feature 015.
 
 Changes this revision:
-  - Added Feature 014 as verified
-  - Expanded C-14 and Q-14 to admit project-relative destination declarations
-  - Reconciled the prior report's stale 1.3.3 target with the actual 1.3.2 roadmap version
+  - Transitioned Feature 015 from in-progress to verified
 
-Specs affected: 014
+Specs affected: 015
 Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-11. The completed Feature 014 specification, plan, task record, convergence result, isolated regression coverage, and `mise run validate` evidence establish the verification boundary.
+Notes: Direct active-user authorization on 2026-09-11. The debrief found no outcome miss, scope creep, constraint violation, or stale-roadmap finding, and all verification recommendation gates passed.
 -->
 
 # Grip — Spec Roadmap
@@ -212,6 +210,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-11; `docs/product-definition.md` — Product model and mappings; `README.md` — Configure portable mappings.
 - **Notes:** This feature supersedes Feature 012 only where Feature 012 rejected relative destinations. Relative declarations are based on the selected project, never the process current directory, and may explicitly address an adjacent path through `..`; existing endpoint, ownership, topology, state, and publication protections remain in force. Verification evidence: `specs/014-relative-destination-paths/spec.md`, `plan.md`, `tasks.md`, and completed isolated validation through `mise run validate`.
 
+### 015 — Simplify Status Output  [status: verified]
+
+- **Spec dir:** `specs/015-simplify-status-output`
+- **Description:** Replace the verbose default human `grip status` detail with concise, path-centered grouped output.
+- **Outcome:** Operators can see a selected scope's summary and its nonempty `Conflicts`, `Changes to push`, `Changes to pull`, and `Needs baseline` groups without parsing internal comparison evidence; JSON, `diff`, selection, and exit behavior remain unchanged.
+- **Scope (in):** Default human status summary and deterministic grouping; direction symbols for source-to-destination, destination-to-source, conflicts, and non-directional baseline attention; plain-language safety blockers; focused renderer contracts; user documentation; and regression coverage.
+- **Scope (out):** Classification, mapping selection, synchronization, mutation, conflict resolution, metadata policy, baseline semantics, JSON output, `diff` output, exit behavior, commands, storage, and migrations.
+- **Depends on:** 004
+- **Governed by:** C-03, C-04, C-08, C-09, C-10, C-11
+- **Addresses:** `docs/product-definition.md` — Synchronization Model, Content and Metadata, Command-Line Experience; `README.md` — Inspect changes and baseline status.
+- **Notes:** `->`, `<-`, `<->`, and `>-<` are presentation-only signals and do not select a conflict winner or an unsafe payload direction. Informational no-action diagnostics are omitted only from default human output; safety blockers remain visible. Direct active-user decision and completed feature artifacts are the governing provenance. Verification evidence: `specs/015-simplify-status-output/roadmap-reviews/debrief-20260911T212103Z.md` (`PROCEED`, no findings).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -248,4 +258,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.4.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-11
+**Version**: 1.5.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-11
