@@ -56,6 +56,25 @@ Selectors use project-relative source space by default. `--destination` selects 
 
 Grip compares the current source, current destination, and last accepted baseline. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until `push --force` or `pull --force` selects one exact entry and names the winning direction. Destination-only content outside source-defined managed membership remains unmanaged.
 
+Default `grip status` is a concise, path-centered summary. It lists only entries needing attention: `Changes to push` use `->`, `Changes to pull` use `<-`, blockers appear under `Conflicts` with `<->`, and non-directional baseline or reconciliation work uses `>-<`. Clean entries appear only in the summary; use `grip diff` or `-o json` for detailed evidence.
+
+```text
+Status: 2 entries checked; 2 current; no action needed.
+```
+
+```text
+Status: 4 entries checked; 1 current; 1 to push; 1 conflict; 1 needs baseline.
+
+Conflicts:
+  README.md <-> ~/workspace/README.md
+
+Changes to push:
+  app/main.py -> ~/workspace/app/main.py
+
+Needs baseline:
+  CHANGELOG.md >-< ~/workspace/CHANGELOG.md
+```
+
 Read-only commands and dry runs do not create `.grip/state`, acquire writer locks, publish operation evidence, or change payloads. An actual writer lazily creates owner-only project state, takes a bounded project-local mutation lock, repeats inspection and revalidation, stages and verifies each replacement, and publishes State V4 only after final verification.
 
 `remove` changes only Grip's declaration and baseline; it never changes either endpoint. Normal synchronization blocks one-sided absence. An exact forced `push` or `pull` is the explicit authority to choose a winner, including an absent winner. Use Git for history and recovery.

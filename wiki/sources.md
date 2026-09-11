@@ -5,10 +5,10 @@ Sources are immutable inputs — the wiki never edits them.
 
 | ID | Source | Type | First ingested | Last ingested | Pages touched |
 |----|--------|------|----------------|---------------|---------------|
-| S001 | `docs/product-definition.md` | file | 2026-09-03 | 2026-09-11 | `baseline-classification-and-status.md`, `configuration-and-state.md`, `deletion-retirement-and-recovery.md`, `filesystem-support-boundaries.md`, `grip-product-model.md`, `implementation-and-delivery-direction.md`, `mappings-and-managed-membership.md`, `safety-and-recovery-model.md`, `synchronization-and-conflicts.md` |
+| S001 | `docs/product-definition.md` | file | 2026-09-03 | 2026-09-11 | `baseline-classification-and-status.md` |
 | S002 | `.specify/memory/constitution.md` | file | 2026-09-03 | 2026-09-03 | `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md`, `safety-and-recovery-model.md`, `implementation-and-delivery-direction.md` |
-| S003 | `.specify/memory/roadmap.md` | file | 2026-09-03 | 2026-09-11 | `implementation-and-delivery-direction.md`, `initial-delivery-roadmap.md`, `roadmap-open-questions.md` |
-| S004 | `README.md` | file | 2026-09-03 | 2026-09-11 | `command-line-and-path-selection.md`, `filesystem-support-boundaries.md`, `implementation-and-delivery-direction.md`, `local-development-workflows.md` |
+| S003 | `.specify/memory/roadmap.md` | file | 2026-09-03 | 2026-09-11 | `implementation-and-delivery-direction.md`, `initial-delivery-roadmap.md` |
+| S004 | `README.md` | file | 2026-09-03 | 2026-09-11 | `baseline-classification-and-status.md` |
 | S005 | `specs/002-mapping-registry-ownership` | directory | 2026-09-04 | 2026-09-04 | `mappings-and-managed-membership.md`, `safety-and-recovery-model.md`, `filesystem-support-boundaries.md`, `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md`, `mapping-registry-publication.md`, `configuration-and-state.md` |
 | S006 | `specs/003-source-discovery-gripignore` | directory | 2026-09-05 | 2026-09-05 | `command-line-and-path-selection.md`, `mappings-and-managed-membership.md`, `filesystem-support-boundaries.md`, `implementation-and-delivery-direction.md`, `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md` |
 | S007 | `specs/004-baselines-classification-status` | directory | 2026-09-06 | 2026-09-06 | `baseline-classification-and-status.md`, `synchronization-and-conflicts.md`, `configuration-and-state.md`, `command-line-and-path-selection.md`, `safety-and-recovery-model.md` |
@@ -22,3 +22,4 @@ Sources are immutable inputs — the wiki never edits them.
 | S015 | `specs/012-destination-path-forms` | directory | 2026-09-11 | 2026-09-11 | `destination-path-forms.md`, `command-line-and-path-selection.md`, `mappings-and-managed-membership.md`, `configuration-and-state.md` |
 | S016 | `specs/013-source-path-input` | directory | 2026-09-11 | 2026-09-11 | `command-line-and-path-selection.md`, `mapping-registry-publication.md` |
 | S017 | `specs/014-relative-destination-paths` | directory | 2026-09-11 | 2026-09-11 | `command-line-and-path-selection.md`, `destination-path-forms.md`, `mappings-and-managed-membership.md`, `configuration-and-state.md`, `mapping-registry-publication.md` |
+| S018 | `specs/015-simplify-status-output` | directory | 2026-09-11 | 2026-09-11 | `baseline-classification-and-status.md` |

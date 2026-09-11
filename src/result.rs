@@ -843,6 +843,9 @@ fn operation_outcome<T: Serialize, B: Serialize>(
 pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write) -> io::Result<()> {
     match mode {
         OutputMode::Human => {
+            if outcome.details.get("operation").and_then(Value::as_str) == Some("status") {
+                return render_human_status(&outcome.details, writer);
+            }
             writeln!(writer, "{}", outcome.message)?;
             render_human_metadata_details(&outcome.details, writer)?;
             if let Some(conflicts) = outcome.details.get("conflicts").and_then(Value::as_array) {
@@ -1185,6 +1188,193 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
     }
 }
 
+fn render_human_status(details: &Map<String, Value>, writer: &mut dyn Write) -> io::Result<()> {
+    let records = details
+        .get("records")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if records.is_empty() {
+        return writeln!(writer, "Status: no managed entries found.");
+    }
+
+    let mut current = 0;
+    let mut conflicts = Vec::new();
+    let mut push = Vec::new();
+    let mut pull = Vec::new();
+    let mut needs_baseline = Vec::new();
+    for record in records {
+        if !record
+            .get("attention")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            current += 1;
+        } else if record
+            .get("blocking")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            conflicts.push(record);
+        } else {
+            match record.get("prospective_direction").and_then(Value::as_str) {
+                Some("source_to_destination") => push.push(record),
+                Some("destination_to_source") => pull.push(record),
+                _ => needs_baseline.push(record),
+            }
+        }
+    }
+
+    write!(
+        writer,
+        "Status: {} {} checked; {current} current",
+        records.len(),
+        singular_or_plural(records.len(), "entry", "entries")
+    )?;
+    if conflicts.is_empty() && push.is_empty() && pull.is_empty() && needs_baseline.is_empty() {
+        writeln!(writer, "; no action needed.")?;
+        return Ok(());
+    }
+    if !push.is_empty() {
+        write!(writer, "; {} to push", push.len())?;
+    }
+    if !pull.is_empty() {
+        write!(writer, "; {} to pull", pull.len())?;
+    }
+    if !conflicts.is_empty() {
+        write!(
+            writer,
+            "; {} {}",
+            conflicts.len(),
+            singular_or_plural(conflicts.len(), "conflict", "conflicts")
+        )?;
+    }
+    if !needs_baseline.is_empty() {
+        write!(writer, "; {} needs baseline", needs_baseline.len())?;
+    }
+    writeln!(writer, ".")?;
+
+    render_human_status_section("Conflicts", "<->", &conflicts, writer)?;
+    render_human_status_section("Changes to push", "->", &push, writer)?;
+    render_human_status_section("Changes to pull", "<-", &pull, writer)?;
+    render_human_status_section("Needs baseline", ">-<", &needs_baseline, writer)
+}
+
+fn render_human_status_section(
+    title: &str,
+    symbol: &str,
+    records: &[&Value],
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    writeln!(writer, "\n{title}:")?;
+    for record in records {
+        writeln!(
+            writer,
+            "  {} {symbol} {}",
+            classification_path(record, "source_path"),
+            classification_path(record, "destination_path")
+        )?;
+        render_human_status_blocker(record, writer)?;
+    }
+    Ok(())
+}
+
+fn render_human_status_blocker(record: &Value, writer: &mut dyn Write) -> io::Result<()> {
+    let Some(findings) = record
+        .get("compatibility_findings")
+        .and_then(Value::as_array)
+    else {
+        return if record
+            .get("blocking")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            writeln!(
+                writer,
+                "    Blocked: {}",
+                classification_blocker_message(record)
+            )
+        } else {
+            Ok(())
+        };
+    };
+    let mut shown = false;
+    for finding in findings.iter().filter(|finding| {
+        finding
+            .get("blocking")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }) {
+        let message = finding
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| classification_blocker_message(record));
+        let corrective_choice = finding
+            .get("corrective_choice")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        write!(writer, "    Blocked: {message}")?;
+        if let Some(corrective_choice) = corrective_choice {
+            write!(writer, " {corrective_choice}")?;
+        }
+        writeln!(writer)?;
+        shown = true;
+    }
+    if !shown
+        && record
+            .get("blocking")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        writeln!(
+            writer,
+            "    Blocked: {}",
+            classification_blocker_message(record)
+        )?;
+    }
+    Ok(())
+}
+
+fn classification_blocker_message(record: &Value) -> &'static str {
+    match record.get("classification").and_then(Value::as_str) {
+        Some("metadata_migration_conflict") => {
+            "Grip cannot safely proceed because stored metadata migration evidence conflicts."
+        }
+        Some("initial_collision") => {
+            "Grip cannot safely proceed because the endpoints differ without an accepted baseline."
+        }
+        Some("divergent_conflict") => "Grip cannot safely proceed because both endpoints changed.",
+        Some(
+            "source_side_deletion"
+            | "destination_side_deletion"
+            | "delete_change_conflict"
+            | "change_delete_conflict",
+        ) => "Grip cannot safely proceed because one endpoint is missing while the other changed.",
+        Some("unsupported_managed") => {
+            "Grip cannot safely proceed because this managed entry uses an unsupported filesystem state."
+        }
+        Some("unsafe_collision") => {
+            "Grip cannot safely proceed because the destination has an unsafe collision."
+        }
+        _ => "Grip cannot safely proceed with this managed entry.",
+    }
+}
+
+fn classification_path<'a>(record: &'a Value, field: &str) -> &'a str {
+    record
+        .get(field)
+        .and_then(|path| path.get("display"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+}
+
+fn singular_or_plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
+}
+
 fn render_human_metadata_details(
     details: &Map<String, Value>,
     writer: &mut dyn Write,
@@ -1520,6 +1710,39 @@ mod tests {
         CompatibilityFinding, CompatibilityReason, EndpointRole, Evidence, MetadataDimension,
         XattrFingerprint,
     };
+
+    #[test]
+    fn status_renderer_partitions_every_human_status_group() {
+        let record =
+            |source: &str, destination: &str, attention: bool, blocking: bool, direction: &str| {
+                serde_json::json!({
+                    "source_path": {"display": source},
+                    "destination_path": {"display": destination},
+                    "attention": attention,
+                    "blocking": blocking,
+                    "prospective_direction": direction,
+                })
+            };
+        let details = serde_json::json!({"records": [
+            record("current", "~/current", false, false, "none"),
+            record("push", "~/push", true, false, "source_to_destination"),
+            record("pull", "~/pull", true, false, "destination_to_source"),
+            record("conflict", "~/conflict", true, true, "none"),
+            record("deleted", "~/deleted", true, false, "none"),
+            record("migration", "~/migration", true, false, "none"),
+        ]})
+        .as_object()
+        .unwrap()
+        .clone();
+        let mut output = Vec::new();
+
+        render_human_status(&details, &mut output).unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "Status: 6 entries checked; 1 current; 1 to push; 1 to pull; 1 conflict; 2 needs baseline.\n\nConflicts:\n  conflict <-> ~/conflict\n    Blocked: Grip cannot safely proceed with this managed entry.\n\nChanges to push:\n  push -> ~/push\n\nChanges to pull:\n  pull <- ~/pull\n\nNeeds baseline:\n  deleted >-< ~/deleted\n  migration >-< ~/migration\n"
+        );
+    }
 
     #[test]
     fn project_result_exposes_safe_identity_and_each_rebinding_outcome() {
