@@ -50,7 +50,7 @@ Tree membership is defined by source-side discovery and `.gripignore`. Ignored e
 
 ## Inspection and synchronization
 
-`grip status` reports the current classification without changing state. Its default human output is a concise summary followed only by nonempty `Conflicts`, `Changes to push`, `Changes to pull`, and `Needs baseline` sections. Rows use `SOURCE <-> DESTINATION`, `SOURCE -> DESTINATION`, `SOURCE <- DESTINATION`, and `SOURCE >-< DESTINATION` respectively; `>-<` indicates non-directional baseline or reconciliation work, not a copy direction. Detailed comparison evidence remains available through `grip diff` and `-o json`. `status -e` returns a nonzero attention exit status when an entry needs action. `-d` interprets a path selector in destination space; without it, selectors are source-space paths.
+`grip status` reports the current classification without changing state. Its default human output is a concise summary followed only by nonempty `Conflicts`, `Changes to push`, `Changes to pull`, and `Needs baseline` sections. Rows use `SOURCE <-> DESTINATION`, `SOURCE -> DESTINATION`, `SOURCE <- DESTINATION`, and `SOURCE >-< DESTINATION` respectively; `>-<` indicates non-directional baseline or reconciliation work, not a copy direction. In default human status, the source side is relative to the process current working directory while the destination side retains its endpoint representation. An ordinary displayed source path can be supplied to `grip push` from that same directory; parent components are allowed when the source is elsewhere in the selected project. Git-style quoting makes unusual source names unambiguous for humans but is not a shell-token guarantee. Detailed comparison evidence remains available through `grip diff` and `-o json`. `status -e` returns a nonzero attention exit status when an entry needs action. `-d` interprets a path selector in destination space; without it, selectors are source-space paths.
 
 Ordinary synchronization is conservative:
 
@@ -59,6 +59,8 @@ Ordinary synchronization is conservative:
 - `sync` combines only unambiguous changes in both directions and blocks the selected scope if a conflict remains.
 
 All three accept `-n` to render the complete plan without mutation. Ordinary operations block divergent entries, unbaselined collisions, and one-sided absence.
+
+Source selectors for mapping commands, `status`, `diff`, `pull`, and `sync` retain their project-relative interpretation. A relative source selector for `push`, including dry-run and forced forms, is resolved from the process current working directory and must remain inside the selected project after traversal and symlink checks. Absolute source selectors remain invalid. Destination selectors retain destination-space interpretation.
 
 `push -f PATH` and `pull -f PATH` deliberately select a winner for exactly one managed entry. `push -f` makes the source authoritative; `pull -f` makes the destination authoritative. They can propagate intentional absence, including removal of the losing endpoint. Force is never mapping-wide, tree-wide, ambiguous, or available through `sync`.
 
