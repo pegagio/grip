@@ -115,6 +115,42 @@ fn copied_state_is_read_only_eligible_until_an_authorized_publication_rebinds_it
 }
 
 #[test]
+fn copied_state_with_a_relative_destination_is_rebind_eligible() {
+    let fixture = ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let destination = fixture.project_root.join("destination");
+    fs::write(&source, "accepted").unwrap();
+    fs::write(&destination, "accepted").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    assert!(
+        fixture
+            .command(&["add", "source", "./destination"])
+            .status
+            .success()
+    );
+    let copied_root = fixture.copy_project("relative-destination-project");
+
+    let output = fixture
+        .command_builder(&copied_root)
+        .args(["--output=json", "status"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["details"]["project"]["state"], "rebind_eligible");
+    assert!(
+        fs::read_to_string(copied_root.join(".grip/config.toml"))
+            .unwrap()
+            .contains("destination = \"./destination\"")
+    );
+}
+
+#[test]
 fn copied_state_with_payload_drift_blocks_mutation() {
     let fixture = prepare_bound_fixture();
     let copied_root = fixture.copy_project("drifted-project");

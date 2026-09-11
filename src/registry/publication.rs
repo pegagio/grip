@@ -31,6 +31,7 @@ pub struct RegistrySnapshot {
     identity: FileIdentity,
     evidence: Vec<PathEvidence>,
     portable_descriptor: Option<ProjectDescriptorV2>,
+    mapping_details: Vec<crate::result::MappingResultDetails>,
 }
 
 impl RegistrySnapshot {
@@ -46,17 +47,7 @@ impl RegistrySnapshot {
 
     /// Return the accepted portable declarations paired with their resolved runtime endpoints.
     pub fn mapping_details(&self) -> Result<Vec<crate::result::MappingResultDetails>, GripError> {
-        let descriptor = self.portable_descriptor.as_ref().ok_or_else(|| {
-            GripError::UnsupportedSchema("project descriptors must use schema version 2".into())
-        })?;
-        Ok(descriptor
-            .mappings()
-            .iter()
-            .zip(self.registry.mappings())
-            .map(|(declared, resolved)| {
-                crate::result::MappingResultDetails::from_parts(declared, resolved)
-            })
-            .collect())
+        Ok(self.mapping_details.clone())
     }
 
     /// Return missing destination parents captured during validated registry loading.
@@ -292,6 +283,10 @@ pub fn load(home: &ProjectPaths, writable: bool) -> Result<RegistrySnapshot, Gri
     let project_root = project_root(home)?;
     let user_home = destination_home(home)?;
     let resolved = descriptor.resolve(&project_root, &user_home, "registry_validate")?;
+    let mapping_details = resolved
+        .iter()
+        .map(crate::result::MappingResultDetails::from)
+        .collect();
     let evidence: Vec<PathEvidence> = resolved
         .iter()
         .flat_map(|mapping| {
@@ -344,6 +339,7 @@ pub fn load(home: &ProjectPaths, writable: bool) -> Result<RegistrySnapshot, Gri
         identity: accepted.identity,
         evidence,
         portable_descriptor: Some(descriptor),
+        mapping_details,
     })
 }
 
@@ -775,6 +771,23 @@ pub fn publish(
     candidate: &ResolvedRegistry,
 ) -> Result<(), GripError> {
     publish_with_fault(home, expected, candidate, None)
+}
+
+/// Publish a complete resolved candidate while retaining its portable declarations verbatim.
+pub fn publish_with_descriptor(
+    home: &ProjectPaths,
+    expected: &RegistrySnapshot,
+    candidate: &ResolvedRegistry,
+    candidate_descriptor: &ProjectDescriptorV2,
+) -> Result<(), GripError> {
+    publish_candidate_with_bytes(
+        home,
+        expected,
+        candidate,
+        &[],
+        encode_descriptor(candidate_descriptor)?,
+        None,
+    )
 }
 
 /// Restore exact, validated Descriptor V2 bytes while the caller holds the mutation lock.

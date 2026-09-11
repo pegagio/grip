@@ -1,11 +1,15 @@
 ---
 title: Mapping registry publication
 type: component
-sources: [S005, S013]
-updated: 2026-09-09
+sources: [S005, S013, S016, S017]
+updated: 2026-09-11
 ---
 
 # Mapping registry publication
+
+## Historical Registry V1
+
+The following Registry V1 account is retained as historical implementation evidence. It no longer describes the current publication contract. (S005) (S013)
 
 Feature 002 stores accepted mapping intent in `<GRIP_HOME>/config.toml` as schema version 1 with deterministically ordered `kind`, `source`, and `destination` tuples. Mapping commands never treat staging files or recovery generations as accepted configuration and do not create synchronization state. (S005)
 
@@ -19,11 +23,11 @@ Recovery generations preserve prior registry documents, not payload backups or s
 
 ## Descriptor V2 publication
 
-Feature 010 relocates accepted mapping intent to `<project>/.grip/config.toml` and replaces absolute Registry V1 tuples with deterministic portable Descriptor V2 declarations. Sources are normalized project-relative paths; destinations are literal `~`-relative paths. The selected project root and canonical invoking-user home resolve them only at runtime. (S013)
+Feature 010 relocates accepted mapping intent to `<project>/.grip/config.toml` and replaces absolute Registry V1 tuples with deterministic portable Descriptor V2 declarations. Sources are normalized project-relative paths; destinations retain their portable declaration form. The selected project root and canonical invoking-user home resolve them only at runtime. (S013)
+
+Feature 013 accepts ordinary relative source input while persisting only its normalized project-relative declaration. Feature 014 preserves raw destination declarations, including project-relative spellings, and resolves them from the selected project root. (S016) (S017)
 
 Writers retain descriptor bytes and node evidence, acquire project-local locks beneath `.grip/state/locks/`, revalidate the selected project and resolved topology, preserve prior descriptor bytes beneath project-local recovery, and atomically publish a verified candidate. `.grip` is structurally excluded from mapping ownership. (S013)
-
-> ⚠ conflict: S005 records the historical `<GRIP_HOME>` Registry V1 layout; S013 replaces it as the current publication contract.
 
 ## Related pages
 

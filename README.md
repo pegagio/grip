@@ -25,19 +25,20 @@ Project-dependent commands accept `-p PATH` or `--project PATH`, or discover a p
 
 ## Configure portable mappings
 
-Mapping sources are normalized paths relative to the project root. Destinations may be an absolute path, literal `~`, or any `~/...` spelling; Grip preserves the accepted declaration and resolves it only for operations:
+Mapping sources are paths relative to the project root. Grip accepts ordinary relative spellings such as `./editor/` and normalizes them before storing the declaration. Destinations may be an absolute path, literal `~`, any `~/...` spelling, or a path relative to the selected project root. Grip preserves the exact accepted destination declaration and resolves it only for operations:
 
 ```sh
 grip add shell/gitconfig "~/.gitconfig"
 grip add editor "~/.config/editor"
 grip add README.md ~/Working/grip-dst/README.md
 grip add README.md /absolute/grip-dst/README.md
+grip add ./app/ ../grip-dst/app/
 grip list
 grip list shell/gitconfig
 grip remove shell/gitconfig
 ```
 
-Grip stores only the declarations. Home-relative forms are portable; absolute destinations intentionally bind a declaration to a specific filesystem location. Human and JSON results show declared values separately from safely rendered resolved endpoints. Source traversal and non-normalized source paths, non-absolute/non-home destination forms, environment expansion, other-user home syntax, symbolic-link endpoints, unsafe ancestry, and overlapping ownership are rejected.
+Grip stores only the declarations. Home-relative and project-relative forms are portable; an absolute destination intentionally binds a declaration to a specific filesystem location. A project-relative destination is resolved from the selected project root, never the command's current directory, and may explicitly use `..` to address an adjacent location. Human and JSON results show declared values separately from safely rendered resolved endpoints. Source paths that resolve outside the project or into `.grip`, empty destination forms, environment expansion, other-user home syntax, symbolic-link endpoints, unsafe ancestry, and overlapping ownership are rejected.
 
 For a tree mapping, Grip discovers ordinary non-ignored source entries on every inspection. Source-side `.gripignore` files use Gitignore-compatible rules. The project metadata directory `.grip` is structurally reserved and is never mapping payload, even if ignore rules attempt to re-include it.
 

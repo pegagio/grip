@@ -1,17 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.3.2 -> 1.3.3
-Bump rationale: Record verified completion of Feature 012 with attributable roadmap-review evidence.
+Version change: 1.3.2 -> 1.4.0
+Bump rationale: Record the approved and verified Feature 014 destination-path expansion, reconcile the prior Feature 012 version-report mismatch, and supersede the relative-destination restriction in C-14 and Q-14.
 
 Changes this revision:
-  - Transitioned Feature 012 from in-progress to verified
-  - Recorded Feature 012's clean debrief as verification evidence
+  - Added Feature 014 as verified
+  - Expanded C-14 and Q-14 to admit project-relative destination declarations
+  - Reconciled the prior report's stale 1.3.3 target with the actual 1.3.2 roadmap version
 
-Specs affected: 012
+Specs affected: 014
 Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-10. The verification boundary is `HEAD` to `WORKTREE`; the debrief found no outcome miss, scope creep, constraint violation, or roadmap staleness.
+Notes: Direct active-user authorization on 2026-09-11. The completed Feature 014 specification, plan, task record, convergence result, isolated regression coverage, and `mise run validate` evidence establish the verification boundary.
 -->
 
 # Grip — Spec Roadmap
@@ -49,7 +50,7 @@ These constraints apply across the ledger. Each is grounded in the active user-a
 - **C-11 — Separated interfaces:** CLI parsing and presentation remain separate from Grip-owned domain behavior. Human output, machine-readable output, and diagnostics are distinct interfaces, with deterministic forms where automation depends on them.
 - **C-12 — Project-scoped operation:** Every project-dependent command operates against exactly one Grip project. `grip init [PATH]` initializes `PATH`, or the current directory when omitted. Other commands accept a global `--project PATH` selector or discover the project by walking from the current directory toward the filesystem root. Failure to find exactly one valid project fails without mutation.
 - **C-13 — Portable intent, local state:** The Grip project contains a version-controllable mapping document. Mapping sources are relative to the project root. Its original restriction of destinations to a portable, user-relative representation is superseded by C-14. Baselines, locks, and resolved machine paths remain machine-local and outside committed project content; they support synchronization safety rather than user-facing history or recovery.
-- **C-14 — Explicit destination forms:** A destination is either an absolute path, `~`, or a path beginning with `~/`; Grip accepts any `~/` spelling without requiring lexical normalization, preserves the accepted spelling in mapping intent, and resolves it only for validation and use. A relative destination path is invalid. Source paths remain relative to the Grip project root and are persisted relative to that root.
+- **C-14 — Explicit destination forms:** A destination may be an absolute path, `~`, a path beginning with `~/`, or a path relative to the selected Grip project root. Grip preserves every accepted spelling in mapping intent and resolves it only for validation and use; home-relative forms use the selected home and project-relative forms use the selected project root. Source paths remain relative to the Grip project root and are persisted relative to that root.
 
 ## Planned Specs
 
@@ -199,6 +200,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-10, including the reported `destination must be ~ or a normalized ~/ path` diagnostic.
 - **Notes:** This is an intentional pre-release interface correction. Feature 010's portable user-relative-destination restriction and Feature 011's resulting destination validation are superseded only where they conflict with C-14; both verified features remain historical evidence. Accepted destination spelling is preserved in mapping intent and resolved only for validation and use. Verification evidence: `specs/012-destination-path-forms/roadmap-reviews/debrief-20260911T045048Z.md` (`PROCEED`, no findings).
 
+### 014 — Relative Destination Paths  [status: verified]
+
+- **Spec dir:** `specs/014-relative-destination-paths`
+- **Description:** Extend destination declarations to accept paths relative to the selected Grip project while retaining the exact declaration spelling.
+- **Outcome:** A user can run `grip add ./app/ ../grip-dst/app/`; Grip stores `../grip-dst/app/` unchanged and resolves it from the selected project root for validation, selection, state use, and synchronization.
+- **Scope (in):** Project-relative destination parsing and lexical operational resolution; exact declaration persistence; destination-space selection; descriptor reload; state binding and rebinding; declaration-preserving removal publication; ownership and topology validation; user documentation; isolated parser, integration, portability, and regression coverage.
+- **Scope (out):** Current-working-directory-relative destination mode, destination migration, new flags or commands, remote syntax, and changes to the strict project-relative source declaration contract.
+- **Depends on:** 012
+- **Governed by:** C-01, C-02, C-04, C-05, C-06, C-10, C-11, C-12, C-13, C-14
+- **Addresses:** Direct active-user decision on 2026-09-11; `docs/product-definition.md` — Product model and mappings; `README.md` — Configure portable mappings.
+- **Notes:** This feature supersedes Feature 012 only where Feature 012 rejected relative destinations. Relative declarations are based on the selected project, never the process current directory, and may explicitly address an adjacent path through `..`; existing endpoint, ownership, topology, state, and publication protections remain in force. Verification evidence: `specs/014-relative-destination-paths/spec.md`, `plan.md`, `tasks.md`, and completed isolated validation through `mise run validate`.
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -216,7 +229,7 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-11 — Backup and state recovery (005, 008):** Superseded by Feature 011 and Constitution 2.0.0. Git or another operator-selected system owns user-facing history and recovery; Grip retains only internal synchronization evidence.
 - **Q-12 — Automation contract (001, 004):** Define stable machine-output schemas and exit codes for success, drift, conflict, invalid configuration, unsupported entries, and operational failure.
 - **Q-13 — Integration branch:** Name the branch whose acceptance freezes a feature directory under the Merge-Bounded Flow-Back model.
-- **Q-14 — Project descriptor and destination notation (010):** Resolved by Feature 012 and C-14. Destinations are absolute, `~`, or `~/`-prefixed; accepted spelling is preserved in mapping intent and resolved only for validation and use. Sources remain project-relative.
+- **Q-14 — Project descriptor and destination notation (010):** Resolved by Features 012 and 014 and C-14. Destinations may be absolute, `~`, `~/`-prefixed, or project-relative; accepted spelling is preserved in mapping intent and resolved only for validation and use. Sources remain project-relative.
 - **Q-15 — Machine-local project identity (010):** Define how machine-local state is keyed to a project without creating collisions between multiple clones.
 - **Q-16 — Initialization and discovery boundaries (010):** Define initialization idempotency, nested-project discovery, and behavior when an explicit project conflicts with an enclosing project.
 
@@ -235,4 +248,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.3.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-10
+**Version**: 1.4.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-11

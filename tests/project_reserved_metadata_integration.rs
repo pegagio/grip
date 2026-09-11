@@ -35,11 +35,11 @@ fn project_root_tree_prunes_grip_metadata_before_ignore_evaluation() {
 fn metadata_sources_and_selectors_are_rejected_without_descriptor_changes() {
     let fixture = ProjectFixture::initialized();
     let before = fs::read(fixture.descriptor_path()).unwrap();
-    for source in [".grip", ".grip/config.toml", "payload/../.grip"] {
+    for source in [".grip", "./.grip/", ".grip/config.toml", "payload/../.grip"] {
         let added = fixture.command(&["add", source, "~/target"]);
         assert!(!added.status.success(), "source {source} was accepted");
     }
-    let inspected = fixture.command(&["status", ".grip"]);
+    let inspected = fixture.command(&["status", "payload/../.grip"]);
     assert!(!inspected.status.success());
     assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
 }

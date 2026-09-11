@@ -86,6 +86,19 @@ fn equivalent_normalized_destination_declarations_conflict() {
 }
 
 #[test]
+fn project_relative_destinations_use_resolved_topology_for_conflicts() {
+    let fixture = ProjectFixture::initialized();
+    fs::write(fixture.project_root.join("a"), "a").unwrap();
+    fs::write(fixture.project_root.join("b"), "b").unwrap();
+    let destination = fixture.project_root.parent().unwrap().join("grip-dst");
+    fs::create_dir_all(&destination).unwrap();
+    assert!(add(&fixture, "a", "../grip-dst/a/../b"));
+    let before = fs::read(fixture.descriptor_path()).unwrap();
+    assert!(!add(&fixture, "b", "../grip-dst/b"));
+    assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
+}
+
+#[test]
 fn absolute_and_home_relative_equivalent_destinations_conflict() {
     let fixture = ProjectFixture::initialized();
     fs::write(fixture.project_root.join("a"), "a").unwrap();

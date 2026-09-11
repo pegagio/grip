@@ -70,15 +70,31 @@ fn mapping_commands_use_project_relative_source_identity() {
 }
 
 #[test]
+fn mapping_add_accepts_and_persists_normalized_relative_source_spellings() {
+    let fixture = ProjectFixture::initialized();
+    fs::create_dir(fixture.project_root.join("app")).unwrap();
+    assert!(
+        fixture
+            .command(&["add", "./app/", "~/app"])
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(fixture.descriptor_path())
+            .unwrap()
+            .contains("source = \"app\"")
+    );
+}
+
+#[test]
 fn mapping_add_rejects_invalid_sources_and_destination_forms() {
     let fixture = ProjectFixture::initialized();
     fs::write(fixture.project_root.join("file"), "payload").unwrap();
     for (source, destination) in [
         ("/absolute", "~/x"),
         ("../escape", "~/x"),
-        ("file", "relative"),
-        ("file", "./relative"),
-        ("file", "../relative"),
+        (".grip", "~/x"),
+        ("nested/../.grip", "~/x"),
         ("file", "${HOME}/x"),
         ("file", "~other/x"),
     ] {
@@ -115,6 +131,33 @@ fn mapping_add_preserves_non_normalized_home_destination_and_supports_selectors(
             .status
             .success()
     );
+}
+
+#[test]
+fn mapping_add_preserves_project_relative_destination_and_uses_project_root_for_selectors() {
+    let fixture = ProjectFixture::initialized();
+    fs::write(fixture.project_root.join("file"), "payload").unwrap();
+    let destination_root = fixture.project_root.parent().unwrap().join("grip-dst");
+    fs::create_dir_all(&destination_root).unwrap();
+    assert!(
+        fixture
+            .command(&["add", "file", "../grip-dst/./file"])
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(fixture.descriptor_path())
+            .unwrap()
+            .contains("destination = \"../grip-dst/./file\"")
+    );
+    let nested = fixture.project_root.join("nested");
+    fs::create_dir(&nested).unwrap();
+    let selected = fixture
+        .command_builder(&nested)
+        .args(["status", "--destination", "../grip-dst/file"])
+        .output()
+        .unwrap();
+    assert!(selected.status.success(), "{selected:?}");
 }
 
 #[test]
@@ -211,12 +254,15 @@ fn project_commands_resolve_source_and_destination_selectors_in_portable_spaces(
             .status
             .success()
     );
+    assert!(fixture.command(&["list", "./source/"]).status.success());
     for arguments in [
-        vec!["status", "source"],
+        vec!["status", "./source/"],
         vec!["status", "--destination", "~/destination"],
-        vec!["push", "--dry-run", "source"],
+        vec!["diff", "./source/"],
+        vec!["push", "--dry-run", "./source/"],
+        vec!["pull", "--dry-run", "./source/"],
         vec!["pull", "--dry-run", "--destination", "~/destination"],
-        vec!["sync", "--dry-run", "source"],
+        vec!["sync", "--dry-run", "./source/"],
     ] {
         let output = fixture.command(&arguments);
         assert!(
@@ -237,4 +283,5 @@ fn project_commands_resolve_source_and_destination_selectors_in_portable_spaces(
             .status
             .success()
     );
+    assert!(fixture.command(&["remove", "./source/"]).status.success());
 }

@@ -52,6 +52,50 @@ fn project_relative_path_rejects_metadata_and_noncanonical_forms() {
 }
 
 #[test]
+fn project_relative_cli_path_normalizes_relative_spellings_for_storage() {
+    for (input, expected) in [
+        ("./app", "app"),
+        ("./app/", "app"),
+        ("nested//app", "nested/app"),
+        ("nested/./app", "nested/app"),
+        ("nested/../app", "app"),
+        (".", "."),
+    ] {
+        assert_eq!(
+            ProjectRelativePath::parse_cli(OsStr::new(input), true)
+                .unwrap()
+                .as_str(),
+            expected,
+            "{input}"
+        );
+    }
+    assert_eq!(
+        reason(ProjectRelativePath::parse_cli(OsStr::new("."), false).unwrap_err()),
+        "invalid_project_relative_path"
+    );
+    for input in [
+        "",
+        "/absolute",
+        "../escape",
+        "nested/../../escape",
+        ".grip",
+        "nested/../.grip",
+        "$HOME/app",
+        "~/app",
+    ] {
+        assert!(
+            ProjectRelativePath::parse_cli(OsStr::new(input), true).is_err(),
+            "{input}"
+        );
+    }
+    let non_utf8 = OsString::from_vec(vec![b'a', 0xff]);
+    assert_eq!(
+        reason(ProjectRelativePath::parse_cli(&non_utf8, true).unwrap_err()),
+        "non_utf8_path"
+    );
+}
+
+#[test]
 fn project_relative_path_rejects_non_utf8() {
     let input = OsString::from_vec(vec![b'a', 0xff]);
     assert_eq!(
@@ -70,6 +114,10 @@ fn destination_path_accepts_and_preserves_all_authorized_forms() {
         "~/a/./b",
         "~/../escape",
         "/absolute/destination",
+        "destination",
+        "./destination//nested",
+        "../destination/./nested",
+        ".",
     ] {
         assert_eq!(
             DestinationPath::parse(OsStr::new(input)).unwrap().as_str(),
@@ -79,16 +127,8 @@ fn destination_path_accepts_and_preserves_all_authorized_forms() {
 }
 
 #[test]
-fn destination_path_rejects_relative_and_expanding_forms() {
-    for input in [
-        "",
-        "relative",
-        "./relative",
-        "../relative",
-        "~other/x",
-        "${HOME}/x",
-        "$HOME/x",
-    ] {
+fn destination_path_rejects_empty_and_expanding_forms() {
+    for input in ["", "~other/x", "${HOME}/x", "$HOME/x"] {
         assert!(
             DestinationPath::parse(OsStr::new(input)).is_err(),
             "{input}"
@@ -98,12 +138,19 @@ fn destination_path_rejects_relative_and_expanding_forms() {
 
 #[test]
 fn destination_path_lexically_normalizes_only_for_operational_resolution() {
+    let project = std::path::Path::new("/tmp/project");
     let home = std::path::Path::new("/tmp/home");
     let path = DestinationPath::parse(OsStr::new("~/a//./b/../c")).unwrap();
     assert_eq!(path.as_str(), "~/a//./b/../c");
     assert_eq!(
-        path.resolve(home),
+        path.resolve(project, home),
         std::path::PathBuf::from("/tmp/home/a/c")
+    );
+    let relative = DestinationPath::parse(OsStr::new("../destination//./nested")).unwrap();
+    assert_eq!(relative.as_str(), "../destination//./nested");
+    assert_eq!(
+        relative.resolve(project, home),
+        std::path::PathBuf::from("/tmp/destination/nested")
     );
 }
 

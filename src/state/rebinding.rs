@@ -51,7 +51,10 @@ pub fn assess(
             GripError::InvalidConfiguration("project destination home is unavailable".into())
         })?;
         let destination = append_raw(
-            &identity.mapping.destination.resolve(destination_home),
+            &identity
+                .mapping
+                .destination
+                .resolve(home.project_root()?, destination_home),
             &relative,
         );
         for (role, path) in [("source", source), ("destination", destination)] {

@@ -7,7 +7,7 @@ updated: 2026-09-11
 
 # Initial delivery roadmap
 
-Roadmap version 1.3.3 records all twelve specifications as verified and completes the approved initial Grip product roadmap, including the project-scoped portability correction, the flat command-hierarchy replacement, and the destination-path form correction. The sequence moved from read-only foundations to increasingly capable mutation, then replaced the pre-release global authority model with portable project intent and the superseded public command surface after the underlying safety contracts were established. (S003)
+Roadmap version 1.4.0 records verified Features 001 through 012 and 014, completing the approved initial Grip product roadmap with the project-scoped portability correction, flat command-hierarchy replacement, and relative-destination expansion. The sequence moved from read-only foundations to increasingly capable mutation, then replaced the pre-release global authority model with portable project intent and the superseded public command surface after the underlying safety contracts were established. (S003)
 
 1. **001 — CLI, Configuration, and State Foundation (`verified`):** establish the Rust application, per-user root, versioned configuration and state envelopes, and distinct human, machine, and diagnostic interfaces without payload mutation. (S003)
 2. **002 — Mapping Registry and Ownership Validation (`verified`):** define file and tree mapping intent, canonical source identity, lifecycle commands, and ambiguous or recursive topology rejection. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
@@ -21,8 +21,9 @@ Roadmap version 1.3.3 records all twelve specifications as verified and complete
 10. **010 — Project-Scoped Initialization and Portable Mappings (`verified`):** replaces the global mapping model with initialized projects, committed portable declarations, exact explicit or ancestor-based selection, and isolated machine-local state. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 11. **011 — Git-Inspired Command Hierarchy (`verified`):** replaces the broad nested public surface with `init`, `version`, `add`, `list`, `remove`, `status`, `diff`, `push`, `pull`, and `sync`; retains direct `.gripignore` policy and makes Git or another selected system responsible for history and recovery. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 12. **012 — Destination Path Forms (`verified`):** broadens destination declarations to absolute paths, `~`, and any `~/` spelling while retaining exact declaration text and project-relative source declarations. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
+13. **014 — Relative Destination Paths (`verified`):** extends destination declarations with paths relative to the selected project root while retaining exact declaration text and resolving it separately for operations. (S003)
 
-Specs 001 through 012 now provide the verified foundation, mutation, conflict, metadata, filesystem-boundary, qualification, portable project-authority, concise public-command, and explicit destination-declaration chain. Two-way interactive merge, remap, multiple selectors, remote synchronization, daemons, privileged services, and multi-user coordination remain outside this initial roadmap. (S003)
+Features 001 through 012 and 014 now provide the verified foundation, mutation, conflict, metadata, filesystem-boundary, qualification, portable project-authority, concise public-command, and explicit destination-declaration chain. Two-way interactive merge, remap, multiple selectors, remote synchronization, daemons, privileged services, and multi-user coordination remain outside this initial roadmap. (S003)
 
 ## Related pages
 

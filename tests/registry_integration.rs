@@ -35,12 +35,19 @@ fn descriptor_v2_round_trips_absolute_and_non_normalized_destinations_verbatim()
             OsStr::new("/tmp/grip-destination"),
         )
         .unwrap(),
+        PortableMapping::parse(
+            MappingKind::File,
+            OsStr::new("c"),
+            OsStr::new("../grip-destination/./c"),
+        )
+        .unwrap(),
     ])
     .unwrap();
     let bytes = registry::encode_descriptor(&descriptor).unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
     assert!(text.contains("destination = \"~/a//./b\""));
     assert!(text.contains("destination = \"/tmp/grip-destination\""));
+    assert!(text.contains("destination = \"../grip-destination/./c\""));
     assert_eq!(registry::decode_descriptor(text).unwrap(), descriptor);
 }
 

@@ -2,7 +2,7 @@
 title: Implementation and delivery direction
 type: decision
 sources: [S001, S002, S003, S004, S006, S008, S009, S013, S014]
-updated: 2026-09-10
+updated: 2026-09-11
 ---
 
 # Implementation and delivery direction
@@ -21,9 +21,11 @@ Features 001 through 010 established the single-crate CLI, project scope, regist
 
 Feature 010 introduced one selected project context, portable declarations and durable identities, and project-local mutable state. Feature 011 then completed the current interface replacement: the public surface is the flat ten-command hierarchy, internal baseline evidence follows active membership, and Git or another operator-selected system owns history and recovery. (S003) (S013) (S014)
 
+Features 013 and 014 complete the current path-input contract without changing that authority boundary: ordinary relative source spellings normalize to project-relative declarations, and exact destination declarations may be absolute, home-relative, or project-relative before operational resolution. (S001) (S003) (S004)
+
 The current product deliberately adds no daemon, watcher, persistent index, compatibility reader, automatic Git behavior, retained payload backup, or user-facing recovery interface. Its verification surface includes current-interface rejection coverage, isolated filesystem and state tests, the repository quality gate, and explicit representative performance qualification. (S014)
 
-The roadmap records Feature 011 as verified after a trustworthy HEAD-to-worktree debrief returned `PROCEED` with no findings, completing the eleven-feature initial delivery sequence. (S003)
+The roadmap records Feature 014 as verified after Features 013 and 014 expanded the source-input and destination-declaration contracts while preserving project-scoped authority. (S003)
 
 Feature 011 records a clean convergence pass, formatting, lint, default-test, and release-build validation, plus representative performance acceptance for the revised command hierarchy. (S014)
 

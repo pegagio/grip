@@ -43,3 +43,46 @@ fn copied_descriptor_is_byte_identical_but_resolves_to_each_root_and_home() {
     );
     assert_eq!(fs::read(first.descriptor_path()).unwrap(), descriptor);
 }
+
+#[test]
+fn copied_project_resolves_a_relative_destination_from_its_own_root() {
+    let first = ProjectFixture::initialized();
+    fs::write(first.project_root.join("source"), "payload").unwrap();
+    fs::write(first.project_root.join("destination"), "payload").unwrap();
+    assert!(
+        first
+            .command(&["add", "source", "./destination"])
+            .status
+            .success()
+    );
+    let descriptor = fs::read(first.descriptor_path()).unwrap();
+    let second_root = first.copy_project("second-relative-project");
+
+    let first_result = first.command(&["--output=json", "list"]);
+    let second_result = first
+        .command_builder(&second_root)
+        .args(["--output=json", "list"])
+        .output()
+        .unwrap();
+    assert!(first_result.status.success());
+    assert!(second_result.status.success());
+    assert_eq!(
+        fs::read(second_root.join(".grip/config.toml")).unwrap(),
+        descriptor
+    );
+
+    let first_json: serde_json::Value = serde_json::from_slice(&first_result.stdout).unwrap();
+    let second_json: serde_json::Value = serde_json::from_slice(&second_result.stdout).unwrap();
+    assert_eq!(
+        first_json["details"]["mappings"][0]["declared"]["destination"],
+        "./destination"
+    );
+    assert_eq!(
+        first_json["details"]["mappings"][0]["declared"],
+        second_json["details"]["mappings"][0]["declared"]
+    );
+    assert_ne!(
+        first_json["details"]["mappings"][0]["resolved"]["destination"],
+        second_json["details"]["mappings"][0]["resolved"]["destination"]
+    );
+}
