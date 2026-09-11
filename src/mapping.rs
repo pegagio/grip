@@ -27,7 +27,7 @@ impl MappingKind {
 pub struct PortableMapping {
     pub kind: MappingKind,
     pub source: crate::path_policy::ProjectRelativePath,
-    pub destination: crate::path_policy::HomeRelativePath,
+    pub destination: crate::path_policy::DestinationPath,
 }
 
 impl PortableMapping {
@@ -42,7 +42,7 @@ impl PortableMapping {
                 source,
                 kind == MappingKind::Tree,
             )?,
-            destination: crate::path_policy::HomeRelativePath::parse(destination)?,
+            destination: crate::path_policy::DestinationPath::parse(destination)?,
         })
     }
 

@@ -58,35 +58,25 @@ impl<'de> serde::Deserialize<'de> for ProjectRelativePath {
     }
 }
 
-/// A canonical destination declaration resolved beneath the invoking user's home.
+/// A portable destination declaration, retained exactly as supplied by the user.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 #[serde(transparent)]
-pub struct HomeRelativePath(String);
+pub struct DestinationPath(String);
 
-impl HomeRelativePath {
-    /// Parse exact `~` or a normalized `~/...` destination declaration.
+impl DestinationPath {
+    /// Parse an absolute path, exact `~`, or any `~/` path spelling.
     pub fn parse(value: &std::ffi::OsStr) -> Result<Self, GripError> {
         let value = value.to_str().ok_or_else(|| {
             portable_path_error("non_utf8_path", value, "portable paths must be valid UTF-8")
         })?;
-        if value == "~" {
+        if value == "~" || value.starts_with("~/") || Path::new(value).is_absolute() {
             return Ok(Self(value.to_owned()));
         }
-        let suffix = value.strip_prefix("~/").ok_or_else(|| {
-            portable_path_error(
-                "invalid_home_relative_path",
-                std::ffi::OsStr::new(value),
-                "destination must be ~ or a normalized ~/ path",
-            )
-        })?;
-        if !valid_relative_components(suffix) || value.contains('$') {
-            return Err(portable_path_error(
-                "invalid_home_relative_path",
-                std::ffi::OsStr::new(value),
-                "destination must be ~ or a normalized ~/ path",
-            ));
-        }
-        Ok(Self(value.to_owned()))
+        Err(portable_path_error(
+            "invalid_destination_path",
+            std::ffi::OsStr::new(value),
+            "destination must be an absolute path, ~, or a ~/ path",
+        ))
     }
 
     pub fn as_str(&self) -> &str {
@@ -94,14 +84,16 @@ impl HomeRelativePath {
     }
 
     pub fn resolve(&self, home: &Path) -> PathBuf {
-        match self.0.strip_prefix("~/") {
+        let path = match self.0.strip_prefix("~/") {
             Some(suffix) => home.join(suffix),
-            None => home.to_path_buf(),
-        }
+            None if self.0 == "~" => home.to_path_buf(),
+            None => PathBuf::from(&self.0),
+        };
+        lexical_normalize_absolute(&path)
     }
 }
 
-impl<'de> serde::Deserialize<'de> for HomeRelativePath {
+impl<'de> serde::Deserialize<'de> for DestinationPath {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -109,6 +101,24 @@ impl<'de> serde::Deserialize<'de> for HomeRelativePath {
         let value = String::deserialize(deserializer)?;
         Self::parse(std::ffi::OsStr::new(&value)).map_err(serde::de::Error::custom)
     }
+}
+
+/// Normalize lexical dot components without resolving symbolic links.
+fn lexical_normalize_absolute(path: &Path) -> PathBuf {
+    debug_assert!(path.is_absolute());
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+            Component::Prefix(_) => unreachable!("Unix paths have no prefix components"),
+        }
+    }
+    normalized
 }
 
 fn valid_relative_components(value: &str) -> bool {

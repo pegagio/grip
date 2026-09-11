@@ -612,10 +612,8 @@ fn resolve_portable_selector(
             path_policy::ProjectRelativePath::parse(selector, true)
                 .map(|path| path.resolve(&context.root))
         }
-        observation::model::PathSpace::Destination => {
-            path_policy::HomeRelativePath::parse(selector)
-                .map(|path| path.resolve(context.user_home.path()))
-        }
+        observation::model::PathSpace::Destination => path_policy::DestinationPath::parse(selector)
+            .map(|path| path.resolve(context.user_home.path())),
     }
 }
 
@@ -645,7 +643,7 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
     let source_path =
         path_policy::ProjectRelativePath::parse(&args.source, true)?.resolve(&context.root);
     let destination_path =
-        path_policy::HomeRelativePath::parse(&args.destination)?.resolve(context.user_home.path());
+        path_policy::DestinationPath::parse(&args.destination)?.resolve(context.user_home.path());
     let source_kind = existing_mapping_kind(&source_path, operation)?;
     let destination_kind = existing_mapping_kind(&destination_path, operation)?;
     let kind = match (source_kind, destination_kind) {
@@ -697,15 +695,23 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         source_evidence.canonical.clone(),
         destination_evidence.canonical.clone(),
     );
-    let mut mappings = snapshot.registry.mappings().to_vec();
-    mappings.push(added.clone());
-    let candidate = registry::ResolvedRegistry::new(mappings)?;
+    let mut declarations = snapshot.portable_mappings()?;
+    declarations.push(portable.clone());
+    let candidate_descriptor = registry::ProjectDescriptorV2::new(declarations)?;
+    let candidate = registry::ResolvedRegistry::new(
+        candidate_descriptor
+            .resolve(&context.root, context.user_home.path(), operation)?
+            .into_iter()
+            .map(|mapping| mapping.ownership_mapping())
+            .collect(),
+    )?;
     let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, operation)?;
     revalidate_project_for_mutation()?;
     registry::publication::publish_with_evidence(
         &home,
         &snapshot,
         &candidate,
+        &candidate_descriptor,
         &[source_evidence, destination_evidence],
     )?;
     if source_kind.is_some() && destination_kind.is_some() {

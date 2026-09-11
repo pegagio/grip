@@ -34,6 +34,16 @@ pub struct RegistrySnapshot {
 }
 
 impl RegistrySnapshot {
+    /// Return a copy of the accepted portable mapping declarations.
+    pub fn portable_mappings(&self) -> Result<Vec<crate::mapping::PortableMapping>, GripError> {
+        self.portable_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.mappings().to_vec())
+            .ok_or_else(|| {
+                GripError::UnsupportedSchema("project descriptors must use schema version 2".into())
+            })
+    }
+
     /// Return the accepted portable declarations paired with their resolved runtime endpoints.
     pub fn mapping_details(&self) -> Result<Vec<crate::result::MappingResultDetails>, GripError> {
         let descriptor = self.portable_descriptor.as_ref().ok_or_else(|| {
@@ -809,9 +819,17 @@ pub fn publish_with_evidence(
     home: &ProjectPaths,
     expected: &RegistrySnapshot,
     candidate: &ResolvedRegistry,
+    candidate_descriptor: &ProjectDescriptorV2,
     candidate_evidence: &[PathEvidence],
 ) -> Result<(), GripError> {
-    publish_candidate(home, expected, candidate, candidate_evidence, None)
+    publish_candidate_with_bytes(
+        home,
+        expected,
+        candidate,
+        candidate_evidence,
+        encode_descriptor(candidate_descriptor)?,
+        None,
+    )
 }
 
 #[doc(hidden)]
@@ -839,6 +857,18 @@ fn publish_candidate(
     candidate_evidence: &[PathEvidence],
     fault: Option<PublicationFault>,
 ) -> Result<(), GripError> {
+    let bytes = encode_candidate(home, candidate)?;
+    publish_candidate_with_bytes(home, expected, candidate, candidate_evidence, bytes, fault)
+}
+
+fn publish_candidate_with_bytes(
+    home: &ProjectPaths,
+    expected: &RegistrySnapshot,
+    candidate: &ResolvedRegistry,
+    candidate_evidence: &[PathEvidence],
+    bytes: Vec<u8>,
+    fault: Option<PublicationFault>,
+) -> Result<(), GripError> {
     validate_candidate_evidence(expected, candidate, candidate_evidence)?;
     let lock_path = crate::state::lock::project_lock_path(home, "registry.lock")?;
     let lock = PublicationLock::acquire(&lock_path).map_err(|error| {
@@ -853,7 +883,6 @@ fn publish_candidate(
     })?;
     reject_unexpected_staging(home.path())?;
     verify_final_evidence(home, expected, candidate_evidence)?;
-    let bytes = encode_candidate(home, candidate)?;
     let mut staged = stage_bytes(home.path(), "config", &bytes)?;
     let result = (|| {
         if fault == Some(PublicationFault::CorruptStagedCandidate) {

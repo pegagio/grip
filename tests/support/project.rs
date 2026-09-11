@@ -52,6 +52,16 @@ impl ProjectFixture {
         self.metadata_dir().join("config.toml")
     }
 
+    /// Return an absolute destination that is outside the fixture home directory.
+    pub fn absolute_destination(&self, name: &str) -> PathBuf {
+        self.root.path().join("absolute-destinations").join(name)
+    }
+
+    /// Return a destination path rooted in the fixture's configured home.
+    pub fn home_destination(&self, name: &str) -> PathBuf {
+        self.home_root.join(name)
+    }
+
     pub fn state_dir(&self) -> PathBuf {
         self.metadata_dir().join("state")
     }

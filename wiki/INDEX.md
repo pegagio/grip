@@ -11,6 +11,7 @@ page files, not here.
 
 ## Decisions
 
+- [Destination path forms](./pages/destination-path-forms.md)
 - [Git-inspired command hierarchy](./pages/git-inspired-command-hierarchy.md)
 - [Implementation and delivery direction](./pages/implementation-and-delivery-direction.md)
 - [Proportional engineering rigor](./pages/proportional-engineering-rigor.md)

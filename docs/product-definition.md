@@ -1,6 +1,6 @@
 # Grip Product Definition
 
-Grip is a local, per-user deployment and selective synchronization tool. It maps files and directory trees between a project and a destination home without taking ownership of either surrounding filesystem.
+Grip is a local, per-user deployment and selective synchronization tool. It maps files and directory trees between a project and a destination without taking ownership of either surrounding filesystem.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ Grip is a local, per-user deployment and selective synchronization tool. It maps
 
 Grip is stateful: it records an accepted baseline for each currently managed entry. It uses the source, destination, and that baseline to distinguish unambiguous one-sided change from conflict. It is selective: only declared file mappings and non-ignored members of declared tree mappings are managed. It is bidirectional: either endpoint may be authoritative when the operation makes that direction explicit.
 
-A source is project-relative. A destination is relative to the invoking user's home. A file mapping manages one file pair. A tree mapping manages source-side, non-ignored descendants at matching relative destination paths; unrelated destination content remains unmanaged.
+A source is a normalized path relative to the project root. A destination is either an absolute path, `~`, or any path beginning `~/`. Grip retains the exact accepted destination spelling in the descriptor, including lexical dot components or repeated separators, then resolves it for operational validation without following symbolic links. `~/` forms are interpreted from the invoking user's home and may resolve outside it; absolute forms trade descriptor portability for an explicit target. Other relative or expansion-like destination forms are rejected. A file mapping manages one file pair. A tree mapping manages source-side, non-ignored descendants at matching relative destination paths; unrelated destination content remains unmanaged.
 
 ## Command-line interface
 
@@ -42,7 +42,7 @@ There are no public command families or aliases for `mapping`, `validate`, `chec
 
 ## Mappings and membership
 
-`grip add` declares a mapping without copying or creating either endpoint. At least one endpoint must already exist. Grip infers file or tree kind from the existing endpoints and rejects incompatible kinds or two missing endpoints. If both endpoints are equivalent, Grip establishes a baseline; otherwise the declaration begins unbaselined and requires an appropriate synchronization decision.
+`grip add` declares a mapping without copying or creating either endpoint. At least one endpoint must already exist. For example, `grip add README.md ~/Working/grip-dst/README.md` and `grip add README.md /absolute/grip-dst/README.md` are both valid. Grip infers file or tree kind from the existing endpoints and rejects incompatible kinds or two missing endpoints. If both endpoints are equivalent, Grip establishes a baseline; otherwise the declaration begins unbaselined and requires an appropriate synchronization decision.
 
 `grip list` displays all mappings or one mapping selected by source path. `grip remove` removes the declaration and all associated baseline evidence, without changing either endpoint. Re-adding the same mapping is a new declaration; it never revives old baseline evidence.
 

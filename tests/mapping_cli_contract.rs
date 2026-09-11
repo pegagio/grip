@@ -44,6 +44,60 @@ fn add_list_and_remove_use_flat_commands_without_copying_payloads() {
 }
 
 #[test]
+fn add_accepts_absolute_and_non_normalized_home_destinations_without_copying_payloads() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::write(root.path().join("first"), "payload").unwrap();
+    fs::write(root.path().join("second"), "payload").unwrap();
+    let absolute = root.path().join("outside").join("absolute");
+
+    let home_relative = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "first", "~/a//./b/../home-destination"],
+    );
+    assert_eq!(home_relative.status.code(), Some(0));
+    let absolute_add = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "second", absolute.to_str().unwrap()],
+    );
+    assert_eq!(absolute_add.status.code(), Some(0));
+    let descriptor = fs::read_to_string(metadata_dir.join("config.toml")).unwrap();
+    assert!(descriptor.contains("destination = \"~/a//./b/../home-destination\""));
+    assert!(descriptor.contains(&format!("destination = \"{}\"", absolute.display())));
+    assert!(!root.path().join("home-destination").exists());
+    assert!(!absolute.exists());
+}
+
+#[test]
+fn add_rejects_relative_destination_without_changing_the_descriptor() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::write(root.path().join("README.md"), "payload").unwrap();
+    let before = fs::read(metadata_dir.join("config.toml")).unwrap();
+    for destination in [
+        "destination/README.md",
+        "./destination",
+        "../destination",
+        "~other/x",
+        "$HOME/x",
+    ] {
+        let output = support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "README.md", destination],
+        );
+        assert_ne!(output.status.code(), Some(0), "{destination}");
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("destination must be an absolute path, ~, or a ~/ path")
+        );
+        assert_eq!(fs::read(metadata_dir.join("config.toml")).unwrap(), before);
+    }
+}
+
+#[test]
 fn add_requires_an_existing_compatible_endpoint() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
