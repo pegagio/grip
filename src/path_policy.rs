@@ -4,6 +4,7 @@ use crate::error::GripError;
 use crate::mapping::MappingKind;
 use std::ffi::OsString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
@@ -162,6 +163,139 @@ fn lexical_normalize_absolute(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+/// Render an absolute source path relative to an invocation directory for human status output.
+pub fn git_relative_display(path: &Path, invocation_directory: &Path) -> String {
+    let relative = relative_path(path, invocation_directory);
+    git_quote_path(relative.as_os_str().as_bytes())
+}
+
+/// Resolve a relative source selector from the invocation directory without leaving the project.
+pub fn resolve_cwd_relative_source_selector(
+    project_root: &Path,
+    invocation_directory: &Path,
+    selector: &std::ffi::OsStr,
+    operation: &str,
+) -> Result<PathBuf, GripError> {
+    let selector_text = selector.to_str().ok_or_else(|| {
+        portable_path_error(
+            "non_utf8_path",
+            selector,
+            "portable paths must be valid UTF-8",
+        )
+    })?;
+    if selector_text.is_empty()
+        || Path::new(selector_text).is_absolute()
+        || selector_text.starts_with('~')
+        || selector_text.contains('$')
+    {
+        return Err(portable_path_error(
+            "invalid_project_relative_path",
+            selector,
+            "source must be a relative path outside .grip",
+        ));
+    }
+
+    let candidate = lexical_normalize_absolute(&invocation_directory.join(selector));
+    let metadata_directory = project_root.join(".grip");
+    if !candidate.starts_with(project_root) || candidate.starts_with(&metadata_directory) {
+        return Err(source_selector_outside_project(operation, &candidate));
+    }
+
+    let existing_ancestor = canonical_existing_ancestor(&candidate, operation)?;
+    if !existing_ancestor.starts_with(project_root) {
+        return Err(source_selector_outside_project(operation, &candidate));
+    }
+
+    resolve_selector(&candidate, operation)
+}
+
+fn relative_path(path: &Path, invocation_directory: &Path) -> PathBuf {
+    let path_components = path.components().collect::<Vec<_>>();
+    let cwd_components = invocation_directory.components().collect::<Vec<_>>();
+    let shared = path_components
+        .iter()
+        .zip(&cwd_components)
+        .take_while(|(path_component, cwd_component)| path_component == cwd_component)
+        .count();
+    let mut relative = PathBuf::new();
+    for component in &cwd_components[shared..] {
+        if matches!(component, Component::Normal(_)) {
+            relative.push("..");
+        }
+    }
+    for component in &path_components[shared..] {
+        if matches!(component, Component::Normal(_)) {
+            relative.push(component.as_os_str());
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+    relative
+}
+
+fn git_quote_path(bytes: &[u8]) -> String {
+    let needs_quotes = bytes
+        .iter()
+        .any(|byte| !matches!(byte, b'!'..=b'~') || matches!(byte, b'"' | b'\\'));
+    if !needs_quotes {
+        return String::from_utf8(bytes.to_vec()).expect("printable ASCII path is UTF-8");
+    }
+
+    let mut quoted = String::from("\"");
+    for byte in bytes {
+        match byte {
+            b'\\' => quoted.push_str("\\\\"),
+            b'"' => quoted.push_str("\\\""),
+            b'\n' => quoted.push_str("\\n"),
+            b'\r' => quoted.push_str("\\r"),
+            b'\t' => quoted.push_str("\\t"),
+            b'\x08' => quoted.push_str("\\b"),
+            b'\x0c' => quoted.push_str("\\f"),
+            b' '..=b'~' => quoted.push(char::from(*byte)),
+            _ => quoted.push_str(&format!("\\{:03o}", byte)),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+fn canonical_existing_ancestor(path: &Path, operation: &str) -> Result<PathBuf, GripError> {
+    let mut current = path;
+    loop {
+        match fs::canonicalize(current) {
+            Ok(canonical) => return Ok(canonical),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                current = current.parent().ok_or_else(|| {
+                    invalid(
+                        operation,
+                        "path_unavailable",
+                        path,
+                        "source selector has no existing ancestor",
+                    )
+                })?;
+            }
+            Err(error) => {
+                return Err(invalid(
+                    operation,
+                    "path_unavailable",
+                    path,
+                    &format!("source selector cannot be resolved: {error}"),
+                ));
+            }
+        }
+    }
+}
+
+fn source_selector_outside_project(operation: &str, path: &Path) -> GripError {
+    invalid(
+        operation,
+        "source_selector_outside_project",
+        path,
+        "source selector must remain inside the selected project",
+    )
 }
 
 fn valid_relative_components(value: &str) -> bool {
@@ -516,6 +650,80 @@ mod tests {
         assert!(matches!(
             error,
             GripError::Mapping { ref reason, .. } if reason == "parent_traversal"
+        ));
+    }
+
+    #[test]
+    fn git_relative_display_uses_parent_components_and_c_style_quotes() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        let app = project.join("app");
+        let shared = project.join("shared");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+
+        assert_eq!(git_relative_display(&app.join("main.py"), &app), "main.py");
+        assert_eq!(
+            git_relative_display(&shared.join("config.yml"), &app),
+            "../shared/config.yml"
+        );
+        assert_eq!(
+            git_relative_display(&app.join("my file.py"), &app),
+            "\"my file.py\""
+        );
+        assert_eq!(
+            git_relative_display(&app.join("line\nbreak"), &app),
+            "\"line\\nbreak\""
+        );
+    }
+
+    #[test]
+    fn cwd_relative_source_selector_rejects_project_escapes_before_selection() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        let app = project.join("app");
+        let shared = project.join("shared");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(shared.join("config.yml"), "config").unwrap();
+        std::fs::write(outside.join("secret"), "secret").unwrap();
+        let canonical_project = std::fs::canonicalize(&project).unwrap();
+        let canonical_app = std::fs::canonicalize(&app).unwrap();
+
+        assert_eq!(
+            resolve_cwd_relative_source_selector(
+                &canonical_project,
+                &canonical_app,
+                std::ffi::OsStr::new("../shared/config.yml"),
+                "push",
+            )
+            .unwrap(),
+            std::fs::canonicalize(shared.join("config.yml")).unwrap()
+        );
+        for selector in ["../../outside/secret", "/project/app/main.py"] {
+            let error = resolve_cwd_relative_source_selector(
+                &canonical_project,
+                &canonical_app,
+                std::ffi::OsStr::new(selector),
+                "push",
+            )
+            .unwrap_err();
+            assert!(matches!(error, GripError::Mapping { .. }));
+        }
+
+        std::os::unix::fs::symlink(&outside, app.join("escape")).unwrap();
+        let error = resolve_cwd_relative_source_selector(
+            &canonical_project,
+            &canonical_app,
+            std::ffi::OsStr::new("escape/secret"),
+            "push",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            GripError::Mapping { ref reason, .. } if reason == "source_selector_outside_project"
         ));
     }
 

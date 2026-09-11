@@ -1,6 +1,7 @@
 mod support;
 
 use std::fs;
+use support::project::ProjectFixture;
 
 fn fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
     let root = tempfile::tempdir().unwrap();
@@ -50,8 +51,7 @@ fn human_status_renders_a_compact_push_section() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 to push.\n\nChanges to push:\n  {} -> {}\n",
-            fs::canonicalize(&source).unwrap().display(),
+            "Status: 1 entry checked; 0 current; 1 to push.\n\nChanges to push:\n  source -> {}\n",
             fs::canonicalize(root.path().join("destination"))
                 .unwrap()
                 .display(),
@@ -78,10 +78,66 @@ fn human_status_renders_initial_matches_as_needing_a_baseline() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 needs baseline.\n\nNeeds baseline:\n  {} >-< {}\n",
-            fs::canonicalize(&source).unwrap().display(),
+            "Status: 1 entry checked; 0 current; 1 needs baseline.\n\nNeeds baseline:\n  source >-< {}\n",
             fs::canonicalize(&destination).unwrap().display(),
         )
+    );
+}
+
+#[test]
+fn human_status_renders_source_paths_relative_to_the_invocation_directory() {
+    let fixture = ProjectFixture::initialized();
+    let app = fixture.project_root.join("app");
+    let shared = fixture.project_root.join("shared");
+    fs::create_dir_all(&app).unwrap();
+    fs::create_dir_all(&shared).unwrap();
+    let main = app.join("main.py");
+    let config = shared.join("config.yml");
+    let main_destination = fixture.home_destination("workspace/app/main.py");
+    let config_destination = fixture.home_destination("workspace/shared/config.yml");
+    fs::create_dir_all(main_destination.parent().unwrap()).unwrap();
+    fs::create_dir_all(config_destination.parent().unwrap()).unwrap();
+    fs::write(&main, "same").unwrap();
+    fs::write(&config, "same").unwrap();
+    fs::write(&main_destination, "same").unwrap();
+    fs::write(&config_destination, "same").unwrap();
+    support::copy_complete_metadata(
+        &main,
+        &main_destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    support::copy_complete_metadata(
+        &config,
+        &config_destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    assert!(
+        fixture
+            .command(&["add", "app/main.py", "~/workspace/app/main.py"])
+            .status
+            .success()
+    );
+    assert!(
+        fixture
+            .command(&["add", "shared/config.yml", "~/workspace/shared/config.yml"])
+            .status
+            .success()
+    );
+    fs::write(&main, "changed").unwrap();
+    fs::write(&config, "changed").unwrap();
+
+    let status = fixture.command_from(&app, &["status"]);
+    assert!(status.status.success());
+    let stdout = String::from_utf8(status.stdout).unwrap();
+    assert!(stdout.contains("  main.py -> "));
+    assert!(stdout.contains("  ../shared/config.yml -> "));
+
+    let json = fixture.command_from(&app, &["--output=json", "status"]);
+    assert!(json.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(
+        value["details"]["records"][0]["source_path"]["display"],
+        fs::canonicalize(&main).unwrap().display().to_string()
     );
 }
 

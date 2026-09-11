@@ -103,6 +103,7 @@ pub struct CommandOutcome {
     pub category: ResultCategory,
     pub message: String,
     pub details: Map<String, Value>,
+    human_status_source_paths: Option<Vec<String>>,
 }
 
 impl CommandOutcome {
@@ -111,6 +112,17 @@ impl CommandOutcome {
             category: ResultCategory::Success,
             message: message.into(),
             details: Map::new(),
+            human_status_source_paths: None,
+        }
+    }
+
+    /// Build a parse or command-line usage failure before project execution begins.
+    pub fn invalid_usage(message: impl Into<String>) -> Self {
+        Self {
+            category: ResultCategory::InvalidUsage,
+            message: message.into(),
+            details: Map::new(),
+            human_status_source_paths: None,
         }
     }
 
@@ -178,6 +190,7 @@ impl CommandOutcome {
                 .as_object()
                 .expect("metadata result details serialize as an object")
                 .clone(),
+            human_status_source_paths: None,
         }
     }
 
@@ -218,6 +231,7 @@ impl CommandOutcome {
             category: error.category(),
             message: error.to_string(),
             details: Map::new(),
+            human_status_source_paths: None,
         };
         if let GripError::Mapping {
             operation,
@@ -568,7 +582,14 @@ impl CommandOutcome {
                 result.blocking_count
             ),
             details,
+            human_status_source_paths: None,
         }
+    }
+
+    /// Attach non-serialized source displays for default human status rendering.
+    pub fn with_human_status_source_paths(mut self, source_paths: Vec<String>) -> Self {
+        self.human_status_source_paths = Some(source_paths);
+        self
     }
 
     pub fn baseline(result: &crate::baseline::AcceptanceResult) -> Self {
@@ -590,6 +611,7 @@ impl CommandOutcome {
             category: ResultCategory::Success,
             message,
             details,
+            human_status_source_paths: None,
         }
     }
 
@@ -674,6 +696,7 @@ impl CommandOutcome {
             category,
             message,
             details,
+            human_status_source_paths: None,
         }
     }
 
@@ -726,6 +749,7 @@ impl CommandOutcome {
                 plan.counts.completed, success.generation
             ),
             details,
+            human_status_source_paths: None,
         }
     }
 }
@@ -837,6 +861,7 @@ fn operation_outcome<T: Serialize, B: Serialize>(
         category,
         message,
         details,
+        human_status_source_paths: None,
     }
 }
 
@@ -844,7 +869,11 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
     match mode {
         OutputMode::Human => {
             if outcome.details.get("operation").and_then(Value::as_str) == Some("status") {
-                return render_human_status(&outcome.details, writer);
+                return render_human_status(
+                    &outcome.details,
+                    outcome.human_status_source_paths.as_deref(),
+                    writer,
+                );
             }
             writeln!(writer, "{}", outcome.message)?;
             render_human_metadata_details(&outcome.details, writer)?;
@@ -1188,7 +1217,11 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
     }
 }
 
-fn render_human_status(details: &Map<String, Value>, writer: &mut dyn Write) -> io::Result<()> {
+fn render_human_status(
+    details: &Map<String, Value>,
+    source_paths: Option<&[String]>,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
     let records = details
         .get("records")
         .and_then(Value::as_array)
@@ -1203,7 +1236,7 @@ fn render_human_status(details: &Map<String, Value>, writer: &mut dyn Write) -> 
     let mut push = Vec::new();
     let mut pull = Vec::new();
     let mut needs_baseline = Vec::new();
-    for record in records {
+    for (index, record) in records.iter().enumerate() {
         if !record
             .get("attention")
             .and_then(Value::as_bool)
@@ -1215,12 +1248,12 @@ fn render_human_status(details: &Map<String, Value>, writer: &mut dyn Write) -> 
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            conflicts.push(record);
+            conflicts.push((index, record));
         } else {
             match record.get("prospective_direction").and_then(Value::as_str) {
-                Some("source_to_destination") => push.push(record),
-                Some("destination_to_source") => pull.push(record),
-                _ => needs_baseline.push(record),
+                Some("source_to_destination") => push.push((index, record)),
+                Some("destination_to_source") => pull.push((index, record)),
+                _ => needs_baseline.push((index, record)),
             }
         }
     }
@@ -1254,27 +1287,37 @@ fn render_human_status(details: &Map<String, Value>, writer: &mut dyn Write) -> 
     }
     writeln!(writer, ".")?;
 
-    render_human_status_section("Conflicts", "<->", &conflicts, writer)?;
-    render_human_status_section("Changes to push", "->", &push, writer)?;
-    render_human_status_section("Changes to pull", "<-", &pull, writer)?;
-    render_human_status_section("Needs baseline", ">-<", &needs_baseline, writer)
+    render_human_status_section("Conflicts", "<->", &conflicts, source_paths, writer)?;
+    render_human_status_section("Changes to push", "->", &push, source_paths, writer)?;
+    render_human_status_section("Changes to pull", "<-", &pull, source_paths, writer)?;
+    render_human_status_section(
+        "Needs baseline",
+        ">-<",
+        &needs_baseline,
+        source_paths,
+        writer,
+    )
 }
 
 fn render_human_status_section(
     title: &str,
     symbol: &str,
-    records: &[&Value],
+    records: &[(usize, &Value)],
+    source_paths: Option<&[String]>,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     if records.is_empty() {
         return Ok(());
     }
     writeln!(writer, "\n{title}:")?;
-    for record in records {
+    for (index, record) in records {
         writeln!(
             writer,
             "  {} {symbol} {}",
-            classification_path(record, "source_path"),
+            source_paths
+                .and_then(|paths| paths.get(*index))
+                .map(String::as_str)
+                .unwrap_or_else(|| classification_path(record, "source_path")),
             classification_path(record, "destination_path")
         )?;
         render_human_status_blocker(record, writer)?;
@@ -1735,12 +1778,20 @@ mod tests {
         .unwrap()
         .clone();
         let mut output = Vec::new();
+        let source_paths = vec![
+            "current".into(),
+            "main.py".into(),
+            "../shared/config.yml".into(),
+            "../README.md".into(),
+            "new-file".into(),
+            "reconcile".into(),
+        ];
 
-        render_human_status(&details, &mut output).unwrap();
+        render_human_status(&details, Some(&source_paths), &mut output).unwrap();
 
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "Status: 6 entries checked; 1 current; 1 to push; 1 to pull; 1 conflict; 2 needs baseline.\n\nConflicts:\n  conflict <-> ~/conflict\n    Blocked: Grip cannot safely proceed with this managed entry.\n\nChanges to push:\n  push -> ~/push\n\nChanges to pull:\n  pull <- ~/pull\n\nNeeds baseline:\n  deleted >-< ~/deleted\n  migration >-< ~/migration\n"
+            "Status: 6 entries checked; 1 current; 1 to push; 1 to pull; 1 conflict; 2 needs baseline.\n\nConflicts:\n  ../README.md <-> ~/conflict\n    Blocked: Grip cannot safely proceed with this managed entry.\n\nChanges to push:\n  main.py -> ~/push\n\nChanges to pull:\n  ../shared/config.yml <- ~/pull\n\nNeeds baseline:\n  new-file >-< ~/deleted\n  reconcile >-< ~/migration\n"
         );
     }
 

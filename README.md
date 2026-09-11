@@ -52,11 +52,24 @@ grip pull [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
 grip sync [-n|--dry-run] [-d|--destination] [PATH]
 ```
 
-Selectors use project-relative source space by default. `--destination` selects in destination space where supported; `--` terminates option parsing for dash-prefixed paths.
+Source selectors for mapping commands, `status`, `diff`, `pull`, and `sync` use project-relative source space. A relative source selector for `push` is resolved from the current working directory so an ordinary source path displayed by `grip status` can be used directly from that same directory. Absolute source selectors remain invalid. `--destination` selects in destination space where supported; `--` terminates option parsing for dash-prefixed paths.
 
 Grip compares the current source, current destination, and last accepted baseline. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until `push --force` or `pull --force` selects one exact entry and names the winning direction. Destination-only content outside source-defined managed membership remains unmanaged.
 
 Default `grip status` is a concise, path-centered summary. It lists only entries needing attention: `Changes to push` use `->`, `Changes to pull` use `<-`, blockers appear under `Conflicts` with `<->`, and non-directional baseline or reconciliation work uses `>-<`. Clean entries appear only in the summary; use `grip diff` or `-o json` for detailed evidence.
+
+When status runs from a nested directory, its source side is shown relative to that directory. Use the ordinary displayed path with `push` from the same directory:
+
+```text
+$ cd app
+$ grip status
+Changes to push:
+  main.py -> ~/workspace/app/main.py
+
+$ grip push main.py
+```
+
+Paths elsewhere in the selected project use parent components when needed, such as `../shared/config.yml`. Human status paths use Git-style quoting when a name needs escaping; this is a display convention, not a shell-specific escaping guarantee.
 
 ```text
 Status: 2 entries checked; 2 current; no action needed.

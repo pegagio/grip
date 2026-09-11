@@ -39,11 +39,7 @@ pub fn run_process() -> std::process::ExitCode {
                 return std::process::ExitCode::SUCCESS;
             }
             if json_requested && error.kind() != clap::error::ErrorKind::InvalidValue {
-                let outcome = CommandOutcome {
-                    category: ResultCategory::InvalidUsage,
-                    message: error.to_string().trim().to_owned(),
-                    details: serde_json::Map::new(),
-                };
+                let outcome = CommandOutcome::invalid_usage(error.to_string().trim().to_owned());
                 let _ = result::render(outcome, result::OutputMode::Json, &mut io::stdout().lock());
             } else {
                 let _ = write!(io::stderr().lock(), "{error}");
@@ -121,21 +117,22 @@ fn execute_with_project(cli: &cli::Cli) -> (CommandOutcome, Option<project::Proj
         Ok(value) => value,
         Err(error) => return (CommandOutcome::failure(&error), None),
     };
+    let invocation_directory = match std::env::current_dir().and_then(std::fs::canonicalize) {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            return (
+                CommandOutcome::failure(&GripError::from_io(
+                    "could not read invocation directory",
+                    error,
+                )),
+                None,
+            );
+        }
+    };
     let selection = if let Some(path) = &cli.project {
         project::ProjectSelection::Explicit(path.clone())
     } else {
-        match std::env::current_dir() {
-            Ok(cwd) => project::ProjectSelection::Discovered(cwd),
-            Err(error) => {
-                return (
-                    CommandOutcome::failure(&GripError::from_io(
-                        "could not read invocation directory",
-                        error,
-                    )),
-                    None,
-                );
-            }
-        }
+        project::ProjectSelection::Discovered(invocation_directory.clone())
     };
     let context = match project::ProjectContext::select(selection.clone(), user_home.clone()) {
         Ok(Some(value)) => value,
@@ -148,7 +145,12 @@ fn execute_with_project(cli: &cli::Cli) -> (CommandOutcome, Option<project::Proj
     );
     let outcome = SELECTED_PROJECT.with(|slot| {
         let previous = slot.replace(Some(context.clone()));
-        let outcome = execute_selected(cli);
+        let outcome = INVOCATION_DIRECTORY.with(|directory| {
+            let previous_directory = directory.replace(Some(invocation_directory));
+            let outcome = execute_selected(cli);
+            directory.replace(previous_directory);
+            outcome
+        });
         slot.replace(previous);
         outcome
     });
@@ -231,6 +233,9 @@ thread_local! {
     static SELECTED_PROJECT: std::cell::RefCell<Option<project::ProjectContext>> = const {
         std::cell::RefCell::new(None)
     };
+    static INVOCATION_DIRECTORY: std::cell::RefCell<Option<std::path::PathBuf>> = const {
+        std::cell::RefCell::new(None)
+    };
 }
 
 fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
@@ -252,8 +257,9 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
         observation::model::PathSpace::Source
     };
     let selector = match args.path.as_deref() {
-        Some(path) => Some(resolve_portable_selector(
+        Some(path) => Some(resolve_push_selector(
             &selected_project()?,
+            &invocation_directory()?,
             path,
             path_space,
         )?),
@@ -368,7 +374,11 @@ fn execute_forced_direction(
     } else {
         observation::model::PathSpace::Source
     };
-    let selector = resolve_portable_selector(&context, path, path_space)?;
+    let selector = if winner == mutation::model::ConflictWinner::Source {
+        resolve_push_selector(&context, &invocation_directory()?, path, path_space)?
+    } else {
+        resolve_portable_selector(&context, path, path_space)?
+    };
     let selected = observation::model::resolve_selection(
         &registry,
         &state.accepted,
@@ -573,7 +583,23 @@ fn execute_inspection(
         .collect();
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let result = classification::model::ClassificationResult::new(operation, scope, records);
-    Ok(CommandOutcome::classification(&result))
+    let outcome = CommandOutcome::classification(&result);
+    if operation == "status" {
+        let invocation_directory = invocation_directory()?;
+        let source_paths = result
+            .records
+            .iter()
+            .map(|record| {
+                path_policy::git_relative_display(
+                    &record.identity.source_path(),
+                    &invocation_directory,
+                )
+            })
+            .collect();
+        Ok(outcome.with_human_status_source_paths(source_paths))
+    } else {
+        Ok(outcome)
+    }
 }
 
 fn classification_scope(
@@ -617,6 +643,25 @@ fn resolve_portable_selector(
     }
 }
 
+fn resolve_push_selector(
+    context: &project::ProjectContext,
+    invocation_directory: &std::path::Path,
+    selector: &std::ffi::OsStr,
+    path_space: observation::model::PathSpace,
+) -> Result<std::path::PathBuf, GripError> {
+    match path_space {
+        observation::model::PathSpace::Source => path_policy::resolve_cwd_relative_source_selector(
+            &context.root,
+            invocation_directory,
+            selector,
+            "push",
+        ),
+        observation::model::PathSpace::Destination => {
+            resolve_portable_selector(context, selector, path_space)
+        }
+    }
+}
+
 fn selected_home() -> Result<project::ProjectPaths, GripError> {
     selected_project().map(|context| {
         project::ProjectPaths::project_metadata(
@@ -630,6 +675,19 @@ fn selected_project() -> Result<project::ProjectContext, GripError> {
     SELECTED_PROJECT.with(|slot| {
         slot.borrow().clone().ok_or_else(|| {
             GripError::InvalidConfiguration("Grip project context is unavailable".into())
+        })
+    })
+}
+
+fn invocation_directory() -> Result<std::path::PathBuf, GripError> {
+    INVOCATION_DIRECTORY.with(|slot| {
+        slot.borrow().clone().ok_or_else(|| {
+            GripError::lifecycle(
+                "command_execution",
+                "invocation_directory_unavailable",
+                ResultCategory::InternalError,
+                "invocation directory is unavailable during project execution",
+            )
         })
     })
 }

@@ -285,3 +285,144 @@ fn project_commands_resolve_source_and_destination_selectors_in_portable_spaces(
     );
     assert!(fixture.command(&["remove", "./source/"]).status.success());
 }
+
+#[test]
+fn push_resolves_status_source_labels_from_the_invocation_directory() {
+    let fixture = ProjectFixture::initialized();
+    let app = fixture.project_root.join("app");
+    let shared = fixture.project_root.join("shared");
+    fs::create_dir_all(&app).unwrap();
+    fs::create_dir_all(&shared).unwrap();
+    add_changed_file_mapping(
+        &fixture,
+        "app/main.py",
+        "workspace/app/main.py",
+        "main changed",
+    );
+    add_changed_file_mapping(
+        &fixture,
+        "shared/config.yml",
+        "workspace/shared/config.yml",
+        "config changed",
+    );
+
+    let status = fixture.command_from(&app, &["status"]);
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let stdout = String::from_utf8(status.stdout).unwrap();
+    assert!(stdout.contains("  main.py -> "));
+    assert!(stdout.contains("  ../shared/config.yml -> "));
+
+    let normal = fixture.command_from(&app, &["push", "main.py"]);
+    assert!(
+        normal.status.success(),
+        "{}",
+        String::from_utf8_lossy(&normal.stdout)
+    );
+    assert_eq!(
+        fs::read(fixture.home_destination("workspace/app/main.py")).unwrap(),
+        b"main changed"
+    );
+    let dry_run = fixture.command_from(&app, &["push", "--dry-run", "../shared/config.yml"]);
+    assert!(
+        dry_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry_run.stdout)
+    );
+    let forced = fixture.command_from(
+        &app,
+        &["push", "--force", "--dry-run", "../shared/config.yml"],
+    );
+    assert!(!forced.status.success());
+    assert!(
+        String::from_utf8(forced.stdout)
+            .unwrap()
+            .starts_with("Resolution blocked:"),
+    );
+
+    let external = fixture.explicit_project_command(&["status"]);
+    assert!(external.status.success());
+    let external_label = format!(
+        "{}/shared/config.yml",
+        fixture.project_root.file_name().unwrap().to_string_lossy()
+    );
+    assert!(
+        String::from_utf8(external.stdout)
+            .unwrap()
+            .contains(&format!("  {external_label} -> "))
+    );
+    let explicit_push = fixture.explicit_project_command(&["push", "--dry-run", &external_label]);
+    assert!(
+        explicit_push.status.success(),
+        "{}",
+        String::from_utf8_lossy(&explicit_push.stdout)
+    );
+}
+
+#[test]
+fn cwd_relative_push_rejects_absolute_and_escaping_selectors_without_mutation() {
+    let fixture = ProjectFixture::initialized();
+    let app = fixture.project_root.join("app");
+    fs::create_dir_all(&app).unwrap();
+    add_changed_file_mapping(
+        &fixture,
+        "app/main.py",
+        "workspace/app/main.py",
+        "main changed",
+    );
+    let outside = fixture.root.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("secret"), "secret").unwrap();
+    std::os::unix::fs::symlink(&outside, app.join("escape")).unwrap();
+    let state_before = fs::read(fixture.state_dir().join("state.json")).unwrap();
+
+    for selector in [
+        fixture
+            .project_root
+            .join("app/main.py")
+            .to_string_lossy()
+            .into_owned(),
+        "../../outside/secret".into(),
+        "escape/secret".into(),
+    ] {
+        let output = fixture.command_from(&app, &["push", "--dry-run", &selector]);
+        assert!(
+            !output.status.success(),
+            "selector={selector} output={}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(
+            fs::read(fixture.state_dir().join("state.json")).unwrap(),
+            state_before
+        );
+    }
+}
+
+fn add_changed_file_mapping(
+    fixture: &ProjectFixture,
+    source_relative: &str,
+    destination_relative: &str,
+    changed_content: &str,
+) {
+    let source = fixture.project_root.join(source_relative);
+    let destination = fixture.home_destination(destination_relative);
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    fs::write(&source, "same").unwrap();
+    fs::write(&destination, "same").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    assert!(
+        fixture
+            .command(&["add", source_relative, &format!("~/{destination_relative}"),])
+            .status
+            .success()
+    );
+    fs::write(source, changed_content).unwrap();
+}
