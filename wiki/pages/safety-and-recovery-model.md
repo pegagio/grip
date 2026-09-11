@@ -2,7 +2,7 @@
 title: Safety model and recovery boundary
 type: decision
 sources: [S001]
-updated: 2026-09-10
+updated: 2026-09-11
 ---
 
 # Safety model and recovery boundary

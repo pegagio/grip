@@ -609,11 +609,11 @@ fn resolve_portable_selector(
 ) -> Result<std::path::PathBuf, GripError> {
     match path_space {
         observation::model::PathSpace::Source => {
-            path_policy::ProjectRelativePath::parse(selector, true)
+            path_policy::ProjectRelativePath::parse_cli(selector, true)
                 .map(|path| path.resolve(&context.root))
         }
         observation::model::PathSpace::Destination => path_policy::DestinationPath::parse(selector)
-            .map(|path| path.resolve(context.user_home.path())),
+            .map(|path| path.resolve(&context.root, context.user_home.path())),
     }
 }
 
@@ -641,9 +641,9 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
     let context = selected_project()?;
     let home = selected_home()?;
     let source_path =
-        path_policy::ProjectRelativePath::parse(&args.source, true)?.resolve(&context.root);
-    let destination_path =
-        path_policy::DestinationPath::parse(&args.destination)?.resolve(context.user_home.path());
+        path_policy::ProjectRelativePath::parse_cli(&args.source, true)?.resolve(&context.root);
+    let destination_path = path_policy::DestinationPath::parse(&args.destination)?
+        .resolve(&context.root, context.user_home.path());
     let source_kind = existing_mapping_kind(&source_path, operation)?;
     let destination_kind = existing_mapping_kind(&destination_path, operation)?;
     let kind = match (source_kind, destination_kind) {
@@ -672,7 +672,7 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
             ));
         }
     };
-    let portable = mapping::PortableMapping::parse(kind, &args.source, &args.destination)?;
+    let portable = mapping::PortableMapping::parse_cli(kind, &args.source, &args.destination)?;
     let snapshot = registry::publication::load(&home, true).map_err(|error| {
         error
             .for_mapping_operation(operation)
@@ -685,7 +685,9 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         operation,
     )?;
     let destination_evidence = path_policy::inspect_durable_endpoint(
-        &portable.destination.resolve(context.user_home.path()),
+        &portable
+            .destination
+            .resolve(&context.root, context.user_home.path()),
         kind,
         false,
         operation,
@@ -758,7 +760,8 @@ fn execute_list(args: &cli::ListArgs) -> Result<CommandOutcome, GripError> {
         .map_err(|error| error.for_mapping_operation("list"))?;
     let details = snapshot.mapping_details()?;
     let mappings = if let Some(source) = &args.source {
-        let source = path_policy::ProjectRelativePath::parse(source, true)?.resolve(&context.root);
+        let source =
+            path_policy::ProjectRelativePath::parse_cli(source, true)?.resolve(&context.root);
         details
             .into_iter()
             .filter(|mapping| {
@@ -777,12 +780,13 @@ fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
     let snapshot = registry::publication::load(&home, true)
         .map_err(|error| error.for_mapping_operation("remove"))?;
     let source =
-        path_policy::ProjectRelativePath::parse(&args.source, true)?.resolve(&context.root);
-    let removed_index = snapshot
-        .registry
-        .mappings()
-        .iter()
-        .position(|mapping| mapping.source == source)
+        path_policy::ProjectRelativePath::parse_cli(&args.source, true)?.resolve(&context.root);
+    let removed = snapshot
+        .mapping_details()?
+        .into_iter()
+        .find(|mapping| {
+            mapping.resolved.source == crate::discovery::model::SafePath::from_path(&source)
+        })
         .ok_or_else(|| {
             GripError::mapping(
                 "remove",
@@ -791,7 +795,6 @@ fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
                 "Mapping not found",
             )
         })?;
-    let removed = snapshot.mapping_details()?[removed_index].clone();
     let mappings = snapshot
         .registry
         .mappings()
@@ -802,7 +805,14 @@ fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
     let candidate = registry::ResolvedRegistry::new(mappings)?;
     let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, "remove")?;
     revalidate_project_for_mutation()?;
-    registry::publication::publish(&home, &snapshot, &candidate)?;
+    let portable = registry::ProjectDescriptorV2::new(
+        snapshot
+            .portable_mappings()?
+            .into_iter()
+            .filter(|mapping| mapping.source.resolve(&context.root) != source)
+            .collect(),
+    )?;
+    registry::publication::publish_with_descriptor(&home, &snapshot, &candidate, &portable)?;
     prune_removed_baseline(&home, &source)?;
     Ok(CommandOutcome::mapping_success(
         "remove",

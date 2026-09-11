@@ -348,14 +348,14 @@ pub(crate) fn runtime_identity_from_portable(
         ResolvedMapping {
             kind: identity.mapping.kind,
             source: identity.mapping.source.resolve(home.project_root()?),
-            destination: identity
-                .mapping
-                .destination
-                .resolve(home.destination_home().ok_or_else(|| {
+            destination: identity.mapping.destination.resolve(
+                home.project_root()?,
+                home.destination_home().ok_or_else(|| {
                     GripError::InvalidConfiguration(
                         "project destination home is unavailable".into(),
                     )
-                })?),
+                })?,
+            ),
         },
         decode_hex(&identity.relative_path_hex)?,
     )

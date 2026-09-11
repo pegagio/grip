@@ -71,18 +71,32 @@ fn add_accepts_absolute_and_non_normalized_home_destinations_without_copying_pay
 }
 
 #[test]
-fn add_rejects_relative_destination_without_changing_the_descriptor() {
+fn add_accepts_relative_destination_without_normalizing_its_declaration() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::write(root.path().join("README.md"), "payload").unwrap();
+    let destination_root = root.path().join("..").join("grip-destination");
+    fs::create_dir_all(&destination_root).unwrap();
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "README.md", "../grip-destination/./README.md"],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        fs::read_to_string(metadata_dir.join("config.toml"))
+            .unwrap()
+            .contains("destination = \"../grip-destination/./README.md\"")
+    );
+}
+
+#[test]
+fn add_rejects_invalid_destination_forms_without_changing_the_descriptor() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
     fs::write(root.path().join("README.md"), "payload").unwrap();
     let before = fs::read(metadata_dir.join("config.toml")).unwrap();
-    for destination in [
-        "destination/README.md",
-        "./destination",
-        "../destination",
-        "~other/x",
-        "$HOME/x",
-    ] {
+    for destination in ["", "~other/x", "$HOME/x"] {
         let output = support::project_command(
             root.path(),
             &metadata_dir,
@@ -91,7 +105,7 @@ fn add_rejects_relative_destination_without_changing_the_descriptor() {
         assert_ne!(output.status.code(), Some(0), "{destination}");
         assert!(
             String::from_utf8_lossy(&output.stdout)
-                .contains("destination must be an absolute path, ~, or a ~/ path")
+                .contains("destination must be an absolute path, ~, a ~/ path, or a project-relative path resolved from the selected project root")
         );
         assert_eq!(fs::read(metadata_dir.join("config.toml")).unwrap(), before);
     }

@@ -2,18 +2,18 @@
 title: Filesystem support boundaries
 type: reference
 sources: [S001, S004, S005, S006, S008, S009, S012]
-updated: 2026-09-08
+updated: 2026-09-11
 ---
 
 # Filesystem support boundaries
 
 Grip’s initial ordinary payload contract covers regular files and directories. Hard-linked files, sparse files, sockets, FIFOs, device nodes, whiteouts, unknown special nodes, and nested mount boundaries are unsupported until their semantics are deliberately specified and tested. (S001)
 
-For Feature 002 mapping identities, a final symbolic-link endpoint is rejected. A safe intermediate symlink to a directory may be resolved while canonicalizing the longest existing prefix, including for an absent destination or absent `show`/`remove` selector. The submitted path and resolved anchor evidence are retained so retargeting that intermediate alias before publication is detected as stale evidence rather than silently changing ownership. (S005)
+Feature 002 rejects final symbolic-link endpoints. It may resolve a safe intermediate directory symlink while canonicalizing the longest existing prefix. Submitted-path and resolved-anchor evidence makes retargeting before publication stale rather than a silent ownership change. (S005)
 
 Mapping sources must exist as the declared regular file or directory kind. A destination may be absent when its nearest existing canonical ancestor is a safe directory; any existing destination must have the corresponding kind. Inputs must be absolute UTF-8 paths without parent traversal, and accepted registry paths must already equal their resolved canonical identities. (S005)
 
-The current portable interface replaces those historical absolute declarations: sources are normalized relative to the selected project, destinations use `~`-relative notation, and both resolve through non-following validated ancestry within their permitted roots. (S001)
+The current portable interface replaces those historical absolute declarations: sources are normalized relative to the selected project, while destinations may be absolute, home-relative, or project-relative and resolve through non-following validated ancestry within their permitted roots. The README records the same selected-project interpretation for relative destination declarations. (S001) (S004)
 
 A non-ignored unsupported source entry or an unsupported node colliding with a managed destination blocks mutation. An unsupported destination-only entry outside the managed namespace remains untouched because Grip does not own it. Ignored unsupported source entries may be skipped when ignore evaluation excludes them before management. (S001)
 

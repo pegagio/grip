@@ -31,6 +31,22 @@ pub struct PortableMapping {
 }
 
 impl PortableMapping {
+    /// Parse command-line mapping arguments into a normalized declaration.
+    pub fn parse_cli(
+        kind: MappingKind,
+        source: &OsStr,
+        destination: &OsStr,
+    ) -> Result<Self, crate::GripError> {
+        Ok(Self {
+            kind,
+            source: crate::path_policy::ProjectRelativePath::parse_cli(
+                source,
+                kind == MappingKind::Tree,
+            )?,
+            destination: crate::path_policy::DestinationPath::parse(destination)?,
+        })
+    }
+
     pub fn parse(
         kind: MappingKind,
         source: &OsStr,
@@ -62,7 +78,7 @@ impl PortableMapping {
         operation: &str,
     ) -> Result<ResolvedMapping, crate::GripError> {
         let source_path = self.source.resolve(project_root);
-        let destination_path = self.destination.resolve(home_root);
+        let destination_path = self.destination.resolve(project_root, home_root);
         let source_evidence =
             crate::path_policy::inspect_durable_endpoint(&source_path, self.kind, true, operation)?;
         let destination_evidence =

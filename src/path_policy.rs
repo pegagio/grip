@@ -35,6 +35,24 @@ impl ProjectRelativePath {
         Ok(Self(value.to_owned()))
     }
 
+    /// Parse a command-line source path and normalize it for portable storage.
+    ///
+    /// The command line accepts ordinary relative spellings such as `./app/`;
+    /// the descriptor always retains their normalized project-relative form.
+    pub fn parse_cli(value: &std::ffi::OsStr, allow_tree_root: bool) -> Result<Self, GripError> {
+        let value = value.to_str().ok_or_else(|| {
+            portable_path_error("non_utf8_path", value, "portable paths must be valid UTF-8")
+        })?;
+        let normalized = normalize_project_relative_input(value).ok_or_else(|| {
+            portable_path_error(
+                "invalid_project_relative_path",
+                std::ffi::OsStr::new(value),
+                "source must resolve to a project-relative path outside .grip",
+            )
+        })?;
+        Self::parse(std::ffi::OsStr::new(&normalized), allow_tree_root)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -45,6 +63,27 @@ impl ProjectRelativePath {
         } else {
             root.join(&self.0)
         }
+    }
+}
+
+fn normalize_project_relative_input(value: &str) -> Option<String> {
+    if value.is_empty() || value.starts_with('/') {
+        return None;
+    }
+    let mut components = Vec::new();
+    for component in value.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop()?;
+            }
+            component => components.push(component),
+        }
+    }
+    if components.is_empty() {
+        Some(".".into())
+    } else {
+        Some(components.join("/"))
     }
 }
 
@@ -64,18 +103,21 @@ impl<'de> serde::Deserialize<'de> for ProjectRelativePath {
 pub struct DestinationPath(String);
 
 impl DestinationPath {
-    /// Parse an absolute path, exact `~`, or any `~/` path spelling.
+    /// Parse an absolute, home-relative, or project-relative destination declaration.
     pub fn parse(value: &std::ffi::OsStr) -> Result<Self, GripError> {
         let value = value.to_str().ok_or_else(|| {
             portable_path_error("non_utf8_path", value, "portable paths must be valid UTF-8")
         })?;
-        if value == "~" || value.starts_with("~/") || Path::new(value).is_absolute() {
+        if !value.is_empty()
+            && !value.starts_with('$')
+            && (!value.starts_with('~') || value == "~" || value.starts_with("~/"))
+        {
             return Ok(Self(value.to_owned()));
         }
         Err(portable_path_error(
             "invalid_destination_path",
             std::ffi::OsStr::new(value),
-            "destination must be an absolute path, ~, or a ~/ path",
+            "destination must be an absolute path, ~, a ~/ path, or a project-relative path resolved from the selected project root",
         ))
     }
 
@@ -83,11 +125,12 @@ impl DestinationPath {
         &self.0
     }
 
-    pub fn resolve(&self, home: &Path) -> PathBuf {
+    pub fn resolve(&self, project_root: &Path, home: &Path) -> PathBuf {
         let path = match self.0.strip_prefix("~/") {
             Some(suffix) => home.join(suffix),
             None if self.0 == "~" => home.to_path_buf(),
-            None => PathBuf::from(&self.0),
+            None if Path::new(&self.0).is_absolute() => PathBuf::from(&self.0),
+            None => project_root.join(&self.0),
         };
         lexical_normalize_absolute(&path)
     }
