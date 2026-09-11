@@ -26,12 +26,30 @@ fn descriptor_v2_round_trips_in_canonical_tuple_order() {
 }
 
 #[test]
+fn descriptor_v2_round_trips_absolute_and_non_normalized_destinations_verbatim() {
+    let descriptor = registry::ProjectDescriptorV2::new(vec![
+        PortableMapping::parse(MappingKind::File, OsStr::new("a"), OsStr::new("~/a//./b")).unwrap(),
+        PortableMapping::parse(
+            MappingKind::File,
+            OsStr::new("b"),
+            OsStr::new("/tmp/grip-destination"),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let bytes = registry::encode_descriptor(&descriptor).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.contains("destination = \"~/a//./b\""));
+    assert!(text.contains("destination = \"/tmp/grip-destination\""));
+    assert_eq!(registry::decode_descriptor(text).unwrap(), descriptor);
+}
+
+#[test]
 fn descriptor_v2_is_strict_and_rejects_v1() {
     for invalid in [
         "schema_version = 1\nmappings = []\n",
         "schema_version = 2\nmappings = []\nunknown = true\n",
         "schema_version = 2\n[[mappings]]\nkind = \"file\"\nsource = \"/absolute\"\ndestination = \"~/x\"\n",
-        "schema_version = 2\n[[mappings]]\nkind = \"file\"\nsource = \"x\"\ndestination = \"/absolute\"\n",
         "schema_version = 2\n[[mappings]]\nkind = \"file\"\nsource = \".\"\ndestination = \"~/x\"\n",
     ] {
         assert!(registry::decode_descriptor(invalid).is_err(), "{invalid}");

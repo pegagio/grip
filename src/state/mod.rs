@@ -305,48 +305,36 @@ pub(crate) fn runtime_from_accepted_v4(
     })
 }
 
-fn portable_from_runtime_identity(
-    identity: &EntryIdentity,
-    project_root: &std::path::Path,
-    user_home: &std::path::Path,
-) -> Result<crate::mapping::PortableMapping, GripError> {
-    let source = identity
-        .mapping
-        .source
-        .strip_prefix(project_root)
-        .map_err(|_| GripError::CorruptState("baseline source escapes project root".into()))?;
-    let destination = identity
-        .mapping
-        .destination
-        .strip_prefix(user_home)
-        .map_err(|_| GripError::CorruptState("baseline destination escapes user home".into()))?;
-    let source = if source.as_os_str().is_empty() {
-        std::ffi::OsString::from(".")
-    } else {
-        source.as_os_str().to_owned()
-    };
-    let destination = if destination.as_os_str().is_empty() {
-        std::ffi::OsString::from("~")
-    } else {
-        let mut value = std::ffi::OsString::from("~/");
-        value.push(destination);
-        value
-    };
-    crate::mapping::PortableMapping::parse(identity.mapping.kind, &source, &destination)
-}
-
 pub(crate) fn portable_identity_from_runtime(
     home: &crate::project::ProjectPaths,
     identity: &EntryIdentity,
 ) -> Result<EntryIdentityV4, GripError> {
+    let descriptor_bytes = std::fs::read(home.path().join("config.toml")).map_err(|error| {
+        GripError::from_io("could not read project descriptor for state", error)
+    })?;
+    let descriptor_text = std::str::from_utf8(&descriptor_bytes)
+        .map_err(|_| GripError::InvalidConfiguration("project descriptor must be UTF-8".into()))?;
+    let descriptor = crate::registry::decode_descriptor(descriptor_text)?;
+    let resolved = descriptor.resolve(
+        home.project_root()?,
+        home.destination_home().ok_or_else(|| {
+            GripError::InvalidConfiguration("project destination home is unavailable".into())
+        })?,
+        "state_identity",
+    )?;
+    let mapping = resolved
+        .iter()
+        .find(|mapping| {
+            mapping.declaration.kind == identity.mapping.kind
+                && mapping.source == identity.mapping.source
+                && mapping.destination == identity.mapping.destination
+        })
+        .map(|mapping| mapping.declaration.clone())
+        .ok_or_else(|| {
+            GripError::CorruptState("runtime identity has no active mapping declaration".into())
+        })?;
     Ok(EntryIdentityV4 {
-        mapping: portable_from_runtime_identity(
-            identity,
-            home.project_root()?,
-            home.destination_home().ok_or_else(|| {
-                GripError::InvalidConfiguration("project destination home is unavailable".into())
-            })?,
-        )?,
+        mapping,
         relative_path_hex: encode_hex(&identity.relative_path),
     })
 }

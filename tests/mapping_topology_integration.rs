@@ -73,3 +73,29 @@ fn component_boundary_siblings_are_disjoint() {
     assert!(add(&fixture, "a", "~/x"));
     assert!(add(&fixture, "ab", "~/xy"));
 }
+
+#[test]
+fn equivalent_normalized_destination_declarations_conflict() {
+    let fixture = ProjectFixture::initialized();
+    fs::write(fixture.project_root.join("a"), "a").unwrap();
+    fs::write(fixture.project_root.join("b"), "b").unwrap();
+    assert!(add(&fixture, "a", "~/a/../b"));
+    let before = fs::read(fixture.descriptor_path()).unwrap();
+    assert!(!add(&fixture, "b", "~/b"));
+    assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
+}
+
+#[test]
+fn absolute_and_home_relative_equivalent_destinations_conflict() {
+    let fixture = ProjectFixture::initialized();
+    fs::write(fixture.project_root.join("a"), "a").unwrap();
+    fs::write(fixture.project_root.join("b"), "b").unwrap();
+    assert!(add(&fixture, "a", "~/same"));
+    let before = fs::read(fixture.descriptor_path()).unwrap();
+    assert!(!add(
+        &fixture,
+        "b",
+        fixture.home_destination("same").to_str().unwrap()
+    ));
+    assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
+}

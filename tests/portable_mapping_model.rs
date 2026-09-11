@@ -1,5 +1,5 @@
 use grip::mapping::{MappingKind, PortableMapping};
-use grip::path_policy::{HomeRelativePath, ProjectRelativePath};
+use grip::path_policy::{DestinationPath, ProjectRelativePath};
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStringExt;
 
@@ -61,39 +61,50 @@ fn project_relative_path_rejects_non_utf8() {
 }
 
 #[test]
-fn home_relative_path_accepts_home_and_descendants() {
-    assert_eq!(
-        HomeRelativePath::parse(OsStr::new("~")).unwrap().as_str(),
-        "~"
-    );
-    assert_eq!(
-        HomeRelativePath::parse(OsStr::new("~/.config/editor"))
-            .unwrap()
-            .as_str(),
-        "~/.config/editor"
-    );
-}
-
-#[test]
-fn home_relative_path_rejects_noncanonical_and_expanding_forms() {
+fn destination_path_accepts_and_preserves_all_authorized_forms() {
     for input in [
-        "",
-        "/absolute",
-        "relative",
+        "~",
         "~/",
-        "~/a/",
+        "~/.config/editor",
         "~/a//b",
         "~/a/./b",
         "~/../escape",
+        "/absolute/destination",
+    ] {
+        assert_eq!(
+            DestinationPath::parse(OsStr::new(input)).unwrap().as_str(),
+            input
+        );
+    }
+}
+
+#[test]
+fn destination_path_rejects_relative_and_expanding_forms() {
+    for input in [
+        "",
+        "relative",
+        "./relative",
+        "../relative",
         "~other/x",
         "${HOME}/x",
         "$HOME/x",
     ] {
         assert!(
-            HomeRelativePath::parse(OsStr::new(input)).is_err(),
+            DestinationPath::parse(OsStr::new(input)).is_err(),
             "{input}"
         );
     }
+}
+
+#[test]
+fn destination_path_lexically_normalizes_only_for_operational_resolution() {
+    let home = std::path::Path::new("/tmp/home");
+    let path = DestinationPath::parse(OsStr::new("~/a//./b/../c")).unwrap();
+    assert_eq!(path.as_str(), "~/a//./b/../c");
+    assert_eq!(
+        path.resolve(home),
+        std::path::PathBuf::from("/tmp/home/a/c")
+    );
 }
 
 #[test]

@@ -70,13 +70,15 @@ fn mapping_commands_use_project_relative_source_identity() {
 }
 
 #[test]
-fn mapping_add_rejects_absolute_traversal_environment_and_other_user_forms() {
+fn mapping_add_rejects_invalid_sources_and_destination_forms() {
     let fixture = ProjectFixture::initialized();
     fs::write(fixture.project_root.join("file"), "payload").unwrap();
     for (source, destination) in [
         ("/absolute", "~/x"),
         ("../escape", "~/x"),
-        ("file", "/absolute"),
+        ("file", "relative"),
+        ("file", "./relative"),
+        ("file", "../relative"),
         ("file", "${HOME}/x"),
         ("file", "~other/x"),
     ] {
@@ -87,6 +89,108 @@ fn mapping_add_rejects_absolute_traversal_environment_and_other_user_forms() {
                 .success()
         );
     }
+}
+
+#[test]
+fn mapping_add_preserves_non_normalized_home_destination_and_supports_selectors() {
+    let fixture = ProjectFixture::initialized();
+    fs::write(fixture.project_root.join("file"), "payload").unwrap();
+    let destination = fixture.home_destination(".config/grip/../editor");
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    assert!(
+        fixture
+            .command(&["add", "file", "~/.config/grip/../editor"])
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(fixture.descriptor_path())
+            .unwrap()
+            .contains("destination = \"~/.config/grip/../editor\"")
+    );
+    assert!(fixture.command(&["list"]).status.success());
+    assert!(
+        fixture
+            .command(&["status", "--destination", "~/.config//editor"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn mapping_add_accepts_and_persists_standalone_home_destination() {
+    let fixture = ProjectFixture::initialized();
+    fs::create_dir(fixture.project_root.join("source-tree")).unwrap();
+    assert!(
+        fixture
+            .command(&["add", "source-tree", "~"])
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(fixture.descriptor_path())
+            .unwrap()
+            .contains("destination = \"~\"")
+    );
+    assert!(fixture.command(&["list"]).status.success());
+    assert!(
+        fixture
+            .command(&["status", "--destination", "~"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn mapping_add_preserves_absolute_destination_and_supports_destination_selector() {
+    let fixture = ProjectFixture::initialized();
+    fs::write(fixture.project_root.join("file"), "payload").unwrap();
+    let destination = fixture.absolute_destination("editor");
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    let destination_text = destination.to_str().unwrap();
+    assert!(
+        fixture
+            .command(&["add", "file", destination_text])
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(fixture.descriptor_path())
+            .unwrap()
+            .contains(&format!("destination = \"{destination_text}\""))
+    );
+    assert!(fixture.command(&["list"]).status.success());
+    assert!(
+        fixture
+            .command(&["status", "--destination", destination_text])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn absolute_destination_declaration_survives_state_publication_and_removal() {
+    let fixture = ProjectFixture::initialized();
+    let source = fixture.project_root.join("file");
+    let destination = fixture.absolute_destination("editor");
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    fs::write(&source, "payload").unwrap();
+    fs::write(&destination, "payload").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    let destination_text = destination.to_str().unwrap();
+    assert!(
+        fixture
+            .command(&["add", "file", destination_text])
+            .status
+            .success()
+    );
+    let state = fs::read_to_string(fixture.state_dir().join("state.json")).unwrap();
+    assert!(state.contains(destination_text));
+    assert!(fixture.command(&["remove", "file"]).status.success());
 }
 
 #[test]
@@ -128,7 +232,7 @@ fn project_commands_resolve_source_and_destination_selectors_in_portable_spaces(
             .success()
     );
     assert!(
-        !fixture
+        fixture
             .command(&["status", "--destination", destination.to_str().unwrap()])
             .status
             .success()
