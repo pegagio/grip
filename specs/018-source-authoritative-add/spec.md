@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-12
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "`grip add` remains non-mutating. When its source differs from its destination, source is authoritative: record the destination as the initial baseline reference so `grip status` offers a push, not a pull."
 

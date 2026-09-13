@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.5.0 -> 1.5.1
-Bump rationale: Record the successful source-preserving debrief and authorized verification of Feature 015.
+Version change: 1.5.1 -> 1.6.0
+Bump rationale: Backfill five implemented features that were absent from the ledger.
 
 Changes this revision:
-  - Transitioned Feature 015 from in-progress to verified
+  - Added implemented ledger entries for Features 013 and 016 through 019
 
-Specs affected: 015
+Specs affected: 013, 016, 017, 018, 019
 Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-11. The debrief found no outcome miss, scope creep, constraint violation, or stale-roadmap finding, and all verification recommendation gates passed.
+Notes: Direct active-user authorization on 2026-09-13. These entries preserve delivered scope and implementation provenance; each remains implemented until a feature-specific debrief supports verification.
 -->
 
 # Grip — Spec Roadmap
@@ -198,6 +198,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-10, including the reported `destination must be ~ or a normalized ~/ path` diagnostic.
 - **Notes:** This is an intentional pre-release interface correction. Feature 010's portable user-relative-destination restriction and Feature 011's resulting destination validation are superseded only where they conflict with C-14; both verified features remain historical evidence. Accepted destination spelling is preserved in mapping intent and resolved only for validation and use. Verification evidence: `specs/012-destination-path-forms/roadmap-reviews/debrief-20260911T045048Z.md` (`PROCEED`, no findings).
 
+### 013 — Source Path Input Normalization  [status: implemented]
+
+- **Spec dir:** `specs/013-source-path-input`
+- **Description:** Accept ordinary project-contained relative source spellings at the CLI boundary while retaining strict normalized source declarations in project metadata.
+- **Outcome:** An operator can use a spelling such as `./app/` for source-side mapping creation and selection, while Grip stores and resolves the same canonical project-relative source identity as `app` and rejects project escapes or `.grip` paths before mutation.
+- **Scope (in):** Lexical source-input normalization; source-space command selection; project and reserved-metadata containment; strict persisted-declaration validation; documentation; and isolated boundary regression coverage.
+- **Scope (out):** Absolute or environment-expanded source forms, destination-path changes, endpoint payload mutation during `add`, storage migration, and new commands or options.
+- **Depends on:** 012
+- **Governed by:** C-02, C-04, C-05, C-10, C-11, C-12, C-13, C-14
+- **Addresses:** `specs/013-source-path-input/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
+- **Notes:** Delivered in `8d70eb3` with its complete feature artifacts and validation. The feature normalizes only submitted source input; stored source declarations remain strict and canonical. It remains implemented pending a feature-specific debrief.
+
 ### 014 — Relative Destination Paths  [status: verified]
 
 - **Spec dir:** `specs/014-relative-destination-paths`
@@ -221,6 +233,54 @@ The following specifications form the approved path from a read-only foundation 
 - **Governed by:** C-03, C-04, C-08, C-09, C-10, C-11
 - **Addresses:** `docs/product-definition.md` — Synchronization Model, Content and Metadata, Command-Line Experience; `README.md` — Inspect changes and baseline status.
 - **Notes:** `->`, `<-`, `<->`, and `>-<` are presentation-only signals and do not select a conflict winner or an unsafe payload direction. Informational no-action diagnostics are omitted only from default human output; safety blockers remain visible. Direct active-user decision and completed feature artifacts are the governing provenance. Verification evidence: `specs/015-simplify-status-output/roadmap-reviews/debrief-20260911T212103Z.md` (`PROCEED`, no findings).
+
+### 016 — Current-Directory Status Paths  [status: implemented]
+
+- **Spec dir:** `specs/016-cwd-status-paths`
+- **Description:** Render default-human status source paths relative to the invocation directory and accept ordinary displayed source selectors in a following `grip push` from that directory.
+- **Outcome:** Operators can inspect a pushable source path from the project root, a nested directory, a sibling directory, or outside an explicitly selected project, then copy the displayed ordinary source selector into `grip push` without translating it manually.
+- **Scope (in):** Invocation-directory-relative source display; Git-style human quoting; `grip push` source-selector resolution and containment; preserved status grammar and JSON; documentation; and isolated round-trip, escape, and regression coverage.
+- **Scope (out):** Shell-safe quoting guarantees, destination-selector changes, mapping-declaration changes, JSON changes, and weakened selected-project containment.
+- **Depends on:** 015
+- **Governed by:** C-02, C-04, C-05, C-08, C-10, C-11, C-12, C-13
+- **Addresses:** `specs/016-cwd-status-paths/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
+- **Notes:** Delivered in `b67be25` with complete feature artifacts and validation. Source labels are a human display and immediate `push` handoff contract; destination representation and structured output remain distinct. It remains implemented pending a feature-specific debrief.
+
+### 017 — Simplify Default Command Output  [status: implemented]
+
+- **Spec dir:** `specs/017-simplify-command-output`
+- **Description:** Make default human output for mappings, status, mutation results, and errors concise and action-oriented while preserving detailed and machine-readable interfaces.
+- **Outcome:** Operators can see declared mappings, status groups, planned or completed directional changes, blocked next steps, and errors without internal plan, recovery, verification, baseline, or record-identification detail; `grip diff` and JSON remain unchanged.
+- **Scope (in):** Default human mapping, status, mutation, and error presentation; concise result headings and directional rows; force-resolution guidance; documentation; and transcript-based regression coverage.
+- **Scope (out):** `grip diff` presentation, JSON schemas or values, selection, classification, mutation semantics, filesystem safety, storage, and migrations.
+- **Depends on:** 015, 016
+- **Governed by:** C-01, C-03, C-04, C-05, C-08, C-10, C-11, C-12
+- **Addresses:** `specs/017-simplify-command-output/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
+- **Notes:** Delivered in `1b65b74` with complete feature artifacts and validation. Feature 019 supersedes only its force-guidance rendering where an aggregate selector is not executable. It remains implemented pending a feature-specific debrief.
+
+### 018 — Source-Authoritative Mapping Addition  [status: implemented]
+
+- **Spec dir:** `specs/018-source-authoritative-add`
+- **Description:** Keep `grip add` non-mutating for endpoint payloads while making a newly added unequal source-defined member immediately eligible for an ordinary push.
+- **Outcome:** Adding an unequal file or source-defined tree member records the destination as its initial comparison reference, so status, push, and sync offer source-to-destination work without copying either endpoint during `add`; incomplete publication remains explicitly fenced per mapping.
+- **Scope (in):** Add-time initial comparison state for unequal managed files and tree members; source-defined membership and ignore handling; mapping-scoped incomplete-add publication fencing; bounded retry or restoration; documentation; and isolated success and failure regression coverage.
+- **Scope (out):** Endpoint payload mutation during `add`, destination-only ownership, changed selectors or force semantics, automatic conflict resolution, `diff` changes, JSON changes, and user-facing recovery history.
+- **Depends on:** 004, 011
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-10, C-11, C-12, C-13, C-14
+- **Addresses:** `specs/018-source-authoritative-add/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
+- **Notes:** Delivered in `1b65b74` with complete feature artifacts and validation. Source authority is represented by the destination comparison reference, not by payload copying or a permanent source-wins rule. It remains implemented pending a feature-specific debrief.
+
+### 019 — Executable Force-Resolution Guidance  [status: implemented]
+
+- **Spec dir:** `specs/019-executable-force-guidance`
+- **Description:** Display force-resolution commands only when the shown selector resolves to one exact established managed entry; give aggregate conflicts a read-only inspection step instead.
+- **Outcome:** Every source-winning or destination-winning force command shown by default human status or blocked mutation output passes the existing exact-entry selector validation from the same invocation directory. Aggregate conflicts show `grip diff SOURCE` rather than a force command that cannot run.
+- **Scope (in):** Exact-entry eligibility for human force guidance; aggregate inspection guidance; status and blocked mutation rendering; documentation; and exact-file, aggregate-tree, JSON, and safety regression coverage.
+- **Scope (out):** Expanded force authority, aggregate conflict resolution, selector interpretation changes, classification, mutation planning, filesystem changes, JSON changes, and `grip diff` behavior changes.
+- **Depends on:** 017
+- **Governed by:** C-02, C-04, C-05, C-07, C-10, C-11, C-12
+- **Addresses:** `specs/019-executable-force-guidance/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
+- **Notes:** Delivered in `af6f9af` with complete feature artifacts and full validation. The existing exact-entry force boundary remains authoritative; aggregate guidance is inspection-only. It remains implemented pending a feature-specific debrief.
 
 ## Open Questions
 
@@ -258,4 +318,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.5.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-11
+**Version**: 1.6.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-13

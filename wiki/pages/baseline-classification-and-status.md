@@ -1,8 +1,8 @@
 ---
 title: Baselines, classification, and status
 type: component
-sources: [S001, S004, S018]
-updated: 2026-09-11
+sources: [S001, S004, S018, S019, S020]
+updated: 2026-09-13
 ---
 
 # Baselines, classification, and status
@@ -13,6 +13,8 @@ Default human status output is path-centered: it summarizes the selected scope a
 
 The `>-<` baseline signal does not select a payload-copy direction. It distinguishes baseline or reconciliation work from safe push and pull directions while leaving `status -e` as the attention exit-status interface. (S001)
 
-Feature 015 fixes the human-status group order as conflicts, push, pull, then baseline attention; empty groups and individually current entries are omitted. Safety blockers remain visible in plain language, whereas informational compatibility findings remain in detailed machine output but are quiet in the default view. (S018)
+Feature 015 introduced concise path-centered status groups. Feature 017 defines their current order as changes to push, changes to pull, conflicts, then needs baseline; empty groups and individually current entries are omitted. Default human mutation results likewise use concise action, no-action, blocked, and failure projections while JSON and `grip diff` retain detailed evidence. (S018) (S019)
+
+For a newly added unequal source-defined member, Grip records the destination as the initial comparison reference without changing either payload. The existing classifier then presents the source as an ordinary pending push; later destination drift remains a conflict. [Mapping addition and initial baselines](./mapping-addition-and-initial-baselines.md) records the publication boundary. (S020)
 
 Unambiguous one-sided changes can synchronize normally. Divergence, initial collision, unbaselined differences, and one-sided absence block ordinary operations. Removing a mapping or ignoring an entry prunes its baseline; later reintroduction is new membership. (S001)

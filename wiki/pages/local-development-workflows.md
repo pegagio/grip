@@ -2,7 +2,7 @@
 title: Local development workflows
 type: howto
 sources: [S004, S008, S009, S010, S011, S012, S013]
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Local development workflows
