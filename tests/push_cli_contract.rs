@@ -4,6 +4,7 @@ use clap::Parser;
 use grip::cli::{Cli, Command};
 use std::ffi::OsString;
 use std::fs;
+use support::project::ProjectFixture;
 
 #[test]
 fn push_parses_default_execute_and_both_dry_run_aliases() {
@@ -123,9 +124,34 @@ fn dry_run_reports_deterministic_action_and_changes_nothing() {
     assert!(value["details"]["actions"][0]["destination_path"]["display"].is_string());
     let human = support::project_command(root.path(), &metadata_dir, &["push", "-n"]);
     assert!(human.status.success());
-    let human_text = String::from_utf8_lossy(&human.stdout);
-    assert!(human_text.contains("add_file"));
-    assert!(human_text.contains(&destination.display().to_string()));
+    let human_text = String::from_utf8(human.stdout).unwrap();
+    assert_eq!(
+        human_text,
+        format!(
+            "Would push 1 file(s):\n  {} -> {}\n",
+            fs::canonicalize(root.path())
+                .unwrap()
+                .join("source")
+                .display(),
+            fs::canonicalize(root.path())
+                .unwrap()
+                .join("destination")
+                .display()
+        )
+    );
+    for detail in [
+        "add_file",
+        "recovery=",
+        "verified=",
+        "durable=",
+        "Baseline ",
+        "Operation record ",
+    ] {
+        assert!(
+            !human_text.contains(detail),
+            "unexpected detail {detail}: {human_text}"
+        );
+    }
     assert_eq!(value["details"]["actions"][0]["kind"], "add_file");
     assert_eq!(value["details"]["baseline"]["outcome"], "not_attempted");
     assert!(
@@ -134,6 +160,47 @@ fn dry_run_reports_deterministic_action_and_changes_nothing() {
             .is_some()
     );
     assert_eq!(support::snapshot(root.path()), before);
+}
+
+#[test]
+fn initial_source_authoritative_push_uses_the_concise_completed_push_transcript() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "source wins").unwrap();
+    fs::write(&destination, "destination loses").unwrap();
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "source", "~/destination"],
+        )
+        .status
+        .success()
+    );
+
+    let pushed = support::project_command(root.path(), &metadata_dir, &["push", "source"]);
+    assert!(pushed.status.success());
+    assert_eq!(
+        String::from_utf8(pushed.stdout).unwrap(),
+        format!(
+            "Pushed 1 file(s):\n  {} -> {}\n",
+            source.display(),
+            destination.display()
+        )
+    );
+}
+
+#[test]
+fn push_noop_uses_a_concise_terminal_transcript() {
+    let (root, metadata_dir, _source, _destination) = support::accepted_file_fixture();
+    let output = support::project_command(root.path(), &metadata_dir, &["push"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Nothing to push.\n"
+    );
 }
 
 #[test]
@@ -197,4 +264,95 @@ fn dry_run_reports_all_blockers_and_starts_no_action() {
     assert_eq!(value["details"]["completion"], "blocked");
     assert_eq!(value["details"]["counts"]["blockers"], 2);
     assert_eq!(support::snapshot(root.path()), before);
+}
+
+#[test]
+fn blocked_push_shows_force_choices_for_an_initial_collision() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "source version").unwrap();
+    fs::write(&destination, "destination version").unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    let before = support::snapshot(root.path());
+
+    let output = support::project_command(root.path(), &metadata_dir, &["push", "source"]);
+    assert_eq!(output.status.code(), Some(10));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!(
+            "Error: Push blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            fs::canonicalize(&destination).unwrap().display(),
+            fs::canonicalize(&destination).unwrap().display(),
+        )
+    );
+    let json = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "push", "source"],
+    );
+    assert_eq!(json.status.code(), Some(10));
+    assert!(support::json(&json)["details"]["baseline"].is_object());
+    assert_eq!(support::snapshot(root.path()), before);
+}
+
+#[test]
+fn forced_push_blocked_by_a_technical_condition_uses_a_public_direction_and_status_guidance() {
+    let mut outcome = grip::CommandOutcome::success("Resolution blocked");
+    outcome.category = grip::ResultCategory::InvalidConfiguration;
+    outcome.details = serde_json::json!({
+        "operation": "resolve",
+        "winner": "source",
+        "result": "blocked",
+        "counts": {"selected": 1, "actions": 0, "blockers": 1},
+        "blockers": [{"reason": "blocking_evidence", "paths": []}],
+        "baseline": {"outcome": "not_attempted", "authoritative_generation": 1},
+        "operation_record": {"available": true, "id": "internal-record"}
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let mut human = Vec::new();
+    grip::result::render(outcome, grip::result::OutputMode::Human, &mut human).unwrap();
+    assert_eq!(
+        String::from_utf8(human).unwrap(),
+        "Error: Push blocked: 1 selected; 0 action(s); 1 blocker(s)\n  Grip cannot safely continue. Run: grip status\n"
+    );
+}
+
+#[test]
+fn blocked_push_guidance_uses_a_source_selector_from_the_invocation_directory() {
+    let fixture = ProjectFixture::initialized();
+    let app = fixture.project_root.join("app");
+    let source = app.join("main.py");
+    let destination = fixture.home_destination("workspace/app/main.py");
+    fs::create_dir_all(&app).unwrap();
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    fs::write(&source, "accepted").unwrap();
+    fs::write(&destination, "accepted").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    assert!(
+        fixture
+            .command(&["add", "app/main.py", "~/workspace/app/main.py"])
+            .status
+            .success()
+    );
+    fs::write(&source, "source change").unwrap();
+    fs::write(&destination, "destination change").unwrap();
+
+    let blocked = fixture.command_from(&app, &["push", "main.py"]);
+    assert_eq!(blocked.status.code(), Some(10));
+    assert!(
+        String::from_utf8(blocked.stdout)
+            .unwrap()
+            .contains(&format!(
+                "Keep source: grip push --force main.py\n    Keep destination: grip pull --force --destination {}",
+                destination.display()
+            ))
+    );
 }

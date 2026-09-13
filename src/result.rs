@@ -104,6 +104,8 @@ pub struct CommandOutcome {
     pub message: String,
     pub details: Map<String, Value>,
     human_status_source_paths: Option<Vec<String>>,
+    human_force_resolution: Vec<(String, String)>,
+    human_mapping_selected: bool,
 }
 
 impl CommandOutcome {
@@ -113,6 +115,8 @@ impl CommandOutcome {
             message: message.into(),
             details: Map::new(),
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         }
     }
 
@@ -123,6 +127,8 @@ impl CommandOutcome {
             message: message.into(),
             details: Map::new(),
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         }
     }
 
@@ -191,6 +197,8 @@ impl CommandOutcome {
                 .expect("metadata result details serialize as an object")
                 .clone(),
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         }
     }
 
@@ -232,6 +240,8 @@ impl CommandOutcome {
             message: error.to_string(),
             details: Map::new(),
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         };
         if let GripError::Mapping {
             operation,
@@ -583,12 +593,26 @@ impl CommandOutcome {
             ),
             details,
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         }
     }
 
     /// Attach non-serialized source displays for default human status rendering.
     pub fn with_human_status_source_paths(mut self, source_paths: Vec<String>) -> Self {
         self.human_status_source_paths = Some(source_paths);
+        self
+    }
+
+    /// Attach non-serialized commands for force-resolvable mutation blockers.
+    pub fn with_human_force_resolution(mut self, selectors: Vec<(String, String)>) -> Self {
+        self.human_force_resolution = selectors;
+        self
+    }
+
+    /// Mark a mapping-list result as a source-selected human view without changing JSON details.
+    pub fn with_human_mapping_selection(mut self, selected: bool) -> Self {
+        self.human_mapping_selected = selected;
         self
     }
 
@@ -612,6 +636,8 @@ impl CommandOutcome {
             message,
             details,
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         }
     }
 
@@ -697,6 +723,8 @@ impl CommandOutcome {
             message,
             details,
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         }
     }
 
@@ -750,6 +778,8 @@ impl CommandOutcome {
             ),
             details,
             human_status_source_paths: None,
+            human_force_resolution: Vec::new(),
+            human_mapping_selected: false,
         }
     }
 }
@@ -862,6 +892,8 @@ fn operation_outcome<T: Serialize, B: Serialize>(
         message,
         details,
         human_status_source_paths: None,
+        human_force_resolution: Vec::new(),
+        human_mapping_selected: false,
     }
 }
 
@@ -875,7 +907,20 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                     writer,
                 );
             }
-            writeln!(writer, "{}", outcome.message)?;
+            if render_human_mutation(&outcome, writer)? {
+                return Ok(());
+            }
+            if render_human_concise_mapping(&outcome, writer)? {
+                return Ok(());
+            }
+            let message = if outcome.category != ResultCategory::Success
+                && !outcome.message.starts_with("Error:")
+            {
+                format!("Error: {}", outcome.message)
+            } else {
+                outcome.message.clone()
+            };
+            writeln!(writer, "{message}")?;
             render_human_metadata_details(&outcome.details, writer)?;
             if let Some(conflicts) = outcome.details.get("conflicts").and_then(Value::as_array) {
                 for conflict in conflicts {
@@ -899,14 +944,6 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                             .and_then(Value::as_str)
                             .unwrap_or("unknown")
                     )?;
-                }
-            }
-            if let Some(mapping) = outcome.details.get("mapping") {
-                render_human_mapping(mapping, writer)?;
-            }
-            if let Some(mappings) = outcome.details.get("mappings").and_then(Value::as_array) {
-                for mapping in mappings {
-                    render_human_mapping(mapping, writer)?;
                 }
             }
             if outcome.details.get("operation").and_then(Value::as_str) == Some("mapping_inspect")
@@ -1019,7 +1056,7 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                     }
                 }
                 if let Some(blockers) = outcome.details.get("blockers").and_then(Value::as_array) {
-                    for blocker in blockers {
+                    for (index, blocker) in blockers.iter().enumerate() {
                         writeln!(
                             writer,
                             "blocked {}",
@@ -1028,9 +1065,21 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                                 .and_then(Value::as_str)
                                 .unwrap_or("blocking_evidence")
                         )?;
+                        if let Some((source, destination)) =
+                            outcome.human_force_resolution.get(index)
+                        {
+                            render_human_force_resolution(source, destination, "  ", writer)?;
+                        }
                     }
                 }
-                if let Some(baseline) = outcome.details.get("baseline") {
+                let human_blocked_directional_mutation =
+                    matches!(
+                        outcome.details.get("operation").and_then(Value::as_str),
+                        Some("push" | "pull")
+                    ) && outcome.details.get("result").and_then(Value::as_str) == Some("blocked");
+                if !human_blocked_directional_mutation
+                    && let Some(baseline) = outcome.details.get("baseline")
+                {
                     let baseline_outcome = baseline
                         .get("outcome")
                         .and_then(Value::as_str)
@@ -1217,6 +1266,201 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
     }
 }
 
+fn render_human_mutation(outcome: &CommandOutcome, writer: &mut dyn Write) -> io::Result<bool> {
+    let operation = outcome.details.get("operation").and_then(Value::as_str);
+    let Some(result) = outcome.details.get("result").and_then(Value::as_str) else {
+        return Ok(false);
+    };
+    let Some(direction) = human_mutation_direction(operation, &outcome.details) else {
+        return Ok(false);
+    };
+
+    match result {
+        "no_op" => {
+            writeln!(writer, "Nothing to {direction}.")?;
+            Ok(true)
+        }
+        "blocked" => render_human_blocked_mutation(outcome, direction, writer),
+        "failed" => {
+            let counts = outcome.details.get("counts").unwrap_or(&Value::Null);
+            writeln!(
+                writer,
+                "Error: {} failed after {} of {} actions. Run: grip status before retrying.",
+                human_mutation_title(direction),
+                counts.get("completed").and_then(Value::as_u64).unwrap_or(0),
+                counts.get("actions").and_then(Value::as_u64).unwrap_or(0),
+            )?;
+            Ok(true)
+        }
+        "planned" | "applied" if outcome.category == ResultCategory::Success => {
+            render_human_successful_mutation(outcome, direction, result == "applied", writer)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn human_mutation_direction(
+    operation: Option<&str>,
+    details: &Map<String, Value>,
+) -> Option<&'static str> {
+    match operation {
+        Some("push") => Some("push"),
+        Some("pull") => Some("pull"),
+        Some("sync") => Some("synchronize"),
+        Some("resolve") => match details.get("winner").and_then(Value::as_str) {
+            Some("source") => Some("push"),
+            Some("destination") => Some("pull"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn human_mutation_title(direction: &str) -> &'static str {
+    match direction {
+        "push" => "Push",
+        "pull" => "Pull",
+        "synchronize" => "Sync",
+        _ => "Mutation",
+    }
+}
+
+fn render_human_blocked_mutation(
+    outcome: &CommandOutcome,
+    direction: &str,
+    writer: &mut dyn Write,
+) -> io::Result<bool> {
+    let counts = outcome.details.get("counts").unwrap_or(&Value::Null);
+    writeln!(
+        writer,
+        "Error: {} blocked: {} selected; {} action(s); {} blocker(s)",
+        human_mutation_title(direction),
+        counts.get("selected").and_then(Value::as_u64).unwrap_or(0),
+        counts.get("actions").and_then(Value::as_u64).unwrap_or(0),
+        counts.get("blockers").and_then(Value::as_u64).unwrap_or(0),
+    )?;
+    if outcome.human_force_resolution.is_empty() {
+        writeln!(writer, "  Grip cannot safely continue. Run: grip status")?;
+        return Ok(true);
+    }
+    for (source, destination) in &outcome.human_force_resolution {
+        writeln!(writer, "  {source} <-> {destination}")?;
+        render_human_force_resolution(source, destination, "    ", writer)?;
+    }
+    Ok(true)
+}
+
+fn render_human_successful_mutation(
+    outcome: &CommandOutcome,
+    direction: &str,
+    completed: bool,
+    writer: &mut dyn Write,
+) -> io::Result<bool> {
+    let Some(actions) = outcome.details.get("actions").and_then(Value::as_array) else {
+        return Ok(false);
+    };
+    if actions.is_empty() {
+        let accepted_entries = outcome
+            .details
+            .get("counts")
+            .and_then(|counts| counts.get("converged"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if accepted_entries == 0 {
+            return Ok(false);
+        }
+        let verb = if completed {
+            "Established"
+        } else {
+            "Would establish"
+        };
+        writeln!(writer, "{verb} a baseline for {accepted_entries} file(s).")?;
+        return Ok(true);
+    }
+
+    let verb = match direction {
+        "push" => {
+            if completed {
+                "Pushed"
+            } else {
+                "Would push"
+            }
+        }
+        "pull" => {
+            if completed {
+                "Pulled"
+            } else {
+                "Would pull"
+            }
+        }
+        "synchronize" => {
+            if completed {
+                "Synchronized"
+            } else {
+                "Would synchronize"
+            }
+        }
+        _ => return Ok(false),
+    };
+    writeln!(writer, "{verb} {} file(s):", actions.len())?;
+    for action in actions {
+        let source = action
+            .get("source_path")
+            .and_then(|path| path.get("display"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let destination = action
+            .get("destination_path")
+            .and_then(|path| path.get("display"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let symbol = if action.get("direction").and_then(Value::as_str) == Some("pull") {
+            "<-"
+        } else {
+            "->"
+        };
+        writeln!(writer, "  {source} {symbol} {destination}")?;
+    }
+    Ok(true)
+}
+
+fn render_human_concise_mapping(
+    outcome: &CommandOutcome,
+    writer: &mut dyn Write,
+) -> io::Result<bool> {
+    let operation = outcome.details.get("operation").and_then(Value::as_str);
+    match operation {
+        Some("add") => {
+            writeln!(writer, "Mapped:")?;
+            if let Some(mapping) = outcome.details.get("mapping") {
+                render_human_mapping(mapping, false, writer)?;
+            }
+            Ok(true)
+        }
+        Some("remove") => {
+            writeln!(writer, "Mapping removed:")?;
+            if let Some(mapping) = outcome.details.get("mapping") {
+                render_human_mapping(mapping, true, writer)?;
+            }
+            Ok(true)
+        }
+        Some("mapping_list") => {
+            let mappings = outcome
+                .details
+                .get("mappings")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            writeln!(writer, "{} mapping(s):", mappings.len())?;
+            for mapping in mappings {
+                render_human_mapping(mapping, outcome.human_mapping_selected, writer)?;
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 fn render_human_status(
     details: &Map<String, Value>,
     source_paths: Option<&[String]>,
@@ -1287,9 +1531,9 @@ fn render_human_status(
     }
     writeln!(writer, ".")?;
 
-    render_human_status_section("Conflicts", "<->", &conflicts, source_paths, writer)?;
     render_human_status_section("Changes to push", "->", &push, source_paths, writer)?;
     render_human_status_section("Changes to pull", "<-", &pull, source_paths, writer)?;
+    render_human_status_section("Conflicts", "<->", &conflicts, source_paths, writer)?;
     render_human_status_section(
         "Needs baseline",
         ">-<",
@@ -1320,12 +1564,25 @@ fn render_human_status_section(
                 .unwrap_or_else(|| classification_path(record, "source_path")),
             classification_path(record, "destination_path")
         )?;
-        render_human_status_blocker(record, writer)?;
+        let source = source_paths
+            .and_then(|paths| paths.get(*index))
+            .map(String::as_str)
+            .unwrap_or_else(|| classification_path(record, "source_path"));
+        let destination = classification_path(record, "destination_path");
+        render_human_status_blocker(record, source, destination, writer)?;
     }
     Ok(())
 }
 
-fn render_human_status_blocker(record: &Value, writer: &mut dyn Write) -> io::Result<()> {
+fn render_human_status_blocker(
+    record: &Value,
+    source: &str,
+    destination: &str,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    if is_force_resolvable_status_conflict(record) {
+        return render_human_force_resolution(source, destination, "    ", writer);
+    }
     let Some(findings) = record
         .get("compatibility_findings")
         .and_then(Value::as_array)
@@ -1381,7 +1638,45 @@ fn render_human_status_blocker(record: &Value, writer: &mut dyn Write) -> io::Re
     Ok(())
 }
 
+fn is_force_resolvable_status_conflict(record: &Value) -> bool {
+    matches!(
+        record.get("classification").and_then(Value::as_str),
+        Some("initial_collision" | "divergent_conflict")
+    ) && record
+        .get("compatibility_findings")
+        .and_then(Value::as_array)
+        .is_none_or(|findings| {
+            !findings
+                .iter()
+                .any(|finding| finding.get("blocking").and_then(Value::as_bool) == Some(true))
+        })
+}
+
+fn render_human_force_resolution(
+    source: &str,
+    destination: &str,
+    indent: &str,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    writeln!(writer, "{indent}Keep source: grip push --force {source}")?;
+    writeln!(
+        writer,
+        "{indent}Keep destination: grip pull --force --destination {destination}"
+    )
+}
+
 fn classification_blocker_message(record: &Value) -> &'static str {
+    if record
+        .get("reasons")
+        .and_then(Value::as_array)
+        .is_some_and(|reasons| {
+            reasons
+                .iter()
+                .any(|reason| reason == "incomplete_add_publication")
+        })
+    {
+        return "Grip could not finish recording this mapping. Rerun grip add for this mapping.";
+    }
     match record.get("classification").and_then(Value::as_str) {
         Some("metadata_migration_conflict") => {
             "Grip cannot safely proceed because stored metadata migration evidence conflicts."
@@ -1700,42 +1995,29 @@ fn render_human_discovery_record(record: &Value, writer: &mut dyn Write) -> io::
     }
 }
 
-fn render_human_mapping(mapping: &Value, writer: &mut dyn Write) -> io::Result<()> {
+fn render_human_mapping(
+    mapping: &Value,
+    include_kind: bool,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
     let declared = mapping.get("declared").unwrap_or(mapping);
-    let resolved = mapping.get("resolved");
-    writeln!(
-        writer,
-        "{} {} -> {}",
-        declared
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown"),
-        declared
-            .get("source")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown"),
-        declared
-            .get("destination")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-    )?;
-    if let Some(resolved) = resolved {
-        writeln!(
-            writer,
-            "  resolved {} -> {}",
-            resolved
-                .get("source")
-                .and_then(|path| path.get("display"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown"),
-            resolved
-                .get("destination")
-                .and_then(|path| path.get("display"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-        )?;
+    let kind = declared
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let source = declared
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let destination = declared
+        .get("destination")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if include_kind {
+        writeln!(writer, " {kind} {source} -> {destination}")
+    } else {
+        writeln!(writer, " {source} -> {destination}")
     }
-    Ok(())
 }
 
 pub fn emit_diagnostic(verbosity: u8, event: &str, writer: &mut dyn Write) -> io::Result<()> {
@@ -1791,7 +2073,7 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "Status: 6 entries checked; 1 current; 1 to push; 1 to pull; 1 conflict; 2 needs baseline.\n\nConflicts:\n  ../README.md <-> ~/conflict\n    Blocked: Grip cannot safely proceed with this managed entry.\n\nChanges to push:\n  main.py -> ~/push\n\nChanges to pull:\n  ../shared/config.yml <- ~/pull\n\nNeeds baseline:\n  new-file >-< ~/deleted\n  reconcile >-< ~/migration\n"
+            "Status: 6 entries checked; 1 current; 1 to push; 1 to pull; 1 conflict; 2 needs baseline.\n\nChanges to push:\n  main.py -> ~/push\n\nChanges to pull:\n  ../shared/config.yml <- ~/pull\n\nConflicts:\n  ../README.md <-> ~/conflict\n    Blocked: Grip cannot safely proceed with this managed entry.\n\nNeeds baseline:\n  new-file >-< ~/deleted\n  reconcile >-< ~/migration\n"
         );
     }
 

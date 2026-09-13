@@ -29,6 +29,35 @@ pub fn inspect(
     inspect_with_between_pass(home, initial, selected_source, || {})
 }
 
+/// Inspect a proposed registry without making its descriptor visible. The accepted descriptor is
+/// revalidated before returning, so add can prepare a fenced descriptor/state pair from stable
+/// endpoint evidence.
+pub fn inspect_candidate(
+    home: &ProjectPaths,
+    candidate: &crate::registry::ResolvedRegistry,
+    candidate_descriptor_bytes: &[u8],
+    expected: &RegistrySnapshot,
+) -> Result<DiscoveryInventory, GripError> {
+    let first = inspect_pass(
+        candidate_descriptor_bytes,
+        candidate.mappings().iter().collect::<Vec<_>>(),
+        home.path(),
+    )?;
+    let second = inspect_pass(
+        candidate_descriptor_bytes,
+        candidate.mappings().iter().collect::<Vec<_>>(),
+        home.path(),
+    )?;
+    publication::revalidate_readonly(home, expected, OPERATION)?;
+    if first != second {
+        return Err(stale(
+            Vec::new(),
+            "candidate discovery evidence changed before the inventory was complete",
+        ));
+    }
+    Ok(DiscoveryInventory::new(DiscoveryScope::All, first.records))
+}
+
 fn inspect_with_between_pass<F>(
     home: &ProjectPaths,
     initial: &RegistrySnapshot,

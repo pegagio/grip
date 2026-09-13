@@ -174,6 +174,126 @@ fn complete_state_publication_is_atomic_and_loads_as_v4() {
 }
 
 #[test]
+fn add_publication_fence_is_private_verified_and_removable() {
+    let (root, home) = publication_fixture();
+    let mapping = grip::mapping::Mapping::new(
+        MappingKind::Tree,
+        root.path().join("payload"),
+        root.path().join("destination"),
+    );
+    let fence = state::add_fence::AddPublicationFenceV1::new(
+        &mapping,
+        b"prior descriptor".to_vec(),
+        b"candidate descriptor".to_vec(),
+        None,
+        b"candidate state".to_vec(),
+    );
+
+    state::add_fence::create_verified(&home, &fence).unwrap();
+    assert_eq!(state::add_fence::load(&home).unwrap(), Some(fence.clone()));
+    let metadata = fs::metadata(home.path().join("state/add-fence.json")).unwrap();
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+
+    state::add_fence::clear_verified(&home, &fence).unwrap();
+    assert_eq!(state::add_fence::load(&home).unwrap(), None);
+}
+
+#[test]
+fn visible_prepared_state_keeps_its_fence_until_verified_clear_succeeds() {
+    let (root, home) = publication_fixture();
+    let descriptor = fs::read(home.path().join("config.toml")).unwrap();
+    let expected = state::publication::load(&home).unwrap();
+    let baselines = complete_baselines(root.path(), 'a');
+    let candidate_state = state::publication::prepare_candidate_for_descriptor(
+        &home,
+        &expected,
+        &baselines,
+        &descriptor,
+    )
+    .unwrap();
+    let mapping = grip::mapping::Mapping::new(
+        MappingKind::Tree,
+        root.path().join("payload"),
+        root.path().join("destination"),
+    );
+    let fence = state::add_fence::AddPublicationFenceV1::new(
+        &mapping,
+        descriptor.clone(),
+        descriptor,
+        None,
+        candidate_state.clone(),
+    );
+    state::add_fence::create_verified(&home, &fence).unwrap();
+
+    let error = state::publication::publish_prepared_locked_with_fault(
+        &home,
+        &expected,
+        &baselines,
+        &candidate_state,
+        Some(PublicationFault::AfterV2StateRename),
+    )
+    .unwrap_err();
+    assert_eq!(
+        grip::result::CommandOutcome::failure(&error).details["publication_visible"],
+        true
+    );
+    assert_eq!(
+        fs::read(home.path().join("state/state.json")).unwrap(),
+        candidate_state
+    );
+    assert_eq!(state::add_fence::load(&home).unwrap(), Some(fence.clone()));
+
+    assert!(
+        state::add_fence::clear_verified_with_fault(
+            &home,
+            &fence,
+            Some(state::add_fence::FenceFault::BeforeClear),
+        )
+        .is_err()
+    );
+    assert_eq!(state::add_fence::load(&home).unwrap(), Some(fence.clone()));
+
+    state::add_fence::clear_verified(&home, &fence).unwrap();
+    assert_eq!(state::add_fence::load(&home).unwrap(), None);
+}
+
+#[test]
+fn unsafe_existing_fence_rejects_creation_without_touching_descriptor_or_state() {
+    let (_root, home) = publication_fixture();
+    let descriptor_before = fs::read(home.path().join("config.toml")).unwrap();
+    let state_directory = state::publication::prepare_directory(&home).unwrap();
+    fs::write(
+        state_directory.join("add-fence.json"),
+        b"not a private fence",
+    )
+    .unwrap();
+    fs::set_permissions(
+        state_directory.join("add-fence.json"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    let mapping = grip::mapping::Mapping::new(
+        MappingKind::Tree,
+        home.path().parent().unwrap().join("payload"),
+        home.path().parent().unwrap().join("destination"),
+    );
+    let fence = state::add_fence::AddPublicationFenceV1::new(
+        &mapping,
+        descriptor_before.clone(),
+        b"candidate descriptor".to_vec(),
+        None,
+        b"candidate state".to_vec(),
+    );
+
+    assert!(state::add_fence::create_verified(&home, &fence).is_err());
+    assert_eq!(
+        fs::read(home.path().join("config.toml")).unwrap(),
+        descriptor_before
+    );
+    assert!(!state_directory.join("state.json").exists());
+}
+
+#[test]
 fn lock_contention_is_bounded_and_release_allows_retry() {
     let root = tempfile::tempdir().unwrap();
     let lock_path = root.path().join("state.lock");

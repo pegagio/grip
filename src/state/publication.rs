@@ -245,6 +245,135 @@ pub fn publish_current_locked(
     publish_complete_locked(home, expected, &next.complete_baselines)
 }
 
+/// Encode the exact next State V4 candidate against descriptor bytes that are not yet active.
+#[doc(hidden)]
+pub fn prepare_candidate_for_descriptor(
+    home: &ProjectPaths,
+    expected: &StateSnapshot,
+    next_baselines: &std::collections::BTreeMap<
+        crate::observation::model::EntryIdentity,
+        crate::metadata::model::SupportedEntryStateV3,
+    >,
+    descriptor_bytes: &[u8],
+) -> Result<Vec<u8>, GripError> {
+    let generation = expected
+        .accepted
+        .generation
+        .map_or(Some(0), |value| value.checked_add(1))
+        .ok_or_else(|| {
+            GripError::discovery_operational(
+                "baseline_accept",
+                "generation_exhausted",
+                vec![home.path().join("state/state.json").display().to_string()],
+                "accepted state generation cannot be advanced",
+            )
+        })?;
+    let next = crate::state::accepted_v4_from_descriptor_bytes(
+        home,
+        generation,
+        next_baselines,
+        descriptor_bytes,
+    )?;
+    encode_v4(&next)
+}
+
+/// Publish a previously prepared State V4 candidate after its descriptor becomes active.
+pub(crate) fn publish_prepared_locked(
+    home: &ProjectPaths,
+    expected: &StateSnapshot,
+    next_baselines: &std::collections::BTreeMap<
+        crate::observation::model::EntryIdentity,
+        crate::metadata::model::SupportedEntryStateV3,
+    >,
+    bytes: &[u8],
+) -> Result<(), GripError> {
+    publish_prepared_locked_with_fault(home, expected, next_baselines, bytes, None)
+}
+
+/// Publish a descriptor-bound State V4 candidate, with an optional publication fault for tests.
+#[doc(hidden)]
+pub fn publish_prepared_locked_with_fault(
+    home: &ProjectPaths,
+    expected: &StateSnapshot,
+    next_baselines: &std::collections::BTreeMap<
+        crate::observation::model::EntryIdentity,
+        crate::metadata::model::SupportedEntryStateV3,
+    >,
+    bytes: &[u8],
+    fault: Option<PublicationFault>,
+) -> Result<(), GripError> {
+    revalidate(home, expected)?;
+    let decoded = decode_v4(bytes)?;
+    let runtime = runtime_from_accepted_v4(home, &decoded)?;
+    if &runtime.baselines != next_baselines {
+        return Err(GripError::CorruptState(
+            "prepared State V4 candidate does not match the expected baselines".into(),
+        ));
+    }
+    let descriptor_bytes = std::fs::read(home.path().join("config.toml")).map_err(|error| {
+        GripError::from_io("could not verify descriptor for prepared state", error)
+    })?;
+    if decoded.binding.descriptor_digest != format!("{:x}", sha2::Sha256::digest(&descriptor_bytes))
+    {
+        return Err(GripError::InvalidConfiguration(
+            "prepared State V4 candidate does not bind the active descriptor".into(),
+        ));
+    }
+    let state_dir = home.path().join("state");
+    ensure_dir(&state_dir)?;
+    write_v3_atomic(
+        home,
+        &state_dir,
+        &state_dir.join("state.json"),
+        bytes,
+        next_baselines,
+        fault,
+    )?;
+    let reread = read_private_file(&state_dir.join("state.json"))?;
+    if reread != bytes || decode_v4(&reread)? != decoded {
+        return Err(GripError::CorruptState(
+            "published prepared State V4 verification failed".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Remove a visible candidate state when a fenced add must return to its uninitialized prior
+/// state. The caller holds the project mutation lock and supplies the exact candidate bytes.
+pub(crate) fn remove_exact_candidate(
+    home: &ProjectPaths,
+    expected_bytes: &[u8],
+) -> Result<(), GripError> {
+    let state_dir = home.path().join("state");
+    let state_path = state_dir.join("state.json");
+    let current = read_private_file(&state_path)?;
+    if current != expected_bytes {
+        return Err(GripError::InvalidConfiguration(
+            "current State V4 differs from the fenced add candidate".into(),
+        ));
+    }
+    let lock_path = super::lock::project_lock_path(home, "state.lock")?;
+    let _lock = PublicationLock::acquire(&lock_path)?;
+    let reread = read_private_file(&state_path)?;
+    if reread != expected_bytes {
+        return Err(GripError::InvalidConfiguration(
+            "State V4 changed before fenced add restoration".into(),
+        ));
+    }
+    fs::remove_file(&state_path).map_err(|error| {
+        GripError::from_io("could not remove fenced add candidate state", error)
+    })?;
+    File::open(&state_dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| GripError::from_io("could not sync removed candidate state", error))?;
+    if state_path.exists() {
+        return Err(GripError::CorruptState(
+            "fenced add candidate state remained after restoration".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Restore exact, integrity-valid State V2 bytes while the caller holds the mutation lock.
 #[allow(dead_code)]
 pub(crate) fn restore_exact(
