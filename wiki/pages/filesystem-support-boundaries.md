@@ -2,7 +2,7 @@
 title: Filesystem support boundaries
 type: reference
 sources: [S001, S004, S005, S006, S008, S009, S012]
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Filesystem support boundaries

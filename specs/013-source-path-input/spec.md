@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-11
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "Grip should accept `./app/` as a source path when it resolves within the Grip project, while continuing to store a normalized project-relative source declaration."
 

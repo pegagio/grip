@@ -25,6 +25,7 @@ page files, not here.
 - [Configuration and state](./pages/configuration-and-state.md)
 - [Deletion, retirement, and recovery](./pages/deletion-retirement-and-recovery.md)
 - [Mapping registry publication](./pages/mapping-registry-publication.md)
+- [Mapping addition and initial baselines](./pages/mapping-addition-and-initial-baselines.md)
 - [Metadata and filesystem contract](./pages/metadata-and-filesystem-contract.md)
 - [Synchronization and conflicts](./pages/synchronization-and-conflicts.md)
 
@@ -32,6 +33,7 @@ page files, not here.
 
 - [Filesystem support boundaries](./pages/filesystem-support-boundaries.md)
 - [Initial delivery roadmap](./pages/initial-delivery-roadmap.md)
+- [Initial delivery roadmap later features](./pages/initial-delivery-roadmap-later-features.md)
 - [Roadmap open questions](./pages/roadmap-open-questions.md)
 
 ## How-tos

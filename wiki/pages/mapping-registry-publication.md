@@ -2,7 +2,7 @@
 title: Mapping registry publication
 type: component
 sources: [S005, S013, S016, S017]
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Mapping registry publication
