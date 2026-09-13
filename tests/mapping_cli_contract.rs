@@ -44,6 +44,64 @@ fn add_list_and_remove_use_flat_commands_without_copying_payloads() {
 }
 
 #[test]
+fn human_mapping_commands_render_declared_rows_only() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    fs::write(&source, "payload").unwrap();
+
+    let add = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "source", "~/destination"],
+    );
+    assert_eq!(
+        String::from_utf8(add.stdout).unwrap(),
+        "Mapped:\n source -> ~/destination\n"
+    );
+
+    let list = support::project_command(root.path(), &metadata_dir, &["list"]);
+    assert_eq!(
+        String::from_utf8(list.stdout).unwrap(),
+        "1 mapping(s):\n source -> ~/destination\n"
+    );
+
+    let selected = support::project_command(root.path(), &metadata_dir, &["list", "source"]);
+    assert_eq!(
+        String::from_utf8(selected.stdout).unwrap(),
+        "1 mapping(s):\n file source -> ~/destination\n"
+    );
+
+    let removed = support::project_command(root.path(), &metadata_dir, &["remove", "source"]);
+    assert_eq!(
+        String::from_utf8(removed.stdout).unwrap(),
+        "Mapping removed:\n file source -> ~/destination\n"
+    );
+}
+
+#[test]
+fn human_list_renders_five_declared_rows_without_resolved_endpoints() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    for index in 1..=5 {
+        let source = format!("source-{index}");
+        let destination = format!("~/destination-{index}");
+        fs::write(root.path().join(&source), "payload").unwrap();
+        let added =
+            support::project_command(root.path(), &metadata_dir, &["add", &source, &destination]);
+        assert!(added.status.success());
+    }
+
+    let output = support::project_command(root.path(), &metadata_dir, &["list"]);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text,
+        "5 mapping(s):\n source-1 -> ~/destination-1\n source-2 -> ~/destination-2\n source-3 -> ~/destination-3\n source-4 -> ~/destination-4\n source-5 -> ~/destination-5\n"
+    );
+    assert!(!text.contains("resolved"));
+}
+
+#[test]
 fn add_accepts_absolute_and_non_normalized_home_destinations_without_copying_payloads() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
@@ -154,7 +212,7 @@ fn add_establishes_a_baseline_only_for_matching_existing_endpoints() {
 }
 
 #[test]
-fn force_push_resolves_an_unbaselined_collision_from_destination_space() {
+fn add_of_unequal_file_is_ready_for_an_ordinary_push() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
     fs::write(root.path().join("source"), "source wins").unwrap();
@@ -170,15 +228,327 @@ fn force_push_resolves_an_unbaselined_collision_from_destination_space() {
         .code(),
         Some(0)
     );
-    let pushed = support::project_command(
-        root.path(),
-        &metadata_dir,
-        &["push", "-f", "-d", "~/destination"],
-    );
+    let pushed = support::project_command(root.path(), &metadata_dir, &["push", "source"]);
     assert_eq!(pushed.status.code(), Some(0), "{:?}", pushed);
     assert_eq!(
         fs::read_to_string(root.path().join("destination")).unwrap(),
         "source wins"
+    );
+}
+
+#[test]
+fn add_of_a_mixed_tree_uses_destination_state_only_for_managed_unequal_members() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&destination).unwrap();
+    fs::write(source.join("equal.txt"), "same").unwrap();
+    fs::write(destination.join("equal.txt"), "same").unwrap();
+    support::copy_complete_metadata(
+        &source.join("equal.txt"),
+        &destination.join("equal.txt"),
+        grip::discovery::model::NodeKind::File,
+    );
+    fs::write(source.join("unequal.txt"), "source wins").unwrap();
+    fs::write(destination.join("unequal.txt"), "destination loses").unwrap();
+    fs::write(source.join("source-only.txt"), "source-only").unwrap();
+    fs::write(source.join("ignored.txt"), "ignored").unwrap();
+    fs::write(source.join(".gripignore"), "ignored.txt\n").unwrap();
+    fs::write(destination.join("destination-only.txt"), "destination-only").unwrap();
+
+    let before_source = support::snapshot(&source);
+    let before_destination = support::snapshot(&destination);
+    let added = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "source", "~/destination"],
+    );
+    assert!(added.status.success(), "{:?}", added);
+    assert_eq!(support::snapshot(&source), before_source);
+    assert_eq!(support::snapshot(&destination), before_destination);
+
+    let status = json(&support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "status"],
+    ));
+    let records = status["details"]["records"].as_array().unwrap();
+    let classification = |relative: &str| {
+        records
+            .iter()
+            .find(|record| record["relative_path"]["display"] == relative)
+            .unwrap()["classification"]
+            .as_str()
+            .unwrap()
+    };
+    assert_eq!(classification("equal.txt"), "synchronized");
+    assert_eq!(classification("unequal.txt"), "source_only_change");
+    assert_eq!(classification("source-only.txt"), "source_addition");
+    assert!(
+        records
+            .iter()
+            .all(|record| record["relative_path"]["display"] != "ignored.txt")
+    );
+    assert_eq!(
+        classification("destination-only.txt"),
+        "destination_only_unmanaged"
+    );
+}
+
+#[test]
+fn retrying_the_same_add_clears_a_verified_fence_and_restores_normal_push_behavior() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "source wins").unwrap();
+    fs::write(&destination, "destination loses").unwrap();
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "source", "~/destination"],
+        )
+        .status
+        .success()
+    );
+    fs::write(root.path().join("other-source"), "independent").unwrap();
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "other-source", "~/other-destination"],
+        )
+        .status
+        .success()
+    );
+
+    let descriptor = fs::read(metadata_dir.join("config.toml")).unwrap();
+    let state = fs::read(metadata_dir.join("state/state.json")).unwrap();
+    let home =
+        grip::project::ProjectPaths::project_metadata(metadata_dir.clone(), root.path().into());
+    let mapping = grip::mapping::Mapping::new(
+        grip::mapping::MappingKind::File,
+        fs::canonicalize(&source).unwrap(),
+        fs::canonicalize(&destination).unwrap(),
+    );
+    let fence = grip::state::add_fence::AddPublicationFenceV1::new(
+        &mapping,
+        descriptor.clone(),
+        descriptor,
+        Some(state.clone()),
+        state,
+    );
+    grip::state::add_fence::create_verified(&home, &fence).unwrap();
+
+    let fenced_status = json(&support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "status"],
+    ));
+    assert!(
+        fenced_status["details"]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| {
+                record["source_path"]["display"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("/source"))
+                    && record["classification"] == "unsafe_collision"
+            })
+    );
+    let human_status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert!(
+        String::from_utf8(human_status.stdout)
+            .unwrap()
+            .contains("Rerun grip add for this mapping.")
+    );
+    assert_ne!(
+        support::project_command(root.path(), &metadata_dir, &["push", "source"])
+            .status
+            .code(),
+        Some(0)
+    );
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["push", "--dry-run", "other-source"]
+        )
+        .status
+        .success()
+    );
+
+    let retried = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "source", "~/destination"],
+    );
+    assert!(retried.status.success(), "{:?}", retried);
+    assert!(!metadata_dir.join("state/add-fence.json").exists());
+    let status = json(&support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "status"],
+    ));
+    assert!(
+        status["details"]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| {
+                record["source_path"]["display"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("/source"))
+                    && record["classification"] == "source_only_change"
+            })
+    );
+}
+
+#[test]
+fn stale_fenced_candidate_restores_the_prior_pair_before_readding() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "source wins").unwrap();
+    fs::write(&destination, "destination before fence").unwrap();
+    let prior_descriptor = fs::read(metadata_dir.join("config.toml")).unwrap();
+
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "source", "~/destination"],
+        )
+        .status
+        .success()
+    );
+    let candidate_descriptor = fs::read(metadata_dir.join("config.toml")).unwrap();
+    let candidate_state = fs::read(metadata_dir.join("state/state.json")).unwrap();
+
+    fs::remove_file(metadata_dir.join("state/state.json")).unwrap();
+    let home =
+        grip::project::ProjectPaths::project_metadata(metadata_dir.clone(), root.path().into());
+    let mapping = grip::mapping::Mapping::new(
+        grip::mapping::MappingKind::File,
+        fs::canonicalize(&source).unwrap(),
+        fs::canonicalize(&destination).unwrap(),
+    );
+    let fence = grip::state::add_fence::AddPublicationFenceV1::new(
+        &mapping,
+        prior_descriptor,
+        candidate_descriptor,
+        None,
+        candidate_state.clone(),
+    );
+    grip::state::add_fence::create_verified(&home, &fence).unwrap();
+    fs::write(&destination, "destination changed after fence").unwrap();
+
+    let retried = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "source", "~/destination"],
+    );
+    assert!(retried.status.success(), "{:?}", retried);
+    assert!(!metadata_dir.join("state/add-fence.json").exists());
+    assert_ne!(
+        fs::read(metadata_dir.join("state/state.json")).unwrap(),
+        candidate_state
+    );
+    let status = json(&support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "status"],
+    ));
+    assert_eq!(
+        status["details"]["records"][0]["classification"],
+        "source_only_change"
+    );
+}
+
+#[test]
+fn pre_descriptor_fence_is_visible_and_blocks_only_its_exact_mapping() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::write(root.path().join("other-source"), "current").unwrap();
+    fs::write(root.path().join("other-destination"), "current").unwrap();
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "other-source", "~/other-destination"],
+        )
+        .status
+        .success()
+    );
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "source").unwrap();
+    fs::write(&destination, "destination").unwrap();
+    let home =
+        grip::project::ProjectPaths::project_metadata(metadata_dir.clone(), root.path().into());
+    let prior = grip::registry::publication::load(&home, false).unwrap();
+    let mut declarations = prior.portable_mappings().unwrap();
+    declarations.push(
+        grip::mapping::PortableMapping::parse_cli(
+            grip::mapping::MappingKind::File,
+            std::ffi::OsStr::new("source"),
+            std::ffi::OsStr::new("~/destination"),
+        )
+        .unwrap(),
+    );
+    let candidate_descriptor = grip::registry::encode_descriptor(
+        &grip::registry::ProjectDescriptorV2::new(declarations).unwrap(),
+    )
+    .unwrap();
+    let state = fs::read(metadata_dir.join("state/state.json")).unwrap();
+    let mapping = grip::mapping::Mapping::new(
+        grip::mapping::MappingKind::File,
+        fs::canonicalize(&source).unwrap(),
+        fs::canonicalize(&destination).unwrap(),
+    );
+    let fence = grip::state::add_fence::AddPublicationFenceV1::new(
+        &mapping,
+        prior.bytes,
+        candidate_descriptor,
+        Some(state.clone()),
+        state,
+    );
+    grip::state::add_fence::create_verified(&home, &fence).unwrap();
+
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert!(status.status.success());
+    let status = String::from_utf8(status.stdout).unwrap();
+    assert!(status.contains("Conflicts:"));
+    assert!(status.contains("Rerun grip add for this mapping."));
+
+    let selected_status =
+        support::project_command(root.path(), &metadata_dir, &["status", "source"]);
+    assert!(selected_status.status.success());
+    assert!(
+        String::from_utf8(selected_status.stdout)
+            .unwrap()
+            .contains("Rerun grip add for this mapping.")
+    );
+    let blocked_push = support::project_command(root.path(), &metadata_dir, &["push", "source"]);
+    assert!(!blocked_push.status.success());
+    let blocked_error = String::from_utf8(blocked_push.stdout).unwrap();
+    assert!(
+        blocked_error.contains("incomplete add publication"),
+        "{blocked_error}"
+    );
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["push", "--dry-run", "other-source"],
+        )
+        .status
+        .success()
     );
 }
 
@@ -259,7 +629,7 @@ fn remove_prunes_baseline_and_readd_treats_existing_endpoints_as_new() {
     assert_eq!(status.status.code(), Some(0));
     assert_eq!(
         json(&status)["details"]["records"][0]["classification"],
-        "initial_collision"
+        "source_only_change"
     );
 }
 

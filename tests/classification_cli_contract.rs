@@ -85,6 +85,65 @@ fn human_status_renders_initial_matches_as_needing_a_baseline() {
 }
 
 #[test]
+fn human_status_shows_force_choices_for_an_ordinary_divergent_conflict() {
+    let (root, metadata_dir, source) = fixture();
+    let destination = root.path().join("destination");
+    fs::write(&source, "source change").unwrap();
+    fs::write(&destination, "destination change").unwrap();
+
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert_eq!(status.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(status.stdout).unwrap(),
+        format!(
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            fs::canonicalize(&destination).unwrap().display(),
+            fs::canonicalize(&destination).unwrap().display(),
+        )
+    );
+}
+
+#[test]
+fn human_status_shows_force_choices_for_an_initial_collision() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "source version").unwrap();
+    fs::write(&destination, "destination version").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert_eq!(status.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(status.stdout).unwrap(),
+        format!(
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            fs::canonicalize(&destination).unwrap().display(),
+            fs::canonicalize(&destination).unwrap().display(),
+        )
+    );
+}
+
+#[test]
+fn human_status_orders_push_before_pull() {
+    let (root, home, _registry, _state, _selection, _plan) =
+        support::mixed_sync_execution_fixture();
+    let status = support::project_command(root.path(), home.path(), &["status"]);
+    assert!(status.status.success());
+    let text = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        text.find("Changes to push:").unwrap() < text.find("Changes to pull:").unwrap(),
+        "status sections were not ordered for action: {text}"
+    );
+}
+
+#[test]
 fn human_status_renders_source_paths_relative_to_the_invocation_directory() {
     let fixture = ProjectFixture::initialized();
     let app = fixture.project_root.join("app");
@@ -213,4 +272,10 @@ fn diff_is_read_only_and_supports_destination_selection() {
         fs::read(metadata_dir.join("state/state.json")).unwrap(),
         state
     );
+
+    let human = support::project_command(root.path(), &metadata_dir, &["diff"]);
+    let text = String::from_utf8(human.stdout).unwrap();
+    assert!(text.starts_with("Diff complete: 1 entries; 1 attention; 0 blocking\n"));
+    assert!(text.contains("source_only_change"));
+    assert!(text.contains("source_to_destination"));
 }

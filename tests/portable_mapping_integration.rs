@@ -340,7 +340,7 @@ fn push_resolves_status_source_labels_from_the_invocation_directory() {
     assert!(
         String::from_utf8(forced.stdout)
             .unwrap()
-            .starts_with("Resolution blocked:"),
+            .starts_with("Error: Push blocked:"),
     );
 
     let external = fixture.explicit_project_command(&["status"]);

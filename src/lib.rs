@@ -42,7 +42,11 @@ pub fn run_process() -> std::process::ExitCode {
                 let outcome = CommandOutcome::invalid_usage(error.to_string().trim().to_owned());
                 let _ = result::render(outcome, result::OutputMode::Json, &mut io::stdout().lock());
             } else {
-                let _ = write!(io::stderr().lock(), "{error}");
+                let message = error.to_string();
+                let message = message
+                    .strip_prefix("error:")
+                    .map_or(message.as_str(), |value| value.trim_start());
+                let _ = write!(io::stderr().lock(), "Error: {message}");
             }
             return std::process::ExitCode::from(2);
         }
@@ -265,6 +269,7 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
         )?),
         None => None,
     };
+    reject_fenced_selector(&home, selector.as_deref(), path_space)?;
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
@@ -272,6 +277,7 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
         path_space,
         "push",
     )?;
+    reject_fenced_selection(&home, &selection)?;
     let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
         .map_err(|error| error.for_operation("push"))?;
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("push"))?;
@@ -286,11 +292,17 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
         registry.missing_destination_parents(),
     )?;
     if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
-        return Ok(CommandOutcome::push_plan(
+        let outcome = CommandOutcome::push_plan(
             &plan,
             if args.dry_run { "dry_run" } else { "execute" },
             state.accepted.generation,
-        ));
+        );
+        return Ok(
+            outcome.with_human_force_resolution(force_resolution_selectors(
+                &plan,
+                &invocation_directory()?,
+            )),
+        );
     }
     revalidate_project_for_mutation()?;
     state::rebinding::require_mutation(&state.rebinding)?;
@@ -322,6 +334,7 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
         .as_deref()
         .map(|path| resolve_portable_selector(&context, path, path_space))
         .transpose()?;
+    reject_fenced_selector(&home, selector.as_deref(), path_space)?;
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
@@ -329,6 +342,7 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
         path_space,
         "pull",
     )?;
+    reject_fenced_selection(&home, &selection)?;
     let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
         .map_err(|error| error.for_operation("pull"))?;
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("pull"))?;
@@ -339,11 +353,17 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let plan = mutation::plan::build_for(mutation::model::MutationDirection::Pull, scope, records)?;
     if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
-        return Ok(CommandOutcome::mutation_plan(
+        let outcome = CommandOutcome::mutation_plan(
             &plan,
             if args.dry_run { "dry_run" } else { "execute" },
             state.accepted.generation,
-        ));
+        );
+        return Ok(
+            outcome.with_human_force_resolution(force_resolution_selectors(
+                &plan,
+                &invocation_directory()?,
+            )),
+        );
     }
     revalidate_project_for_mutation()?;
     state::rebinding::require_mutation(&state.rebinding)?;
@@ -379,6 +399,7 @@ fn execute_forced_direction(
     } else {
         resolve_portable_selector(&context, path, path_space)?
     };
+    reject_fenced_selector(&home, Some(&selector), path_space)?;
     let selected = observation::model::resolve_selection(
         &registry,
         &state.accepted,
@@ -387,6 +408,7 @@ fn execute_forced_direction(
         "force",
     )?;
     let selection = exact_resolution_selection(selected, &state.accepted, &selector)?;
+    reject_fenced_selection(&home, &selection)?;
     let observed = observation::inspect(&home, &registry, &state.accepted, &selection)?;
     state::publication::revalidate(&home, &state)?;
     let records = observed
@@ -441,11 +463,17 @@ fn execute_forced_direction(
     }
     let plan = mutation::plan::build_resolution(scope, records, winner)?;
     if dry_run || !plan.blockers.is_empty() {
-        return Ok(CommandOutcome::mutation_plan(
+        let outcome = CommandOutcome::mutation_plan(
             &plan,
             if dry_run { "dry_run" } else { "execute" },
             state.accepted.generation,
-        ));
+        );
+        return Ok(
+            outcome.with_human_force_resolution(force_resolution_selectors(
+                &plan,
+                &invocation_directory()?,
+            )),
+        );
     }
     revalidate_project_for_mutation()?;
     state::rebinding::require_mutation(&state.rebinding)?;
@@ -469,6 +497,7 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
         .as_deref()
         .map(|path| resolve_portable_selector(&context, path, path_space))
         .transpose()?;
+    reject_fenced_selector(&home, selector.as_deref(), path_space)?;
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
@@ -476,6 +505,7 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
         path_space,
         "sync",
     )?;
+    reject_fenced_selection(&home, &selection)?;
     let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
         .map_err(|error| error.for_operation("sync"))?;
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("sync"))?;
@@ -493,11 +523,17 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
         || !plan.blockers.is_empty()
         || plan.actions.is_empty() && plan.acceptance_identities.is_empty()
     {
-        return Ok(CommandOutcome::mutation_plan(
+        let outcome = CommandOutcome::mutation_plan(
             &plan,
             if args.dry_run { "dry_run" } else { "execute" },
             state.accepted.generation,
-        ));
+        );
+        return Ok(
+            outcome.with_human_force_resolution(force_resolution_selectors(
+                &plan,
+                &invocation_directory()?,
+            )),
+        );
     }
     revalidate_project_for_mutation()?;
     state::rebinding::require_mutation(&state.rebinding)?;
@@ -529,6 +565,55 @@ fn exact_resolution_selection(
             Err(resolution_selector_error(requested))
         }
     }
+}
+
+/// Reject mutation work that includes the sole mapping guarded by an incomplete add fence.
+/// Explicit selection keeps unrelated mappings usable while the operator retries that add.
+fn reject_fenced_selection(
+    home: &project::ProjectPaths,
+    selection: &observation::model::Selection,
+) -> Result<(), GripError> {
+    let Some(fence) = state::add_fence::load(home)? else {
+        return Ok(());
+    };
+    let selected = match selection {
+        observation::model::Selection::All => true,
+        observation::model::Selection::Mapping(mapping) => fence.protects_resolved(mapping),
+        observation::model::Selection::Entry(identity)
+        | observation::model::Selection::Subtree(identity) => {
+            fence.protects_resolved(&identity.mapping)
+        }
+        observation::model::Selection::Unmanaged(_) => false,
+    };
+    if selected {
+        return Err(GripError::InvalidConfiguration(
+            "selected mapping has an incomplete add publication; rerun grip add for that mapping"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Fail early for a selector that identifies a mapping present only in a pre-descriptor fence.
+/// Such a mapping cannot pass normal registry selection, but it is still a known blocked mapping
+/// and should direct the operator to the same-add retry.
+fn reject_fenced_selector(
+    home: &project::ProjectPaths,
+    selector: Option<&std::path::Path>,
+    path_space: observation::model::PathSpace,
+) -> Result<(), GripError> {
+    let Some(selector) = selector else {
+        return Ok(());
+    };
+    if state::add_fence::load(home)?
+        .is_some_and(|fence| fence.protects_selector(selector, path_space))
+    {
+        return Err(GripError::InvalidConfiguration(
+            "selected mapping has an incomplete add publication; rerun grip add for that mapping"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 fn resolution_selector_error(path: &std::path::Path) -> GripError {
@@ -566,6 +651,15 @@ fn execute_inspection(
         .as_deref()
         .map(|path| resolve_portable_selector(&context, path, path_space))
         .transpose()?;
+    let fence = state::add_fence::load(&home)?;
+    if operation == "status"
+        && let Some(fence) = fence.as_ref()
+        && selector
+            .as_deref()
+            .is_some_and(|selector| fence.protects_selector(selector, path_space))
+    {
+        return fenced_status_outcome(fence, selector.as_deref(), path_space);
+    }
     let selection = observation::model::resolve_selection(
         &registry,
         &state.accepted,
@@ -577,10 +671,28 @@ fn execute_inspection(
         .map_err(|error| error.for_operation(operation))?;
     state::publication::revalidate(&home, &state)
         .map_err(|error| error.for_operation(operation))?;
-    let records = observed
+    let mut records = observed
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
-        .collect();
+        .collect::<Vec<_>>();
+    if operation == "status"
+        && let Some(fence) = fence.as_ref()
+    {
+        let mut present = false;
+        for record in &mut records {
+            if fence.protects_resolved(&record.identity.mapping) {
+                present = true;
+                record.classification = classification::model::Classification::UnsafeCollision;
+                record.prospective_direction = classification::model::Direction::None;
+                record.attention = true;
+                record.blocking = true;
+                record.reasons = vec!["incomplete_add_publication".into()];
+            }
+        }
+        if !present && selector.is_none() {
+            records.push(fenced_classification_record(fence)?);
+        }
+    }
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let result = classification::model::ClassificationResult::new(operation, scope, records);
     let outcome = CommandOutcome::classification(&result);
@@ -600,6 +712,63 @@ fn execute_inspection(
     } else {
         Ok(outcome)
     }
+}
+
+/// Render the mapping from a fence even if descriptor publication never completed.
+fn fenced_status_outcome(
+    fence: &state::add_fence::AddPublicationFenceV1,
+    selector: Option<&std::path::Path>,
+    path_space: observation::model::PathSpace,
+) -> Result<CommandOutcome, GripError> {
+    let mapping = fence.resolved_mapping();
+    let selection = observation::model::Selection::Mapping(mapping);
+    let record = fenced_classification_record(fence)?;
+    let scope = classification_scope(&selection, selector, path_space);
+    let result = classification::model::ClassificationResult::new("status", scope, vec![record]);
+    let invocation_directory = invocation_directory()?;
+    let source_paths = result
+        .records
+        .iter()
+        .map(|record| {
+            path_policy::git_relative_display(&record.identity.source_path(), &invocation_directory)
+        })
+        .collect();
+    Ok(CommandOutcome::classification(&result).with_human_status_source_paths(source_paths))
+}
+
+/// Produce the existing blocked-conflict representation for a fence whose descriptor is absent.
+fn fenced_classification_record(
+    fence: &state::add_fence::AddPublicationFenceV1,
+) -> Result<classification::model::ClassificationRecord, GripError> {
+    let mapping = fence.resolved_mapping();
+    let identity = observation::model::EntryIdentity::new(mapping.clone(), Vec::new())
+        .map_err(|message| GripError::CorruptState(message.into()))?;
+    Ok(classification::model::ClassificationRecord {
+        identity,
+        classification: classification::model::Classification::UnsafeCollision,
+        mapping_kind: mapping.kind,
+        mapping_source: mapping.source.clone(),
+        relative_path: None,
+        source_path: discovery::model::SafePath::from_path(&mapping.source),
+        destination_path: discovery::model::SafePath::from_path(&mapping.destination),
+        source: None,
+        destination: None,
+        baseline: None,
+        source_complete: None,
+        destination_complete: None,
+        baseline_complete: None,
+        compatibility_findings: Vec::new(),
+        endpoint_capabilities: Vec::new(),
+        prospective_direction: classification::model::Direction::None,
+        changed_dimensions: classification::model::ChangedDimensions {
+            source_to_baseline: None,
+            destination_to_baseline: None,
+            source_to_destination: None,
+        },
+        attention: true,
+        blocking: true,
+        reasons: vec!["incomplete_add_publication".into()],
+    })
 }
 
 fn classification_scope(
@@ -626,6 +795,36 @@ fn classification_scope(
         selector: selector.map(crate::discovery::model::SafePath::from_path),
         mapping_source,
     }
+}
+
+fn force_resolution_selectors(
+    plan: &mutation::model::MutationPlan,
+    invocation_directory: &std::path::Path,
+) -> Vec<(String, String)> {
+    if plan.blockers.is_empty()
+        || !plan.blockers.iter().all(|blocker| {
+            matches!(
+                blocker.reason.as_str(),
+                "initial_collision" | "divergent_change"
+            ) && blocker.paths.len() >= 2
+        })
+    {
+        return Vec::new();
+    }
+
+    use std::os::unix::ffi::OsStringExt;
+    plan.blockers
+        .iter()
+        .map(|blocker| {
+            let source = std::path::PathBuf::from(std::ffi::OsString::from_vec(
+                blocker.paths[0].raw_bytes().to_vec(),
+            ));
+            (
+                path_policy::git_relative_display(&source, invocation_directory),
+                blocker.paths[1].display.clone(),
+            )
+        })
+        .collect()
 }
 
 fn resolve_portable_selector(
@@ -731,11 +930,6 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         }
     };
     let portable = mapping::PortableMapping::parse_cli(kind, &args.source, &args.destination)?;
-    let snapshot = registry::publication::load(&home, true).map_err(|error| {
-        error
-            .for_mapping_operation(operation)
-            .for_mapping_kind(kind)
-    })?;
     let source_evidence = path_policy::inspect_durable_endpoint(
         &portable.source.resolve(&context.root),
         kind,
@@ -755,6 +949,19 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         source_evidence.canonical.clone(),
         destination_evidence.canonical.clone(),
     );
+    let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, operation)?;
+    revalidate_project_for_mutation()?;
+    if let Some(outcome) = resume_fenced_add(&home, &added, &portable)? {
+        return Ok(outcome);
+    }
+    // A stale fenced candidate may have just restored the prior descriptor. Reload after that
+    // recovery so the new declaration is built from the authoritative registry, not from the
+    // candidate that was deliberately rolled back.
+    let snapshot = registry::publication::load(&home, true).map_err(|error| {
+        error
+            .for_mapping_operation(operation)
+            .for_mapping_kind(kind)
+    })?;
     let mut declarations = snapshot.portable_mappings()?;
     declarations.push(portable.clone());
     let candidate_descriptor = registry::ProjectDescriptorV2::new(declarations)?;
@@ -765,8 +972,82 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
             .map(|mapping| mapping.ownership_mapping())
             .collect(),
     )?;
-    let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, operation)?;
-    revalidate_project_for_mutation()?;
+    if source_kind.is_some() && destination_kind.is_some() {
+        let state_snapshot = state::publication::load(&home)?;
+        let descriptor_bytes = registry::encode_descriptor(&candidate_descriptor)?;
+        let selection = observation::model::Selection::Mapping(
+            observation::model::ResolvedMapping::from(&added),
+        );
+        let observed = observation::inspect_candidate(
+            &home,
+            &candidate,
+            &descriptor_bytes,
+            &snapshot,
+            &state_snapshot.accepted,
+            &selection,
+        )?;
+        state::publication::revalidate(&home, &state_snapshot)?;
+        let records = observed
+            .values()
+            .map(|entry| classification::classify_accepted(entry, &state_snapshot.accepted))
+            .collect::<Vec<_>>();
+        let initial_state = baseline::build_for_add(&state_snapshot.accepted, &records)?;
+        let unequal = records.iter().any(|record| {
+            record.source_complete.is_some()
+                && record.destination_complete.is_some()
+                && record.source_complete != record.destination_complete
+        });
+        if unequal {
+            let state_bytes = state::publication::prepare_candidate_for_descriptor(
+                &home,
+                &state_snapshot,
+                &initial_state.next.complete_baselines,
+                &descriptor_bytes,
+            )?;
+            let fence = state::add_fence::AddPublicationFenceV1::new(
+                &added,
+                snapshot.bytes.clone(),
+                descriptor_bytes.clone(),
+                state_snapshot.bytes.clone(),
+                state_bytes.clone(),
+            );
+            state::add_fence::create_verified(&home, &fence)?;
+            registry::publication::publish_with_evidence(
+                &home,
+                &snapshot,
+                &candidate,
+                &candidate_descriptor,
+                &[source_evidence, destination_evidence],
+            )?;
+            let published_registry = registry::publication::load(&home, false)?;
+            if !fenced_candidate_is_current(&home, &added, &published_registry, &fence)? {
+                return Err(GripError::InvalidConfiguration(
+                    "destination changed before Grip could record the initial comparison state; rerun grip add for this mapping"
+                        .into(),
+                ));
+            }
+            state::publication::publish_prepared_locked(
+                &home,
+                &state_snapshot,
+                &initial_state.next.complete_baselines,
+                &state_bytes,
+            )?;
+            let published_state = state::publication::load(&home)?;
+            if published_registry.bytes != descriptor_bytes
+                || published_state.bytes.as_deref() != Some(state_bytes.as_slice())
+            {
+                return Err(GripError::CorruptState(
+                    "add publication did not match its fenced candidate".into(),
+                ));
+            }
+            state::add_fence::clear_verified(&home, &fence)?;
+            return Ok(CommandOutcome::mapping_success(
+                operation,
+                "Mapping recorded",
+                &result::MappingResultDetails::from_parts(&portable, &added),
+            ));
+        }
+    }
     registry::publication::publish_with_evidence(
         &home,
         &snapshot,
@@ -782,6 +1063,146 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         "Mapping recorded",
         &result::MappingResultDetails::from_parts(&portable, &added),
     ))
+}
+
+/// Complete a previously fenced add when its descriptor/state candidate is still authoritative.
+/// A fence with an unchanged prior pair is harmless cleanup; a visible candidate descriptor is
+/// completed from the exact State V4 bytes captured before its publication began.
+fn resume_fenced_add(
+    home: &project::ProjectPaths,
+    added: &mapping::Mapping,
+    portable: &mapping::PortableMapping,
+) -> Result<Option<CommandOutcome>, GripError> {
+    let Some(fence) = state::add_fence::load(home)? else {
+        return Ok(None);
+    };
+    if !fence.protects(added) {
+        return Err(GripError::InvalidConfiguration(
+            "another mapping has an incomplete add publication".into(),
+        ));
+    }
+    let registry = registry::publication::load(home, false)?;
+    let state_snapshot = state::publication::load(home)?;
+    let descriptor_digest = state::add_fence::digest(&registry.bytes);
+    let state_digest = state_snapshot
+        .bytes
+        .as_deref()
+        .map(state::add_fence::digest);
+
+    if descriptor_digest == fence.candidate_descriptor_digest {
+        if !fenced_candidate_is_current(home, added, &registry, &fence)? {
+            restore_fenced_add(home, &fence)?;
+            return Ok(None);
+        }
+        if state_digest != Some(fence.candidate_state_digest.clone()) {
+            let candidate_state = state::decode_v4(&fence.candidate_state_bytes)?;
+            let runtime = state::runtime_from_accepted_v4(home, &candidate_state)?;
+            state::publication::publish_prepared_locked(
+                home,
+                &state_snapshot,
+                &runtime.baselines,
+                &fence.candidate_state_bytes,
+            )?;
+        }
+        let verified_state = state::publication::load(home)?;
+        if verified_state.bytes.as_deref() != Some(fence.candidate_state_bytes.as_slice()) {
+            return Err(GripError::CorruptState(
+                "fenced add retry did not publish the expected State V4 candidate".into(),
+            ));
+        }
+        state::add_fence::clear_verified(home, &fence)?;
+        return Ok(Some(CommandOutcome::mapping_success(
+            "add",
+            "Mapping recorded",
+            &result::MappingResultDetails::from_parts(portable, added),
+        )));
+    }
+
+    if descriptor_digest == fence.prior_descriptor_digest
+        && state_digest == fence.prior_state_digest
+    {
+        state::add_fence::clear_verified(home, &fence)?;
+        return Ok(None);
+    }
+
+    Err(GripError::InvalidConfiguration(
+        "incomplete add publication differs from both its prior and candidate state; retry cannot safely continue"
+            .into(),
+    ))
+}
+
+/// Reinspect the candidate mapping against the destination-derived State V4 evidence captured
+/// in the fence. A changed destination makes the candidate stale; it must be restored rather
+/// than accepted merely because its descriptor bytes are still present.
+fn fenced_candidate_is_current(
+    home: &project::ProjectPaths,
+    added: &mapping::Mapping,
+    registry: &registry::publication::RegistrySnapshot,
+    fence: &state::add_fence::AddPublicationFenceV1,
+) -> Result<bool, GripError> {
+    let candidate_state = state::decode_v4(&fence.candidate_state_bytes)?;
+    let runtime = state::runtime_from_accepted_v4(home, &candidate_state)?;
+    let accepted = state::AcceptedState {
+        generation: Some(runtime.generation),
+        complete_baselines: runtime.baselines,
+        accepted_bytes: Some(fence.candidate_state_bytes.clone()),
+    };
+    let selection =
+        observation::model::Selection::Mapping(observation::model::ResolvedMapping::from(added));
+    let observed = observation::inspect(home, registry, &accepted, &selection)?;
+    for (identity, baseline) in &accepted.complete_baselines {
+        if identity.mapping != observation::model::ResolvedMapping::from(added) {
+            continue;
+        }
+        let Some(entry) = observed.get(identity) else {
+            return Ok(false);
+        };
+        if entry.blocking
+            || entry
+                .destination_complete
+                .as_ref()
+                .map(|state| &state.state)
+                != Some(baseline)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(observed.values().all(|entry| !entry.blocking))
+}
+
+/// Restore the exact pre-add descriptor/state pair after a fenced candidate fails revalidation.
+/// The fence itself supplies the expected candidate digests, so restoration refuses to overwrite
+/// an unrelated concurrent publication.
+fn restore_fenced_add(
+    home: &project::ProjectPaths,
+    fence: &state::add_fence::AddPublicationFenceV1,
+) -> Result<(), GripError> {
+    registry::publication::restore_exact(
+        home,
+        &fence.prior_descriptor_bytes,
+        &fence.candidate_descriptor_digest,
+    )?;
+    let current = state::publication::load(home)?;
+    if current.bytes.as_deref() != fence.prior_state_bytes.as_deref() {
+        if let Some(prior_state) = &fence.prior_state_bytes {
+            let candidate_state = state::decode_v4(&fence.candidate_state_bytes)?;
+            state::publication::restore_exact(
+                home,
+                prior_state,
+                candidate_state.generation,
+                &fence.candidate_state_digest,
+            )?;
+        } else {
+            state::publication::remove_exact_candidate(home, &fence.candidate_state_bytes)?;
+        }
+    }
+    let restored = state::publication::load(home)?;
+    if restored.bytes.as_deref() != fence.prior_state_bytes.as_deref() {
+        return Err(GripError::CorruptState(
+            "fenced add restoration did not recover the prior State V4 evidence".into(),
+        ));
+    }
+    state::add_fence::clear_verified(home, fence)
 }
 
 fn existing_mapping_kind(
@@ -817,6 +1238,7 @@ fn execute_list(args: &cli::ListArgs) -> Result<CommandOutcome, GripError> {
     let snapshot = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation("list"))?;
     let details = snapshot.mapping_details()?;
+    let selected = args.source.is_some();
     let mappings = if let Some(source) = &args.source {
         let source =
             path_policy::ProjectRelativePath::parse_cli(source, true)?.resolve(&context.root);
@@ -829,7 +1251,7 @@ fn execute_list(args: &cli::ListArgs) -> Result<CommandOutcome, GripError> {
     } else {
         details
     };
-    Ok(CommandOutcome::mapping_list(&mappings))
+    Ok(CommandOutcome::mapping_list(&mappings).with_human_mapping_selection(selected))
 }
 
 fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
@@ -894,14 +1316,9 @@ fn establish_added_baseline(
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect::<Vec<_>>();
-    match baseline::build(&state.accepted, &records) {
-        Ok(candidate) => {
-            state::publication::publish_current_locked(home, &state, &candidate.next)?;
-        }
-        // Differing endpoints are an intentionally unbaselined initial collision. They are
-        // recorded, inspected, and later made explicit with `push --force` or `pull --force`.
-        Err(GripError::BaselineNotAcceptable { .. }) => {}
-        Err(error) => return Err(error),
+    let candidate = baseline::build_for_add(&state.accepted, &records)?;
+    if candidate.changed_count > 0 {
+        state::publication::publish_current_locked(home, &state, &candidate.next)?;
     }
     Ok(())
 }

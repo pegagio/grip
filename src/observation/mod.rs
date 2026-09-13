@@ -20,8 +20,8 @@ pub fn inspect(
     selection: &Selection,
 ) -> Result<Observation, GripError> {
     let inventory = crate::discovery::inspect(home, registry, None)?;
-    let first = inspect_once(registry, accepted, selection, &inventory)?;
-    let second = inspect_once(registry, accepted, selection, &inventory)?;
+    let first = inspect_once(&registry.registry, accepted, selection, &inventory)?;
+    let second = inspect_once(&registry.registry, accepted, selection, &inventory)?;
     crate::registry::publication::revalidate_readonly(home, registry, "classification")?;
     if first != second {
         return Err(GripError::discovery_operational(
@@ -34,14 +34,39 @@ pub fn inspect(
     Ok(second)
 }
 
+/// Inspect a proposed add registry while retaining the active registry as the revalidation
+/// authority. The candidate is never published merely to obtain baseline evidence.
+pub fn inspect_candidate(
+    home: &ProjectPaths,
+    candidate: &crate::registry::ResolvedRegistry,
+    candidate_descriptor_bytes: &[u8],
+    expected: &RegistrySnapshot,
+    accepted: &AcceptedState,
+    selection: &Selection,
+) -> Result<Observation, GripError> {
+    let inventory =
+        crate::discovery::inspect_candidate(home, candidate, candidate_descriptor_bytes, expected)?;
+    let first = inspect_once(candidate, accepted, selection, &inventory)?;
+    let second = inspect_once(candidate, accepted, selection, &inventory)?;
+    crate::registry::publication::revalidate_readonly(home, expected, "classification")?;
+    if first != second {
+        return Err(GripError::discovery_operational(
+            "classification",
+            "stale_observation_evidence",
+            Vec::new(),
+            "candidate observation evidence changed before classification completed",
+        ));
+    }
+    Ok(second)
+}
+
 fn inspect_once(
-    registry: &RegistrySnapshot,
+    registry: &crate::registry::ResolvedRegistry,
     accepted: &AcceptedState,
     selection: &Selection,
     inventory: &crate::discovery::model::DiscoveryInventory,
 ) -> Result<Observation, GripError> {
     let current: BTreeMap<ResolvedMapping, &Mapping> = registry
-        .registry
         .mappings()
         .iter()
         .map(|mapping| (ResolvedMapping::from(mapping), mapping))
@@ -49,7 +74,7 @@ fn inspect_once(
     let mut observed = Observation::new();
     let mut relative_inspectors = BTreeMap::new();
 
-    for mapping in registry.registry.mappings() {
+    for mapping in registry.mappings() {
         if mapping.kind == MappingKind::File {
             let identity = EntryIdentity::new(ResolvedMapping::from(mapping), Vec::new())
                 .expect("file mapping identity is valid");
@@ -88,7 +113,6 @@ fn inspect_once(
 
     for record in &inventory.records {
         let mapping = registry
-            .registry
             .mappings()
             .iter()
             .find(|mapping| {

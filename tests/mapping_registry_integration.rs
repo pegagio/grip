@@ -8,6 +8,54 @@ fn json(output: &std::process::Output) -> serde_json::Value {
 }
 
 #[test]
+fn descriptor_pre_rename_failure_preserves_the_prior_mapping_set() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::write(root.path().join("source"), "source").unwrap();
+    fs::write(root.path().join("destination"), "destination").unwrap();
+    let home = support::project_home(&metadata_dir);
+    let expected = grip::registry::publication::load(&home, true).unwrap();
+    let descriptor_before = expected.bytes.clone();
+    let portable = grip::mapping::PortableMapping::parse_cli(
+        grip::mapping::MappingKind::File,
+        std::ffi::OsStr::new("source"),
+        std::ffi::OsStr::new("~/destination"),
+    )
+    .unwrap();
+    let descriptor = grip::registry::ProjectDescriptorV2::new(vec![portable]).unwrap();
+    let candidate = grip::registry::ResolvedRegistry::new(
+        descriptor
+            .resolve(root.path(), root.path(), "test")
+            .unwrap()
+            .into_iter()
+            .map(|mapping| mapping.ownership_mapping())
+            .collect(),
+    )
+    .unwrap();
+
+    let error = grip::registry::publication::publish_with_fault(
+        &home,
+        &expected,
+        &candidate,
+        Some(grip::registry::publication::PublicationFault::BeforeRegistryRename),
+    )
+    .unwrap_err();
+
+    assert!(
+        !grip::result::CommandOutcome::failure(&error)
+            .details
+            .get("publication_visible")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    );
+    assert_eq!(
+        fs::read(metadata_dir.join("config.toml")).unwrap(),
+        descriptor_before
+    );
+    assert!(!metadata_dir.join("state").exists());
+}
+
+#[test]
 fn list_is_empty_without_writing_state() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());

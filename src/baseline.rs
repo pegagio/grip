@@ -93,6 +93,50 @@ pub fn build(
     })
 }
 
+/// Build the initial accepted state for a newly declared mapping without changing either
+/// endpoint. Equal members retain the existing accepted-state rule, while an unequal
+/// destination becomes the initial comparison reference so the source is ready to push.
+pub fn build_for_add(
+    expected: &AcceptedState,
+    records: &[ClassificationRecord],
+) -> Result<Candidate, GripError> {
+    let mut next = expected.clone();
+    let mut changed_count = 0;
+
+    for record in records {
+        // Before an initial reference exists, an unequal complete pair is represented by the
+        // existing `InitialCollision` classification. It is safe for this add-only builder:
+        // recording the destination converts it to the normal source-only change. All other
+        // blocking records retain the ordinary conservative behavior.
+        if record.blocking && record.classification != Classification::InitialCollision {
+            return Err(GripError::BaselineNotAcceptable {
+                records: vec![record.clone()],
+            });
+        }
+
+        let baseline = match (&record.source_complete, &record.destination_complete) {
+            (Some(source), Some(destination)) if source == destination => Some(source),
+            (Some(_), Some(destination)) => Some(destination),
+            // A source-only member is already a normal pending push. Destination-only
+            // members are not source-defined ownership, so neither creates an entry.
+            (Some(_), None) | (None, Some(_)) | (None, None) => None,
+        };
+        if let Some(baseline) = baseline
+            && expected.complete_baselines.get(&record.identity) != Some(baseline)
+        {
+            next.complete_baselines
+                .insert(record.identity.clone(), baseline.clone());
+            changed_count += 1;
+        }
+    }
+
+    Ok(Candidate {
+        next,
+        selected_count: records.len(),
+        changed_count,
+    })
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AcceptanceResult {
     pub operation: &'static str,

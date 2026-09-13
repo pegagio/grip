@@ -1,3 +1,4 @@
+pub mod add_fence;
 pub mod lock;
 pub mod mutation_lock;
 pub mod publication;
@@ -242,6 +243,31 @@ pub(crate) fn accepted_v4_from_runtime(
     let descriptor_text = std::str::from_utf8(&descriptor_bytes)
         .map_err(|_| GripError::InvalidConfiguration("project descriptor must be UTF-8".into()))?;
     let descriptor = crate::registry::decode_descriptor(descriptor_text)?;
+    accepted_v4_from_descriptor(home, generation, baselines, &descriptor_bytes, &descriptor)
+}
+
+/// Build State V4 bytes for a descriptor that has been staged as an add candidate but is not
+/// yet visible. This lets the add fence bind both sides of the compound publication before the
+/// descriptor is published.
+pub(crate) fn accepted_v4_from_descriptor_bytes(
+    home: &crate::project::ProjectPaths,
+    generation: u64,
+    baselines: &BTreeMap<EntryIdentity, SupportedEntryStateV3>,
+    descriptor_bytes: &[u8],
+) -> Result<AcceptedStateV4, GripError> {
+    let descriptor_text = std::str::from_utf8(descriptor_bytes)
+        .map_err(|_| GripError::InvalidConfiguration("project descriptor must be UTF-8".into()))?;
+    let descriptor = crate::registry::decode_descriptor(descriptor_text)?;
+    accepted_v4_from_descriptor(home, generation, baselines, descriptor_bytes, &descriptor)
+}
+
+fn accepted_v4_from_descriptor(
+    home: &crate::project::ProjectPaths,
+    generation: u64,
+    baselines: &BTreeMap<EntryIdentity, SupportedEntryStateV3>,
+    descriptor_bytes: &[u8],
+    descriptor: &crate::registry::ProjectDescriptorV2,
+) -> Result<AcceptedStateV4, GripError> {
     let project_root = home.project_root()?;
     let user_home = home.destination_home().ok_or_else(|| {
         GripError::InvalidConfiguration("project destination home is unavailable".into())
@@ -270,7 +296,7 @@ pub(crate) fn accepted_v4_from_runtime(
     }
     Ok(AcceptedStateV4 {
         generation,
-        binding: current_binding(home, &descriptor_bytes, &descriptor)?,
+        binding: current_binding(home, descriptor_bytes, descriptor)?,
         baselines: portable_baselines,
         accepted_bytes: None,
     })

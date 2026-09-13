@@ -38,7 +38,16 @@ grip list shell/gitconfig
 grip remove shell/gitconfig
 ```
 
-Grip stores only the declarations. Home-relative and project-relative forms are portable; an absolute destination intentionally binds a declaration to a specific filesystem location. A project-relative destination is resolved from the selected project root, never the command's current directory, and may explicitly use `..` to address an adjacent location. Human and JSON results show declared values separately from safely rendered resolved endpoints. Source paths that resolve outside the project or into `.grip`, empty destination forms, environment expansion, other-user home syntax, symbolic-link endpoints, unsafe ancestry, and overlapping ownership are rejected.
+Grip stores only the declarations. Home-relative and project-relative forms are portable; an absolute destination intentionally binds a declaration to a specific filesystem location. A project-relative destination is resolved from the selected project root, never the command's current directory, and may explicitly use `..` to address an adjacent location. Default human mapping output shows concise declared rows; JSON retains both declared and safely rendered resolved endpoints. Source paths that resolve outside the project or into `.grip`, empty destination forms, environment expansion, other-user home syntax, symbolic-link endpoints, unsafe ancestry, and overlapping ownership are rejected.
+
+```text
+Mapped:
+ shell/gitconfig -> ~/.gitconfig
+
+2 mapping(s):
+ shell/gitconfig -> ~/.gitconfig
+ editor -> ~/.config/editor
+```
 
 For a tree mapping, Grip discovers ordinary non-ignored source entries on every inspection. Source-side `.gripignore` files use Gitignore-compatible rules. The project metadata directory `.grip` is structurally reserved and is never mapping payload, even if ignore rules attempt to re-include it.
 
@@ -54,9 +63,9 @@ grip sync [-n|--dry-run] [-d|--destination] [PATH]
 
 Source selectors for mapping commands, `status`, `diff`, `pull`, and `sync` use project-relative source space. A relative source selector for `push` is resolved from the current working directory so an ordinary source path displayed by `grip status` can be used directly from that same directory. Absolute source selectors remain invalid. `--destination` selects in destination space where supported; `--` terminates option parsing for dash-prefixed paths.
 
-Grip compares the current source, current destination, and last accepted baseline. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until `push --force` or `pull --force` selects one exact entry and names the winning direction. Destination-only content outside source-defined managed membership remains unmanaged.
+Grip compares the current source, current destination, and last accepted baseline. Adding unequal existing endpoints records the destination as that mapping's initial comparison reference without copying either side, so the source is immediately offered as an ordinary push. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until `push --force` or `pull --force` selects one exact entry and names the winning direction. Destination-only content outside source-defined managed membership remains unmanaged.
 
-Default `grip status` is a concise, path-centered summary. It lists only entries needing attention: `Changes to push` use `->`, `Changes to pull` use `<-`, blockers appear under `Conflicts` with `<->`, and non-directional baseline or reconciliation work uses `>-<`. Clean entries appear only in the summary; use `grip diff` or `-o json` for detailed evidence.
+Default `grip status` is a concise, path-centered summary. It lists only entries needing attention in this order: `Changes to push`, `Changes to pull`, `Conflicts`, then `Needs baseline`. Rows use `->`, `<-`, `<->`, and `>-<` respectively. Initial collisions and ordinary divergent conflicts include the explicit command for keeping either endpoint; technical blockers retain their safety detail. Clean entries appear only in the summary; `grip diff` remains the unchanged detailed diagnostic view, and `-o json` retains structured evidence.
 
 When status runs from a nested directory, its source side is shown relative to that directory. Use the ordinary displayed path with `push` from the same directory:
 
@@ -78,11 +87,13 @@ Status: 2 entries checked; 2 current; no action needed.
 ```text
 Status: 4 entries checked; 1 current; 1 to push; 1 conflict; 1 needs baseline.
 
-Conflicts:
-  README.md <-> ~/workspace/README.md
-
 Changes to push:
   app/main.py -> ~/workspace/app/main.py
+
+Conflicts:
+  README.md <-> ~/workspace/README.md
+    Keep source: grip push --force README.md
+    Keep destination: grip pull --force --destination ~/workspace/README.md
 
 Needs baseline:
   CHANGELOG.md >-< ~/workspace/CHANGELOG.md
@@ -91,6 +102,22 @@ Needs baseline:
 Read-only commands and dry runs do not create `.grip/state`, acquire writer locks, publish operation evidence, or change payloads. An actual writer lazily creates owner-only project state, takes a bounded project-local mutation lock, repeats inspection and revalidation, stages and verifies each replacement, and publishes State V4 only after final verification.
 
 `remove` changes only Grip's declaration and baseline; it never changes either endpoint. Normal synchronization blocks one-sided absence. An exact forced `push` or `pull` is the explicit authority to choose a winner, including an absent winner. Use Git for history and recovery.
+
+When `push`, `pull`, or `sync` is blocked solely by initial collisions or ordinary divergent conflicts, its output lists the conflicting paths and repeats these two choices beneath each one. A technical or mixed blocker instead says `Run: grip status`, where the current detailed safety evidence remains available. The ordinary human result omits planner IDs, winner fields, baseline authority, and operation-record evidence; the blocked result and exit status remain unchanged until you explicitly resolve it.
+
+Action-bearing previews and completions show only the requested direction and affected files. A no-action mutation says `Nothing to push.`, `Nothing to pull.`, or `Nothing to synchronize.` A baseline-only mutation says it would establish or established a baseline for its accepted files. A partial failure keeps its completed-action count and says `Run: grip status before retrying.` The same forms apply to a forced directional resolution; `sync` may contain both arrows under one heading:
+
+```text
+Would push 1 file(s):
+  app/main.py -> ~/workspace/app/main.py
+
+Pulled 1 file(s):
+  docs/config.yml <- ~/workspace/docs/config.yml
+
+Synchronized 2 file(s):
+  docs/config.yml <- ~/workspace/docs/config.yml
+  app/main.py -> ~/workspace/app/main.py
+```
 
 ## Project metadata and local state
 

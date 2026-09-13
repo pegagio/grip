@@ -114,12 +114,28 @@ fn pull_preview_uses_shared_schema_and_changes_nothing() {
     assert_eq!(value["details"]["actions"][0]["kind"], "replace_file");
     assert!(value["details"]["operation_record"].is_null());
     let human = support::project_command(root.path(), &metadata_dir, &["pull", "--dry-run"]);
-    let text = String::from_utf8_lossy(&human.stdout);
-    let arrow = format!("{} -> {}", destination.display(), source.display());
-    assert!(
-        text.contains(&arrow),
-        "human output did not contain {arrow}: {text}"
+    let human_text = String::from_utf8(human.stdout).unwrap();
+    assert_eq!(
+        human_text,
+        format!(
+            "Would pull 1 file(s):\n  {} <- {}\n",
+            source.display(),
+            destination.display()
+        )
     );
+    for detail in [
+        "replace_file",
+        "recovery=",
+        "verified=",
+        "durable=",
+        "Baseline ",
+        "Operation record ",
+    ] {
+        assert!(
+            !human_text.contains(detail),
+            "unexpected detail {detail}: {human_text}"
+        );
+    }
     assert_eq!(support::snapshot(root.path()), before);
 }
 
@@ -227,11 +243,12 @@ fn pull_blocks_divergent_changes_before_mutation() {
         value["details"]["operation_record"],
         serde_json::Value::Null
     );
+    assert_eq!(value["details"]["baseline"]["authoritative_generation"], 0);
     assert_eq!(support::snapshot(root.path()), before);
 }
 
 #[test]
-fn pull_failure_has_equivalent_human_and_machine_evidence() {
+fn pull_failure_keeps_machine_evidence_and_gives_humans_a_status_before_retry_step() {
     let (_root, home, registry, state, selection, plan) = support::pull_execution_fixture();
     let error = grip::mutation::execution::execute_with_fault_hook(
         &home,
@@ -275,10 +292,10 @@ fn pull_failure_has_equivalent_human_and_machine_evidence() {
     let mut human = Vec::new();
     grip::result::render(outcome, grip::result::OutputMode::Human, &mut human).unwrap();
     let text = String::from_utf8(human).unwrap();
-    assert!(text.contains("Pull failed"));
-    assert!(text.contains("visible=yes verified=no"));
-    assert!(text.contains("Operation record"));
-    assert!(text.contains("Baseline not published"));
+    assert_eq!(
+        text,
+        "Error: Pull failed after 0 of 1 actions. Run: grip status before retrying.\n"
+    );
 }
 
 #[test]
@@ -299,25 +316,32 @@ fn pull_human_results_cover_apply_noop_and_blocked_outcomes() {
     let applied = support::project_command(root.path(), &metadata_dir, &["pull"]);
     assert!(applied.status.success());
     let applied_text = String::from_utf8(applied.stdout).unwrap();
-    assert!(applied_text.contains("Pull applied"));
-    assert!(applied_text.contains("Baseline published"));
+    assert_eq!(
+        applied_text,
+        format!(
+            "Pulled 1 file(s):\n  {} <- {}\n",
+            source.display(),
+            destination.display()
+        )
+    );
 
     let noop = support::project_command(root.path(), &metadata_dir, &["pull"]);
     assert!(noop.status.success());
-    assert!(
-        String::from_utf8(noop.stdout)
-            .unwrap()
-            .contains("Pull complete")
+    assert_eq!(
+        String::from_utf8(noop.stdout).unwrap(),
+        "Nothing to pull.\n"
     );
 
     fs::write(&source, "source divergence").unwrap();
     fs::write(&destination, "destination divergence").unwrap();
     let blocked = support::project_command(root.path(), &metadata_dir, &["pull"]);
     assert_eq!(blocked.status.code(), Some(10));
-    let blocked_text = String::from_utf8(blocked.stdout).unwrap();
-    assert!(blocked_text.contains("Pull blocked"));
-    assert!(
-        blocked_text.contains("blocked divergent_change"),
-        "blocked output omitted blocker detail: {blocked_text}"
+    assert_eq!(
+        String::from_utf8(blocked.stdout).unwrap(),
+        format!(
+            "Error: Pull blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            fs::canonicalize(&destination).unwrap().display(),
+            fs::canonicalize(&destination).unwrap().display(),
+        )
     );
 }

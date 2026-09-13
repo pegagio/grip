@@ -55,11 +55,67 @@ fn sync_human_output_uses_each_actions_direction() {
     let output = support::project_command(root.path(), &metadata_dir, &["sync", "-n"]);
     assert!(output.status.success());
     let human = String::from_utf8(output.stdout).unwrap();
-    assert!(human.contains(&format!(
-        "{} -> {}",
-        destination.display(),
-        source.display()
-    )));
+    assert_eq!(
+        human,
+        format!(
+            "Would synchronize 1 file(s):\n  {} <- {}\n",
+            source.display(),
+            destination.display()
+        )
+    );
+}
+
+#[test]
+fn mixed_sync_preview_and_apply_render_one_heading_with_both_directions() {
+    let (root, home, registry, state, selection, plan) = support::mixed_sync_execution_fixture();
+    let preview = grip::CommandOutcome::mutation_plan(&plan, "dry_run", state.accepted.generation);
+    let mut preview_human = Vec::new();
+    grip::result::render(preview, grip::result::OutputMode::Human, &mut preview_human).unwrap();
+    let root = root.path();
+    let preview_text = String::from_utf8(preview_human).unwrap();
+    assert_eq!(
+        preview_text,
+        format!(
+            "Would synchronize 2 file(s):\n  {} -> {}\n  {} <- {}\n",
+            root.join("source-a").display(),
+            root.join("destination-a").display(),
+            root.join("source-b").display(),
+            root.join("destination-b").display(),
+        )
+    );
+    for detail in [
+        "replace_file",
+        "recovery=",
+        "verified=",
+        "durable=",
+        "Baseline ",
+        "Operation record ",
+    ] {
+        assert!(
+            !preview_text.contains(detail),
+            "unexpected detail {detail}: {preview_text}"
+        );
+    }
+
+    let applied =
+        grip::mutation::execution::execute(&home, &registry, &state, &selection, &plan).unwrap();
+    let mut applied_human = Vec::new();
+    grip::result::render(
+        grip::CommandOutcome::mutation_applied(&applied),
+        grip::result::OutputMode::Human,
+        &mut applied_human,
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(applied_human).unwrap(),
+        format!(
+            "Synchronized 2 file(s):\n  {} -> {}\n  {} <- {}\n",
+            root.join("source-a").display(),
+            root.join("destination-a").display(),
+            root.join("source-b").display(),
+            root.join("destination-b").display(),
+        )
+    );
 }
 
 #[test]
@@ -90,7 +146,7 @@ fn sync_output_failure_finalizes_only_its_operation_record() {
 }
 
 #[test]
-fn sync_human_and_json_blocked_results_expose_equivalent_evidence() {
+fn sync_human_blocked_result_gives_force_choices_while_json_retains_evidence() {
     let (json_root, json_home, json_source, json_destination) = support::accepted_file_fixture();
     fs::write(&json_source, "source conflict").unwrap();
     fs::write(&json_destination, "destination conflict").unwrap();
@@ -109,9 +165,45 @@ fn sync_human_and_json_blocked_results_expose_equivalent_evidence() {
     let human_output = support::project_command(human_root.path(), &human_home, &["sync"]);
     assert_eq!(human_output.status.code(), Some(10));
     let human = String::from_utf8(human_output.stdout).unwrap();
-    for evidence in ["Sync blocked", "1 blocker(s)", "divergent_change"] {
-        assert!(human.contains(evidence), "missing {evidence:?} in {human}");
-    }
+    assert_eq!(
+        human,
+        format!(
+            "Error: Sync blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            human_destination.display(),
+            human_destination.display(),
+        )
+    );
+}
+
+#[test]
+fn sync_noop_uses_a_concise_terminal_transcript() {
+    let (root, metadata_dir, _source, _destination) = support::accepted_file_fixture();
+    let output = support::project_command(root.path(), &metadata_dir, &["sync"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Nothing to synchronize.\n"
+    );
+}
+
+#[test]
+fn baseline_only_mutation_uses_a_concise_terminal_transcript() {
+    let mut outcome = grip::CommandOutcome::success("Sync preview complete");
+    outcome.details = serde_json::json!({
+        "operation": "sync",
+        "result": "planned",
+        "actions": [],
+        "counts": {"converged": 2}
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let mut human = Vec::new();
+    grip::result::render(outcome, grip::result::OutputMode::Human, &mut human).unwrap();
+    assert_eq!(
+        String::from_utf8(human).unwrap(),
+        "Would establish a baseline for 2 file(s).\n"
+    );
 }
 
 #[test]
