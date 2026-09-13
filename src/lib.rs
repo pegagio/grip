@@ -298,8 +298,9 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
             state.accepted.generation,
         );
         return Ok(
-            outcome.with_human_force_resolution(force_resolution_selectors(
+            outcome.with_human_blocker_guidance(force_resolution_guidance(
                 &plan,
+                &state.accepted,
                 &invocation_directory()?,
             )),
         );
@@ -359,8 +360,9 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
             state.accepted.generation,
         );
         return Ok(
-            outcome.with_human_force_resolution(force_resolution_selectors(
+            outcome.with_human_blocker_guidance(force_resolution_guidance(
                 &plan,
+                &state.accepted,
                 &invocation_directory()?,
             )),
         );
@@ -469,8 +471,9 @@ fn execute_forced_direction(
             state.accepted.generation,
         );
         return Ok(
-            outcome.with_human_force_resolution(force_resolution_selectors(
+            outcome.with_human_blocker_guidance(force_resolution_guidance(
                 &plan,
+                &state.accepted,
                 &invocation_directory()?,
             )),
         );
@@ -529,8 +532,9 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
             state.accepted.generation,
         );
         return Ok(
-            outcome.with_human_force_resolution(force_resolution_selectors(
+            outcome.with_human_blocker_guidance(force_resolution_guidance(
                 &plan,
+                &state.accepted,
                 &invocation_directory()?,
             )),
         );
@@ -708,7 +712,10 @@ fn execute_inspection(
                 )
             })
             .collect();
-        Ok(outcome.with_human_status_source_paths(source_paths))
+        let guidance = status_conflict_guidance(&result, &state.accepted, &invocation_directory);
+        Ok(outcome
+            .with_human_status_source_paths(source_paths)
+            .with_human_status_guidance(guidance))
     } else {
         Ok(outcome)
     }
@@ -733,7 +740,9 @@ fn fenced_status_outcome(
             path_policy::git_relative_display(&record.identity.source_path(), &invocation_directory)
         })
         .collect();
-    Ok(CommandOutcome::classification(&result).with_human_status_source_paths(source_paths))
+    Ok(CommandOutcome::classification(&result)
+        .with_human_status_source_paths(source_paths)
+        .with_human_status_guidance(vec![None]))
 }
 
 /// Produce the existing blocked-conflict representation for a fence whose descriptor is absent.
@@ -797,34 +806,92 @@ fn classification_scope(
     }
 }
 
-fn force_resolution_selectors(
-    plan: &mutation::model::MutationPlan,
+fn status_conflict_guidance(
+    result: &classification::model::ClassificationResult,
+    accepted: &state::AcceptedState,
     invocation_directory: &std::path::Path,
-) -> Vec<(String, String)> {
-    if plan.blockers.is_empty()
-        || !plan.blockers.iter().all(|blocker| {
-            matches!(
-                blocker.reason.as_str(),
-                "initial_collision" | "divergent_change"
-            ) && blocker.paths.len() >= 2
+) -> Vec<Option<result::HumanConflictGuidance>> {
+    result
+        .records
+        .iter()
+        .map(|record| {
+            if !is_ordinary_force_conflict(record.classification, &record.compatibility_findings) {
+                return None;
+            }
+            Some(force_resolution_guidance_for_identity(
+                &record.identity,
+                &record.destination_path.display,
+                accepted,
+                invocation_directory,
+            ))
         })
-    {
-        return Vec::new();
-    }
+        .collect()
+}
 
-    use std::os::unix::ffi::OsStringExt;
+fn force_resolution_guidance(
+    plan: &mutation::model::MutationPlan,
+    accepted: &state::AcceptedState,
+    invocation_directory: &std::path::Path,
+) -> Vec<Option<result::HumanConflictGuidance>> {
     plan.blockers
         .iter()
         .map(|blocker| {
-            let source = std::path::PathBuf::from(std::ffi::OsString::from_vec(
-                blocker.paths[0].raw_bytes().to_vec(),
-            ));
-            (
-                path_policy::git_relative_display(&source, invocation_directory),
-                blocker.paths[1].display.clone(),
-            )
+            if !matches!(
+                blocker.reason.as_str(),
+                "initial_collision" | "divergent_change"
+            ) || blocker.paths.len() < 2
+            {
+                return None;
+            }
+            let entry = plan.entries.iter().find(|entry| {
+                entry.source_path == blocker.paths[0] && entry.destination_path == blocker.paths[1]
+            })?;
+            Some(force_resolution_guidance_for_identity(
+                &entry.identity,
+                &entry.destination_path.display,
+                accepted,
+                invocation_directory,
+            ))
         })
         .collect()
+}
+
+fn is_ordinary_force_conflict(
+    classification: classification::model::Classification,
+    findings: &[metadata::model::CompatibilityFinding],
+) -> bool {
+    matches!(
+        classification,
+        classification::model::Classification::InitialCollision
+            | classification::model::Classification::DivergentConflict
+    ) && !findings.iter().any(|finding| finding.blocking)
+}
+
+fn force_resolution_guidance_for_identity(
+    identity: &observation::model::EntryIdentity,
+    destination: &str,
+    accepted: &state::AcceptedState,
+    invocation_directory: &std::path::Path,
+) -> result::HumanConflictGuidance {
+    use observation::model::Selection;
+    let selection = match (identity.mapping.kind, identity.relative_path.is_empty()) {
+        (mapping::MappingKind::File, _) => Selection::Entry(identity.clone()),
+        (mapping::MappingKind::Tree, true) => Selection::Mapping(identity.mapping.clone()),
+        (mapping::MappingKind::Tree, false) => Selection::Subtree(identity.clone()),
+    };
+    let source_path = identity.source_path();
+    let source = path_policy::git_relative_display(&source_path, invocation_directory);
+    if exact_resolution_selection(selection, accepted, &source_path).is_ok() {
+        result::HumanConflictGuidance::ForcePair {
+            source,
+            destination: destination.into(),
+        }
+    } else {
+        result::HumanConflictGuidance::InspectDiff {
+            source,
+            destination: destination.into(),
+        }
+    }
 }
 
 fn resolve_portable_selector(

@@ -98,13 +98,21 @@ pub enum OutputMode {
     Json,
 }
 
+/// Non-serialized next-step guidance for one human-visible conflict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HumanConflictGuidance {
+    ForcePair { source: String, destination: String },
+    InspectDiff { source: String, destination: String },
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandOutcome {
     pub category: ResultCategory,
     pub message: String,
     pub details: Map<String, Value>,
     human_status_source_paths: Option<Vec<String>>,
-    human_force_resolution: Vec<(String, String)>,
+    human_status_guidance: Option<Vec<Option<HumanConflictGuidance>>>,
+    human_blocker_guidance: Vec<Option<HumanConflictGuidance>>,
     human_mapping_selected: bool,
 }
 
@@ -115,7 +123,8 @@ impl CommandOutcome {
             message: message.into(),
             details: Map::new(),
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         }
     }
@@ -127,7 +136,8 @@ impl CommandOutcome {
             message: message.into(),
             details: Map::new(),
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         }
     }
@@ -197,7 +207,8 @@ impl CommandOutcome {
                 .expect("metadata result details serialize as an object")
                 .clone(),
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         }
     }
@@ -240,7 +251,8 @@ impl CommandOutcome {
             message: error.to_string(),
             details: Map::new(),
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         };
         if let GripError::Mapping {
@@ -593,7 +605,8 @@ impl CommandOutcome {
             ),
             details,
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         }
     }
@@ -604,9 +617,21 @@ impl CommandOutcome {
         self
     }
 
-    /// Attach non-serialized commands for force-resolvable mutation blockers.
-    pub fn with_human_force_resolution(mut self, selectors: Vec<(String, String)>) -> Self {
-        self.human_force_resolution = selectors;
+    /// Attach non-serialized next-step guidance for default human status rendering.
+    pub fn with_human_status_guidance(
+        mut self,
+        guidance: Vec<Option<HumanConflictGuidance>>,
+    ) -> Self {
+        self.human_status_guidance = Some(guidance);
+        self
+    }
+
+    /// Attach non-serialized next-step guidance for blocked mutation output.
+    pub fn with_human_blocker_guidance(
+        mut self,
+        guidance: Vec<Option<HumanConflictGuidance>>,
+    ) -> Self {
+        self.human_blocker_guidance = guidance;
         self
     }
 
@@ -636,7 +661,8 @@ impl CommandOutcome {
             message,
             details,
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         }
     }
@@ -723,7 +749,8 @@ impl CommandOutcome {
             message,
             details,
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         }
     }
@@ -778,7 +805,8 @@ impl CommandOutcome {
             ),
             details,
             human_status_source_paths: None,
-            human_force_resolution: Vec::new(),
+            human_status_guidance: None,
+            human_blocker_guidance: Vec::new(),
             human_mapping_selected: false,
         }
     }
@@ -892,7 +920,8 @@ fn operation_outcome<T: Serialize, B: Serialize>(
         message,
         details,
         human_status_source_paths: None,
-        human_force_resolution: Vec::new(),
+        human_status_guidance: None,
+        human_blocker_guidance: Vec::new(),
         human_mapping_selected: false,
     }
 }
@@ -904,6 +933,7 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                 return render_human_status(
                     &outcome.details,
                     outcome.human_status_source_paths.as_deref(),
+                    outcome.human_status_guidance.as_deref(),
                     writer,
                 );
             }
@@ -1065,10 +1095,8 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                                 .and_then(Value::as_str)
                                 .unwrap_or("blocking_evidence")
                         )?;
-                        if let Some((source, destination)) =
-                            outcome.human_force_resolution.get(index)
-                        {
-                            render_human_force_resolution(source, destination, "  ", writer)?;
+                        if let Some(Some(guidance)) = outcome.human_blocker_guidance.get(index) {
+                            render_human_conflict_guidance(guidance, "  ", writer)?;
                         }
                     }
                 }
@@ -1339,13 +1367,31 @@ fn render_human_blocked_mutation(
         counts.get("actions").and_then(Value::as_u64).unwrap_or(0),
         counts.get("blockers").and_then(Value::as_u64).unwrap_or(0),
     )?;
-    if outcome.human_force_resolution.is_empty() {
+    if outcome.human_blocker_guidance.is_empty() {
         writeln!(writer, "  Grip cannot safely continue. Run: grip status")?;
         return Ok(true);
     }
-    for (source, destination) in &outcome.human_force_resolution {
+    let mut needs_status = false;
+    for guidance in &outcome.human_blocker_guidance {
+        let Some(guidance) = guidance else {
+            needs_status = true;
+            continue;
+        };
+        let (source, destination) = match guidance {
+            HumanConflictGuidance::ForcePair {
+                source,
+                destination,
+            }
+            | HumanConflictGuidance::InspectDiff {
+                source,
+                destination,
+            } => (source, destination),
+        };
         writeln!(writer, "  {source} <-> {destination}")?;
-        render_human_force_resolution(source, destination, "    ", writer)?;
+        render_human_conflict_guidance(guidance, "    ", writer)?;
+    }
+    if needs_status {
+        writeln!(writer, "  Grip cannot safely continue. Run: grip status")?;
     }
     Ok(true)
 }
@@ -1464,6 +1510,7 @@ fn render_human_concise_mapping(
 fn render_human_status(
     details: &Map<String, Value>,
     source_paths: Option<&[String]>,
+    guidance: Option<&[Option<HumanConflictGuidance>]>,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let records = details
@@ -1531,14 +1578,36 @@ fn render_human_status(
     }
     writeln!(writer, ".")?;
 
-    render_human_status_section("Changes to push", "->", &push, source_paths, writer)?;
-    render_human_status_section("Changes to pull", "<-", &pull, source_paths, writer)?;
-    render_human_status_section("Conflicts", "<->", &conflicts, source_paths, writer)?;
+    render_human_status_section(
+        "Changes to push",
+        "->",
+        &push,
+        source_paths,
+        guidance,
+        writer,
+    )?;
+    render_human_status_section(
+        "Changes to pull",
+        "<-",
+        &pull,
+        source_paths,
+        guidance,
+        writer,
+    )?;
+    render_human_status_section(
+        "Conflicts",
+        "<->",
+        &conflicts,
+        source_paths,
+        guidance,
+        writer,
+    )?;
     render_human_status_section(
         "Needs baseline",
         ">-<",
         &needs_baseline,
         source_paths,
+        guidance,
         writer,
     )
 }
@@ -1548,6 +1617,7 @@ fn render_human_status_section(
     symbol: &str,
     records: &[(usize, &Value)],
     source_paths: Option<&[String]>,
+    guidance: Option<&[Option<HumanConflictGuidance>]>,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     if records.is_empty() {
@@ -1569,19 +1639,28 @@ fn render_human_status_section(
             .map(String::as_str)
             .unwrap_or_else(|| classification_path(record, "source_path"));
         let destination = classification_path(record, "destination_path");
-        render_human_status_blocker(record, source, destination, writer)?;
+        render_human_status_blocker(
+            record,
+            source,
+            destination,
+            guidance
+                .and_then(|guidance| guidance.get(*index))
+                .and_then(Option::as_ref),
+            writer,
+        )?;
     }
     Ok(())
 }
 
 fn render_human_status_blocker(
     record: &Value,
-    source: &str,
-    destination: &str,
+    _source: &str,
+    _destination: &str,
+    guidance: Option<&HumanConflictGuidance>,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
-    if is_force_resolvable_status_conflict(record) {
-        return render_human_force_resolution(source, destination, "    ", writer);
+    if let Some(guidance) = guidance {
+        return render_human_conflict_guidance(guidance, "    ", writer);
     }
     let Some(findings) = record
         .get("compatibility_findings")
@@ -1638,20 +1717,6 @@ fn render_human_status_blocker(
     Ok(())
 }
 
-fn is_force_resolvable_status_conflict(record: &Value) -> bool {
-    matches!(
-        record.get("classification").and_then(Value::as_str),
-        Some("initial_collision" | "divergent_conflict")
-    ) && record
-        .get("compatibility_findings")
-        .and_then(Value::as_array)
-        .is_none_or(|findings| {
-            !findings
-                .iter()
-                .any(|finding| finding.get("blocking").and_then(Value::as_bool) == Some(true))
-        })
-}
-
 fn render_human_force_resolution(
     source: &str,
     destination: &str,
@@ -1663,6 +1728,22 @@ fn render_human_force_resolution(
         writer,
         "{indent}Keep destination: grip pull --force --destination {destination}"
     )
+}
+
+fn render_human_conflict_guidance(
+    guidance: &HumanConflictGuidance,
+    indent: &str,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    match guidance {
+        HumanConflictGuidance::ForcePair {
+            source,
+            destination,
+        } => render_human_force_resolution(source, destination, indent, writer),
+        HumanConflictGuidance::InspectDiff { source, .. } => {
+            writeln!(writer, "{indent}Run: grip diff {source}")
+        }
+    }
 }
 
 fn classification_blocker_message(record: &Value) -> &'static str {
@@ -2069,7 +2150,7 @@ mod tests {
             "reconcile".into(),
         ];
 
-        render_human_status(&details, Some(&source_paths), &mut output).unwrap();
+        render_human_status(&details, Some(&source_paths), None, &mut output).unwrap();
 
         assert_eq!(
             String::from_utf8(output).unwrap(),

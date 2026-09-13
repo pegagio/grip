@@ -568,6 +568,28 @@ pub fn accepted_tree_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf)
     (root, metadata_dir, source, destination)
 }
 
+pub fn aggregate_tree_collision_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    for tree in [&source, &destination] {
+        fs::create_dir(tree).unwrap();
+        fs::create_dir(tree.join("nested")).unwrap();
+        fs::write(tree.join("nested/file"), "same").unwrap();
+    }
+    copy_tree_entry_metadata(&source, &destination);
+    copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::Directory,
+    );
+    fs::write(source.join("nested/file"), "source conflict").unwrap();
+    fs::write(destination.join("nested/file"), "destination conflict").unwrap();
+    write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    (root, metadata_dir, source, destination)
+}
+
 pub fn untracked_file_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
     let (root, metadata_dir, source, destination) = accepted_file_fixture();
     let output = project_command(root.path(), &metadata_dir, &["mapping", "remove", "source"]);

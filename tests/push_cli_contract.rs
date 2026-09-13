@@ -295,6 +295,41 @@ fn blocked_push_shows_force_choices_for_an_initial_collision() {
     assert_eq!(json.status.code(), Some(10));
     assert!(support::json(&json)["details"]["baseline"].is_object());
     assert_eq!(support::snapshot(root.path()), before);
+
+    let force_push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "--dry-run", "source"],
+    );
+    assert!(force_push.status.success());
+    let force_pull = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "pull",
+            "--force",
+            "--dry-run",
+            "--destination",
+            destination.to_str().unwrap(),
+        ],
+    );
+    assert!(force_pull.status.success());
+}
+
+#[test]
+fn blocked_push_uses_diff_for_an_aggregate_tree_conflict() {
+    let (root, metadata_dir, _source, destination) = support::aggregate_tree_collision_fixture();
+
+    let output =
+        support::project_command(root.path(), &metadata_dir, &["push", "source/nested/file"]);
+    assert_eq!(output.status.code(), Some(10));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains(&format!(
+        "  source/nested/file <-> {}/nested/file\n    Run: grip diff source/nested/file\n",
+        destination.display(),
+    )));
+    assert!(!text.contains("grip push --force"));
+    assert!(!text.contains("grip pull --force"));
 }
 
 #[test]
