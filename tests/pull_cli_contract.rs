@@ -344,4 +344,39 @@ fn pull_human_results_cover_apply_noop_and_blocked_outcomes() {
             fs::canonicalize(&destination).unwrap().display(),
         )
     );
+
+    let force_push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "--dry-run", "source"],
+    );
+    assert!(force_push.status.success());
+    let force_pull = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "pull",
+            "--force",
+            "--dry-run",
+            "--destination",
+            destination.to_str().unwrap(),
+        ],
+    );
+    assert!(force_pull.status.success());
+}
+
+#[test]
+fn blocked_pull_uses_diff_for_an_aggregate_tree_conflict() {
+    let (root, metadata_dir, _source, destination) = support::aggregate_tree_collision_fixture();
+
+    let output =
+        support::project_command(root.path(), &metadata_dir, &["pull", "source/nested/file"]);
+    assert_eq!(output.status.code(), Some(10));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains(&format!(
+        "  source/nested/file <-> {}/nested/file\n    Run: grip diff source/nested/file\n",
+        destination.display(),
+    )));
+    assert!(!text.contains("grip push --force"));
+    assert!(!text.contains("grip pull --force"));
 }

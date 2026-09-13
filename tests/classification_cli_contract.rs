@@ -101,6 +101,55 @@ fn human_status_shows_force_choices_for_an_ordinary_divergent_conflict() {
             fs::canonicalize(&destination).unwrap().display(),
         )
     );
+
+    let force_push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "--dry-run", "source"],
+    );
+    assert!(force_push.status.success());
+    let force_pull = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "pull",
+            "--force",
+            "--dry-run",
+            "--destination",
+            destination.to_str().unwrap(),
+        ],
+    );
+    assert!(force_pull.status.success());
+}
+
+#[test]
+fn human_status_uses_diff_for_an_aggregate_tree_conflict() {
+    let (root, metadata_dir, _source, destination) = support::aggregate_tree_collision_fixture();
+
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert_eq!(status.status.code(), Some(0));
+    let text = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        text.contains(&format!(
+            "  source/nested/file <-> {}/nested/file\n    Run: grip diff source/nested/file\n",
+            destination.display(),
+        )),
+        "unexpected status output: {text}"
+    );
+    assert!(!text.contains("grip push --force source/nested/file"));
+    assert!(!text.contains("grip pull --force --destination"));
+
+    let force_push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "--dry-run", "source/nested/file"],
+    );
+    assert_eq!(force_push.status.code(), Some(10));
+    assert!(
+        String::from_utf8(force_push.stdout)
+            .unwrap()
+            .contains("requires one exact established managed entry")
+    );
 }
 
 #[test]
@@ -128,6 +177,25 @@ fn human_status_shows_force_choices_for_an_initial_collision() {
             fs::canonicalize(&destination).unwrap().display(),
         )
     );
+
+    let force_push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "--dry-run", "source"],
+    );
+    assert!(force_push.status.success());
+    let force_pull = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "pull",
+            "--force",
+            "--dry-run",
+            "--destination",
+            destination.to_str().unwrap(),
+        ],
+    );
+    assert!(force_pull.status.success());
 }
 
 #[test]

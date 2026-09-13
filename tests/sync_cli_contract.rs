@@ -173,6 +173,41 @@ fn sync_human_blocked_result_gives_force_choices_while_json_retains_evidence() {
             human_destination.display(),
         )
     );
+
+    let force_push = support::project_command(
+        human_root.path(),
+        &human_home,
+        &["push", "--force", "--dry-run", "source"],
+    );
+    assert!(force_push.status.success());
+    let force_pull = support::project_command(
+        human_root.path(),
+        &human_home,
+        &[
+            "pull",
+            "--force",
+            "--dry-run",
+            "--destination",
+            human_destination.to_str().unwrap(),
+        ],
+    );
+    assert!(force_pull.status.success());
+}
+
+#[test]
+fn blocked_sync_uses_diff_for_an_aggregate_tree_conflict() {
+    let (root, metadata_dir, _source, destination) = support::aggregate_tree_collision_fixture();
+
+    let output =
+        support::project_command(root.path(), &metadata_dir, &["sync", "source/nested/file"]);
+    assert_eq!(output.status.code(), Some(10));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains(&format!(
+        "  source/nested/file <-> {}/nested/file\n    Run: grip diff source/nested/file\n",
+        destination.display(),
+    )));
+    assert!(!text.contains("grip push --force"));
+    assert!(!text.contains("grip pull --force"));
 }
 
 #[test]
