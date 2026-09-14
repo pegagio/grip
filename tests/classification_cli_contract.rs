@@ -1,7 +1,22 @@
 mod support;
 
 use std::fs;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 use support::project::ProjectFixture;
+
+const LARGE_FILE_BYTES: usize = 19 * 1024 * 1024;
+
+fn write_large_file(path: &std::path::Path, byte: u8) {
+    let chunk = vec![byte; 64 * 1024];
+    let mut file = fs::File::create(path).unwrap();
+    for _ in 0..(LARGE_FILE_BYTES / chunk.len()) {
+        std::io::Write::write_all(&mut file, &chunk).unwrap();
+    }
+}
 
 fn fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
     let root = tempfile::tempdir().unwrap();
@@ -39,6 +54,78 @@ fn status_is_success_by_default_and_exit_code_reports_attention() {
 
     let exit = support::project_command(root.path(), &metadata_dir, &["status", "-e"]);
     assert_eq!(exit.status.code(), Some(1));
+}
+
+#[test]
+fn status_json_classifies_an_established_unequal_large_file_mapping() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("large-source.bin");
+    let destination = root.path().join("large-destination.bin");
+    write_large_file(&source, b'S');
+    write_large_file(&destination, b'D');
+    let added = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "large-source.bin", "~/large-destination.bin"],
+    );
+    assert!(added.status.success(), "{added:?}");
+
+    let status = support::project_command(root.path(), &metadata_dir, &["-o", "json", "status"]);
+    assert_eq!(status.status.code(), Some(0));
+    let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(
+        value["details"]["records"][0]["classification"],
+        "source_only_change"
+    );
+    assert_eq!(value["details"]["records"].as_array().unwrap().len(), 1);
+    assert_eq!(fs::read(&source).unwrap()[0], b'S');
+    assert_eq!(fs::read(&destination).unwrap()[0], b'D');
+}
+
+#[test]
+fn status_rejects_a_large_file_changed_during_observation() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("large-source.bin");
+    let destination = root.path().join("large-destination.bin");
+    write_large_file(&source, b'S');
+    write_large_file(&destination, b'D');
+    let added = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "large-source.bin", "~/large-destination.bin"],
+    );
+    assert!(added.status.success(), "{added:?}");
+
+    let keep_writing = Arc::new(AtomicBool::new(true));
+    let writer_flag = Arc::clone(&keep_writing);
+    let writer_path = source.clone();
+    let (ready, started) = mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let mut byte = b'A';
+        while writer_flag.load(Ordering::Relaxed) {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .open(&writer_path)
+                .unwrap();
+            std::io::Write::write_all(&mut file, &[byte]).unwrap();
+            file.sync_data().unwrap();
+            byte = if byte == b'A' { b'B' } else { b'A' };
+            let _ = ready.send(());
+        }
+    });
+    started.recv().unwrap();
+    let status = support::project_command(root.path(), &metadata_dir, &["-o", "json", "status"]);
+    keep_writing.store(false, Ordering::Relaxed);
+    writer.join().unwrap();
+
+    assert!(!status.status.success(), "{status:?}");
+    let output = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        output.contains("entry changed while complete metadata was observed"),
+        "unexpected status failure: {output}"
+    );
 }
 
 #[test]

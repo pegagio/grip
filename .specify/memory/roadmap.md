@@ -1,16 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.7.1 -> 1.7.2
-Bump rationale: Record the direct active-user decision to abandon Feature 020 after the release artifact was observed to be below its stretch target.
+Version change: 1.7.3 -> 1.7.4
+Bump rationale: Record the verified completion of Feature 021 with its measured workload, acceptance evidence, and resolved feature-owned open questions.
 
 Changes this revision:
-  - Moved Feature 020 from in-progress to abandoned
+  - Moved Feature 021 from in-progress to verified
+  - Recorded Feature 021's release-build 19 MiB workload, one-second p95 acceptance contract, and final measured evidence
+  - Resolved Feature 021 open questions Q-19 and Q-20
 
-Specs affected: 020
-Open questions added/resolved: Resolved Q-17 and Q-18 by abandonment
+Specs affected: 021
+Open questions added/resolved: Resolved Q-19 and Q-20
 
-Notes: Direct active-user authorization on 2026-09-14. The user reported that the release artifact is approximately 4.5 MB, already below the 10 MiB stretch target; no further size investigation or reduction work is requested.
+Notes: Direct active-user authorization on 2026-09-14, supported by `specs/021-large-file-performance/roadmap-reviews/debrief-20260914T161151Z.md`. The reviewed HEAD-to-WORKTREE implementation boundary was trustworthy, had no findings, and met the lifecycle gates for verified.
 -->
 
 # Grip — Spec Roadmap
@@ -294,9 +296,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-14 reporting an approximately 19 MB `grip` binary and requesting investigation of whether it must be that large and easy reduction opportunities.
 - **Notes:** Abandoned by direct active-user decision on 2026-09-14 after the user reported an approximately 4.5 MB release artifact, already below the feature's 10 MiB stretch target. No size investigation, reduction, or acceptance claim is implied by this abandonment.
 
-### 021 — Large-File Operation Performance  [status: planned]
+### 021 — Large-File Operation Performance  [status: verified]
 
-- **Spec dir:** To be assigned when specification work begins
+- **Spec dir:** `specs/021-large-file-performance`
 - **Description:** Measure why Grip operations degrade on a representative approximately 19 MB file, remove demonstrated bottlenecks, and establish regression coverage for the resulting performance contract.
 - **Outcome:** Operators can run the selected Grip operations on representative large files within explicit, reproducible acceptance targets without weakening classification, mutation safety, verification, or baseline correctness.
 - **Scope (in):** Representative workload definition; operation-level profiling and measurement; analysis of file reading, hashing, metadata capture, comparison, staging, copying, verification, and output costs where applicable; evidence-backed implementation improvements; performance regression coverage; and documentation of measured tradeoffs.
@@ -304,7 +306,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** none
 - **Governed by:** C-04, C-05, C-08, C-10, C-11
 - **Addresses:** Direct active-user decision on 2026-09-14 reporting slow Grip operations on an approximately 19 MB file and requesting diagnosis and correction.
-- **Notes:** The representative operations, storage conditions, latency or throughput targets, and acceptable resource tradeoffs remain open for the specification. The investigation must establish causality before choosing a fix.
+- **Notes:** Verified on 2026-09-14 by the no-finding debrief at `specs/021-large-file-performance/roadmap-reviews/debrief-20260914T161151Z.md`. The representative workload is an isolated local macOS ARM64 release build with differing 19 MiB regular source and destination files; it runs `grip add` and JSON `grip status` for 100 warm samples each with a one-second p95 target. The measured cause was duplicate same-pass complete observation of discovery-backed file mappings. The operation-local deduplication retained descriptor-bound content and metadata evidence, independent stable-observation passes, fenced add reinspection, initial comparison behavior, and discovery-absent fallback. Final acceptance p95 was 573.669375 ms for `grip add` and 184.788375 ms for `grip status`. No cache, index, parallelism, lock, watcher, daemon, or baseline-semantics change was introduced.
 
 ## Open Questions
 
@@ -328,8 +330,8 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-16 — Initialization and discovery boundaries (010):** Define initialization idempotency, nested-project discovery, and behavior when an explicit project conflicts with an enclosing project.
 - **Q-17 — Release target and package configuration (020):** No longer applicable. Feature 020 was abandoned by direct active-user decision on 2026-09-14 after the reported release artifact was already below the stretch target.
 - **Q-18 — Binary-size acceptance budget (020):** No longer applicable. Feature 020 was abandoned by direct active-user decision on 2026-09-14 after the reported release artifact was already below the stretch target.
-- **Q-19 — Representative large-file workload (021):** Define the Grip operations, file types, storage conditions, and measurement environment that represent the reported large-file degradation.
-- **Q-20 — Large-file performance acceptance (021):** Define latency, throughput, memory, and regression thresholds for the representative workload.
+- **Q-19 — Representative large-file workload (021):** Resolved by verified Feature 021. The representative workload is an isolated local macOS ARM64 release build with differing 19 MiB regular source and destination files, exercising `grip add` and JSON `grip status` for 100 warm samples each.
+- **Q-20 — Large-file performance acceptance (021):** Resolved by verified Feature 021. Both representative operations have a one-second p95 release-build acceptance threshold, enforced by the isolated performance gate; final recorded p95 values were 573.669375 ms for `grip add` and 184.788375 ms for `grip status`.
 
 ## Cross-Cutting Notes
 
@@ -346,4 +348,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.7.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
+**Version**: 1.7.4 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14

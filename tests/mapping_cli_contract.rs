@@ -2,8 +2,18 @@ mod support;
 
 use std::fs;
 
+const LARGE_FILE_BYTES: usize = 19 * 1024 * 1024;
+
 fn json(output: &std::process::Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn write_large_file(path: &std::path::Path, byte: u8) {
+    let chunk = vec![byte; 64 * 1024];
+    let mut file = fs::File::create(path).unwrap();
+    for _ in 0..(LARGE_FILE_BYTES / chunk.len()) {
+        std::io::Write::write_all(&mut file, &chunk).unwrap();
+    }
 }
 
 #[test]
@@ -233,6 +243,63 @@ fn add_of_unequal_file_is_ready_for_an_ordinary_push() {
     assert_eq!(
         fs::read_to_string(root.path().join("destination")).unwrap(),
         "source wins"
+    );
+}
+
+#[test]
+fn add_of_unequal_large_file_preserves_payloads_and_initial_comparison_state() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("large-source.bin");
+    let destination = root.path().join("large-destination.bin");
+    write_large_file(&source, b'S');
+    write_large_file(&destination, b'D');
+    let source_before = fs::read(&source).unwrap();
+    let destination_before = fs::read(&destination).unwrap();
+
+    let added = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "add",
+            "large-source.bin",
+            "~/large-destination.bin",
+        ],
+    );
+    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    assert_eq!(json(&added)["details"]["operation"], "add");
+    assert_eq!(
+        json(&added)["details"]["mapping"]["declared"]["source"],
+        "large-source.bin"
+    );
+    assert_eq!(
+        json(&added)["details"]["mapping"]["declared"]["destination"],
+        "~/large-destination.bin"
+    );
+    assert_eq!(fs::read(&source).unwrap(), source_before);
+    assert_eq!(fs::read(&destination).unwrap(), destination_before);
+    assert_eq!(
+        fs::metadata(&source).unwrap().len(),
+        LARGE_FILE_BYTES as u64
+    );
+    assert_eq!(
+        fs::metadata(&destination).unwrap().len(),
+        LARGE_FILE_BYTES as u64
+    );
+    assert!(!metadata_dir.join("state/add-fence.json").exists());
+
+    let state: serde_json::Value =
+        serde_json::from_slice(&fs::read(metadata_dir.join("state/state.json")).unwrap()).unwrap();
+    assert_eq!(state["payload"]["baselines"].as_array().unwrap().len(), 1);
+    let status = json(&support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "status"],
+    ));
+    assert_eq!(
+        status["details"]["records"][0]["classification"],
+        "source_only_change"
     );
 }
 

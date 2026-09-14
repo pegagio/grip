@@ -75,7 +75,9 @@ fn inspect_once(
     let mut relative_inspectors = BTreeMap::new();
 
     for mapping in registry.mappings() {
-        if mapping.kind == MappingKind::File {
+        if mapping.kind == MappingKind::File
+            && !file_mapping_is_discovery_backed(mapping, inventory)
+        {
             let identity = EntryIdentity::new(ResolvedMapping::from(mapping), Vec::new())
                 .expect("file mapping identity is valid");
             let source_complete = inspect_complete_supported(&mapping.source)?;
@@ -267,6 +269,20 @@ fn inspect_once(
                 && !accepted.complete_baselines.contains_key(identity))
     });
     Ok(observed)
+}
+
+/// Return whether this file mapping has an eligible discovery record whose complete endpoint
+/// observation will be collected later in the same inspection pass.
+fn file_mapping_is_discovery_backed(
+    mapping: &Mapping,
+    inventory: &crate::discovery::model::DiscoveryInventory,
+) -> bool {
+    inventory.records.iter().any(|record| {
+        record.category == RecordCategory::Eligible
+            && record.mapping_kind == MappingKind::File
+            && record.mapping_source == mapping.source
+            && record.relative_path.is_none()
+    })
 }
 
 fn append_bsd_flag_findings(entry: &mut ObservedEntry) {
@@ -616,5 +632,57 @@ fn inspect_identity(
         inspector.inspect(&identity.relative_path, kind).map(Some)
     } else {
         fingerprint::inspect(&path, kind).map(Some)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discovery::model::{DiscoveryInventory, DiscoveryRecord, DiscoveryScope, SafePath};
+    use std::path::PathBuf;
+
+    fn file_mapping() -> Mapping {
+        Mapping::new(
+            MappingKind::File,
+            PathBuf::from("/source/file"),
+            PathBuf::from("/destination/file"),
+        )
+    }
+
+    fn inventory(category: RecordCategory, mapping_kind: MappingKind) -> DiscoveryInventory {
+        DiscoveryInventory::new(
+            DiscoveryScope::All,
+            vec![DiscoveryRecord {
+                category,
+                mapping_kind,
+                mapping_source: PathBuf::from("/source/file"),
+                relative_path: None,
+                source_path: Some(SafePath::from_path(std::path::Path::new("/source/file"))),
+                destination_path: SafePath::from_path(std::path::Path::new("/destination/file")),
+                node_kind: NodeKind::File,
+                reason: None,
+                blocking: false,
+            }],
+        )
+    }
+
+    #[test]
+    fn eligible_file_discovery_record_reuses_the_pass_observation() {
+        assert!(file_mapping_is_discovery_backed(
+            &file_mapping(),
+            &inventory(RecordCategory::Eligible, MappingKind::File)
+        ));
+    }
+
+    #[test]
+    fn noneligible_or_nonfile_record_keeps_direct_file_observation_fallback() {
+        assert!(!file_mapping_is_discovery_backed(
+            &file_mapping(),
+            &inventory(RecordCategory::UnsupportedSource, MappingKind::File)
+        ));
+        assert!(!file_mapping_is_discovery_backed(
+            &file_mapping(),
+            &inventory(RecordCategory::Eligible, MappingKind::Tree)
+        ));
     }
 }
