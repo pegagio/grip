@@ -199,6 +199,36 @@ fn add_publication_fence_is_private_verified_and_removable() {
 }
 
 #[test]
+fn transition_fence_preserves_remove_context_across_serialization() {
+    let (root, home) = publication_fixture();
+    let mapping = grip::mapping::Mapping::new(
+        MappingKind::Tree,
+        root.path().join("payload"),
+        root.path().join("destination"),
+    );
+    let declaration = grip::mapping::PortableMapping::parse(
+        MappingKind::Tree,
+        std::ffi::OsStr::new("payload"),
+        std::ffi::OsStr::new("~/destination"),
+    )
+    .unwrap();
+    let fence = state::add_fence::AddPublicationFenceV1::with_context(
+        &mapping,
+        state::add_fence::FenceContext::removal(&declaration),
+        b"prior descriptor".to_vec(),
+        b"candidate descriptor".to_vec(),
+        None,
+        b"candidate state".to_vec(),
+    );
+
+    state::add_fence::create_verified(&home, &fence).unwrap();
+    let loaded = state::add_fence::load(&home).unwrap().unwrap();
+    assert_eq!(loaded.operation, state::add_fence::FenceOperation::Remove);
+    assert_eq!(loaded.result, state::add_fence::FenceResult::Removed);
+    assert_eq!(loaded.replaced_mapping, None);
+}
+
+#[test]
 fn visible_prepared_state_keeps_its_fence_until_verified_clear_succeeds() {
     let (root, home) = publication_fixture();
     let descriptor = fs::read(home.path().join("config.toml")).unwrap();

@@ -498,6 +498,19 @@ impl CommandOutcome {
         outcome
     }
 
+    /// Build the stable result for an explicit mapping replacement.
+    pub fn mapping_replaced(
+        mapping: &MappingResultDetails,
+        replaced_mapping: &MappingResultDetails,
+    ) -> Self {
+        let mut outcome = Self::mapping_success("add", "Mapping replaced", mapping);
+        outcome.details.insert(
+            "replaced_mapping".into(),
+            serde_json::to_value(replaced_mapping).expect("mapping serializes"),
+        );
+        outcome
+    }
+
     pub fn mapping_list(mappings: &[MappingResultDetails]) -> Self {
         let mut outcome = Self::success(format!("{} mapping(s)", mappings.len()));
         outcome
@@ -1477,9 +1490,17 @@ fn render_human_concise_mapping(
     let operation = outcome.details.get("operation").and_then(Value::as_str);
     match operation {
         Some("add") => {
-            writeln!(writer, "Mapped:")?;
-            if let Some(mapping) = outcome.details.get("mapping") {
-                render_human_mapping(mapping, false, writer)?;
+            if let Some(replaced) = outcome.details.get("replaced_mapping") {
+                writeln!(writer, "Mapping replaced:")?;
+                render_human_named_mapping(replaced, "old", writer)?;
+                if let Some(mapping) = outcome.details.get("mapping") {
+                    render_human_named_mapping(mapping, "new", writer)?;
+                }
+            } else {
+                writeln!(writer, "Mapped:")?;
+                if let Some(mapping) = outcome.details.get("mapping") {
+                    render_human_mapping(mapping, false, writer)?;
+                }
             }
             Ok(true)
         }
@@ -2099,6 +2120,23 @@ fn render_human_mapping(
     } else {
         writeln!(writer, " {source} -> {destination}")
     }
+}
+
+fn render_human_named_mapping(
+    mapping: &Value,
+    name: &str,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    let declared = mapping.get("declared").unwrap_or(mapping);
+    let source = declared
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let destination = declared
+        .get("destination")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    writeln!(writer, "  {name}: {source} -> {destination}")
 }
 
 pub fn emit_diagnostic(verbosity: u8, event: &str, writer: &mut dyn Write) -> io::Result<()> {

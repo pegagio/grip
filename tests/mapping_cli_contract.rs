@@ -90,6 +90,197 @@ fn human_mapping_commands_render_declared_rows_only() {
 }
 
 #[test]
+fn force_add_replaces_one_equal_destination_file_mapping_without_mutating_payloads() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let old = root.path().join("target/debug/grip");
+    let new = root.path().join("target/release/grip");
+    let destination = root.path().join(".local/bin/grip");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::create_dir_all(new.parent().unwrap()).unwrap();
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    fs::write(&old, "debug payload").unwrap();
+    fs::write(&new, "release payload").unwrap();
+    fs::write(&destination, "installed payload").unwrap();
+    let old_before = fs::read(&old).unwrap();
+    let new_before = fs::read(&new).unwrap();
+    let destination_before = fs::read(&destination).unwrap();
+
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "target/debug/grip", "~/.local/bin/./grip"],
+        )
+        .status
+        .success()
+    );
+
+    let replaced = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "-o",
+            "json",
+            "add",
+            "--force",
+            "target/release/grip",
+            "~/.local/bin/grip",
+        ],
+    );
+    assert!(replaced.status.success(), "{replaced:?}");
+    let replaced_json = json(&replaced);
+    assert_eq!(replaced_json["message"], "Mapping replaced");
+    assert_eq!(
+        replaced_json["details"]["mapping"]["declared"]["source"],
+        "target/release/grip"
+    );
+    assert_eq!(
+        replaced_json["details"]["replaced_mapping"]["declared"]["source"],
+        "target/debug/grip"
+    );
+    assert_eq!(fs::read(&old).unwrap(), old_before);
+    assert_eq!(fs::read(&new).unwrap(), new_before);
+    assert_eq!(fs::read(&destination).unwrap(), destination_before);
+    let descriptor = fs::read_to_string(metadata_dir.join("config.toml")).unwrap();
+    assert!(!descriptor.contains("target/debug/grip"));
+    assert!(descriptor.contains("target/release/grip"));
+    let status = json(&support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["-o", "json", "status"],
+    ));
+    assert_eq!(
+        status["details"]["records"][0]["classification"],
+        "source_only_change"
+    );
+
+    let human = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "--force", "target/debug/grip", "~/.local/bin/grip"],
+    );
+    assert!(human.status.success(), "{human:?}");
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        "Mapping replaced:\n  old: target/release/grip -> ~/.local/bin/grip\n  new: target/debug/grip -> ~/.local/bin/grip\n"
+    );
+}
+
+#[test]
+fn retrying_a_visible_forced_replacement_completes_state_and_preserves_replacement_output() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let old = root.path().join("old");
+    let new = root.path().join("new");
+    let destination = root.path().join("destination");
+    fs::write(&old, "old").unwrap();
+    fs::write(&new, "new").unwrap();
+    fs::write(&destination, "destination").unwrap();
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["add", "old", "~/destination"],)
+            .status
+            .success()
+    );
+
+    let home =
+        grip::project::ProjectPaths::project_metadata(metadata_dir.clone(), root.path().into());
+    let prior = grip::registry::publication::load(&home, true).unwrap();
+    let state_snapshot = grip::state::publication::load(&home).unwrap();
+    let portable = grip::mapping::PortableMapping::parse_cli(
+        grip::mapping::MappingKind::File,
+        std::ffi::OsStr::new("new"),
+        std::ffi::OsStr::new("~/destination"),
+    )
+    .unwrap();
+    let displaced_portable = grip::mapping::PortableMapping::parse_cli(
+        grip::mapping::MappingKind::File,
+        std::ffi::OsStr::new("old"),
+        std::ffi::OsStr::new("~/destination"),
+    )
+    .unwrap();
+    let added = grip::mapping::Mapping::new(
+        grip::mapping::MappingKind::File,
+        fs::canonicalize(&new).unwrap(),
+        fs::canonicalize(&destination).unwrap(),
+    );
+    let displaced = grip::mapping::Mapping::new(
+        grip::mapping::MappingKind::File,
+        fs::canonicalize(&old).unwrap(),
+        fs::canonicalize(&destination).unwrap(),
+    );
+    let candidate_descriptor =
+        grip::registry::ProjectDescriptorV2::new(vec![portable.clone()]).unwrap();
+    let descriptor_bytes = grip::registry::encode_descriptor(&candidate_descriptor).unwrap();
+    let candidate = grip::registry::ResolvedRegistry::new(vec![added.clone()]).unwrap();
+    let mut accepted = state_snapshot.accepted.clone();
+    let displaced_identity = grip::observation::model::ResolvedMapping::from(&displaced);
+    accepted
+        .complete_baselines
+        .retain(|identity, _| identity.mapping != displaced_identity);
+    let selection = grip::observation::model::Selection::Mapping(
+        grip::observation::model::ResolvedMapping::from(&added),
+    );
+    let observed = grip::observation::inspect_candidate(
+        &home,
+        &candidate,
+        &descriptor_bytes,
+        &prior,
+        &accepted,
+        &selection,
+    )
+    .unwrap();
+    let records = observed
+        .values()
+        .map(|entry| grip::classification::classify_accepted(entry, &accepted))
+        .collect::<Vec<_>>();
+    let next = grip::baseline::build_for_add(&accepted, &records).unwrap();
+    let state_bytes = grip::state::publication::prepare_candidate_for_descriptor(
+        &home,
+        &state_snapshot,
+        &next.next.complete_baselines,
+        &descriptor_bytes,
+    )
+    .unwrap();
+    let fence = grip::state::add_fence::AddPublicationFenceV1::with_context(
+        &added,
+        grip::state::add_fence::FenceContext::replacement(
+            &portable,
+            &displaced,
+            &displaced_portable,
+        ),
+        prior.bytes.clone(),
+        descriptor_bytes.clone(),
+        state_snapshot.bytes.clone(),
+        state_bytes.clone(),
+    );
+    grip::state::add_fence::create_verified(&home, &fence).unwrap();
+    fs::write(metadata_dir.join("config.toml"), &descriptor_bytes).unwrap();
+
+    let retried = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["-o", "json", "add", "--force", "new", "~/./destination"],
+    );
+    assert!(retried.status.success(), "{retried:?}");
+    let output = json(&retried);
+    assert_eq!(output["message"], "Mapping replaced");
+    assert_eq!(
+        output["details"]["replaced_mapping"]["declared"]["source"],
+        "old"
+    );
+    assert_eq!(
+        output["details"]["mapping"]["declared"]["destination"],
+        "~/destination"
+    );
+    assert_eq!(
+        fs::read(metadata_dir.join("state/state.json")).unwrap(),
+        state_bytes
+    );
+    assert!(!metadata_dir.join("state/add-fence.json").exists());
+}
+
+#[test]
 fn human_list_renders_five_declared_rows_without_resolved_endpoints() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
@@ -698,6 +889,188 @@ fn remove_prunes_baseline_and_readd_treats_existing_endpoints_as_new() {
         json(&status)["details"]["records"][0]["classification"],
         "source_only_change"
     );
+}
+
+#[test]
+fn exact_remove_allows_normal_readd_but_unrelated_remove_retains_destination_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    for name in [
+        "old",
+        "new",
+        "other",
+        "third",
+        "destination",
+        "other-destination",
+    ] {
+        fs::write(root.path().join(name), name).unwrap();
+    }
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["add", "old", "~/destination"],)
+            .status
+            .success()
+    );
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "other", "~/other-destination"],
+        )
+        .status
+        .success()
+    );
+
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["remove", "old"])
+            .status
+            .success()
+    );
+    let readded =
+        support::project_command(root.path(), &metadata_dir, &["add", "new", "~/destination"]);
+    assert!(readded.status.success(), "{readded:?}");
+    let descriptor = fs::read_to_string(metadata_dir.join("config.toml")).unwrap();
+    assert!(!descriptor.contains("source = \"old\""));
+    assert!(descriptor.contains("source = \"new\""));
+
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["remove", "other"])
+            .status
+            .success()
+    );
+    let descriptor_before = fs::read(metadata_dir.join("config.toml")).unwrap();
+    let state_before = fs::read(metadata_dir.join("state/state.json")).unwrap();
+    let rejected = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["-o", "json", "add", "third", "~/destination"],
+    );
+    assert!(!rejected.status.success());
+    assert_eq!(json(&rejected)["code"], "invalid_configuration");
+    assert_eq!(json(&rejected)["details"]["reason"], "ownership_conflicts");
+    assert_eq!(
+        fs::read(metadata_dir.join("config.toml")).unwrap(),
+        descriptor_before
+    );
+    assert_eq!(
+        fs::read(metadata_dir.join("state/state.json")).unwrap(),
+        state_before
+    );
+}
+
+#[test]
+fn retrying_a_visible_remove_completes_the_descriptor_bound_state_transition() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "source").unwrap();
+    fs::write(&destination, "destination").unwrap();
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "source", "~/destination"],
+        )
+        .status
+        .success()
+    );
+
+    let home =
+        grip::project::ProjectPaths::project_metadata(metadata_dir.clone(), root.path().into());
+    let prior = grip::registry::publication::load(&home, true).unwrap();
+    let state_snapshot = grip::state::publication::load(&home).unwrap();
+    let removed = grip::mapping::Mapping::new(
+        grip::mapping::MappingKind::File,
+        fs::canonicalize(&source).unwrap(),
+        fs::canonicalize(&destination).unwrap(),
+    );
+    let removed_declaration = grip::mapping::PortableMapping::parse_cli(
+        grip::mapping::MappingKind::File,
+        std::ffi::OsStr::new("source"),
+        std::ffi::OsStr::new("~/destination"),
+    )
+    .unwrap();
+    let descriptor = grip::registry::ProjectDescriptorV2::new(Vec::new()).unwrap();
+    let descriptor_bytes = grip::registry::encode_descriptor(&descriptor).unwrap();
+    let mut next = state_snapshot.accepted.clone();
+    next.complete_baselines
+        .retain(|identity, _| identity.mapping.source != removed.source);
+    let state_bytes = grip::state::publication::prepare_candidate_for_descriptor(
+        &home,
+        &state_snapshot,
+        &next.complete_baselines,
+        &descriptor_bytes,
+    )
+    .unwrap();
+    let fence = grip::state::add_fence::AddPublicationFenceV1::with_context(
+        &removed,
+        grip::state::add_fence::FenceContext::removal(&removed_declaration),
+        prior.bytes.clone(),
+        descriptor_bytes.clone(),
+        state_snapshot.bytes.clone(),
+        state_bytes.clone(),
+    );
+    grip::state::add_fence::create_verified(&home, &fence).unwrap();
+    fs::write(metadata_dir.join("config.toml"), &descriptor_bytes).unwrap();
+
+    let retried = support::project_command(root.path(), &metadata_dir, &["remove", "source"]);
+    assert!(retried.status.success(), "{retried:?}");
+    assert_eq!(
+        String::from_utf8(retried.stdout).unwrap(),
+        "Mapping removed:\n file source -> ~/destination\n"
+    );
+    assert_eq!(
+        fs::read(metadata_dir.join("state/state.json")).unwrap(),
+        state_bytes
+    );
+    assert!(!metadata_dir.join("state/add-fence.json").exists());
+}
+
+#[test]
+fn force_add_without_one_equal_destination_owner_does_not_publish_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::write(root.path().join("source"), "source").unwrap();
+    fs::write(root.path().join("destination"), "destination").unwrap();
+    let descriptor_before = fs::read(metadata_dir.join("config.toml")).unwrap();
+    let rejected = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["-o", "json", "add", "--force", "source", "~/destination"],
+    );
+    assert!(!rejected.status.success());
+    assert_eq!(json(&rejected)["code"], "invalid_configuration");
+    assert_eq!(
+        json(&rejected)["details"]["reason"],
+        "force_add_requires_exact_destination_mapping"
+    );
+    assert_eq!(
+        fs::read(metadata_dir.join("config.toml")).unwrap(),
+        descriptor_before
+    );
+    assert!(!metadata_dir.join("state/add-fence.json").exists());
+    assert!(!metadata_dir.join("state/state.json").exists());
+}
+
+#[test]
+fn force_add_rejects_a_malformed_registry_with_multiple_equal_destination_files() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    for name in ["first", "second", "third", "destination"] {
+        fs::write(root.path().join(name), name).unwrap();
+    }
+    let descriptor = "schema_version = 2\n\n[[mappings]]\nkind = \"file\"\nsource = \"first\"\ndestination = \"~/destination\"\n\n[[mappings]]\nkind = \"file\"\nsource = \"second\"\ndestination = \"~/destination\"\n";
+    fs::write(metadata_dir.join("config.toml"), descriptor).unwrap();
+    let before = fs::read(metadata_dir.join("config.toml")).unwrap();
+
+    let rejected = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "--force", "third", "~/destination"],
+    );
+    assert!(!rejected.status.success());
+    assert_eq!(fs::read(metadata_dir.join("config.toml")).unwrap(), before);
+    assert!(!metadata_dir.join("state/add-fence.json").exists());
 }
 
 #[test]

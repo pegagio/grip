@@ -38,6 +38,16 @@ grip list shell/gitconfig
 grip remove shell/gitconfig
 ```
 
+If exactly one active file mapping already owns a destination, `grip add --force SOURCE DESTINATION` deliberately replaces that mapping without copying either endpoint. It is limited to one equal resolved destination; it does not override source, tree, nested, or other ownership conflicts. The result identifies both declarations:
+
+```text
+Mapping replaced:
+  old: target/debug/grip -> ~/.local/bin/grip
+  new: target/release/grip -> ~/.local/bin/grip
+```
+
+After `grip remove` succeeds for the exact source that owns a destination, a normal add may use that destination again without `--force`. Removing a different mapping does not release the active owner.
+
 Grip stores only the declarations. Home-relative and project-relative forms are portable; an absolute destination intentionally binds a declaration to a specific filesystem location. A project-relative destination is resolved from the selected project root, never the command's current directory, and may explicitly use `..` to address an adjacent location. Default human mapping output shows concise declared rows; JSON retains both declared and safely rendered resolved endpoints. Source paths that resolve outside the project or into `.grip`, empty destination forms, environment expansion, other-user home syntax, symbolic-link endpoints, unsafe ancestry, and overlapping ownership are rejected.
 
 ```text

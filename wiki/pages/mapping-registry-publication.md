@@ -1,8 +1,8 @@
 ---
 title: Mapping registry publication
 type: component
-sources: [S005, S013, S016, S017]
-updated: 2026-09-13
+sources: [S005, S013, S016, S017, S022]
+updated: 2026-09-14
 ---
 
 # Mapping registry publication
@@ -29,8 +29,11 @@ Feature 013 accepts ordinary relative source input while persisting only its nor
 
 Writers retain descriptor bytes and node evidence, acquire project-local locks beneath `.grip/state/locks/`, revalidate the selected project and resolved topology, preserve prior descriptor bytes beneath project-local recovery, and atomically publish a verified candidate. `.grip` is structurally excluded from mapping ownership. (S013)
 
+Feature 022 applies the same bounded publication discipline to forced exact file-mapping replacement and exact removal. Its fence records operation/result context and portable declarations as well as the prior and candidate descriptor/state pairs, so retry can either complete the exact candidate or restore the exact prior pair without presenting mixed state as successful. (S022)
+
 ## Related pages
 
 - [Configuration and state](./configuration-and-state.md)
 - [Mappings and managed membership](./mappings-and-managed-membership.md)
 - [Safety and recovery model](./safety-and-recovery-model.md)
+- [Force mapping replacement](./force-mapping-replacement.md)

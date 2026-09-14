@@ -21,12 +21,87 @@ pub enum FenceFault {
     BeforeClear,
 }
 
+/// The metadata transition guarded by a publication fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FenceOperation {
+    #[default]
+    Add,
+    Remove,
+}
+
+/// The successful result that must be preserved when a fenced transition is retried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FenceResult {
+    #[default]
+    Recorded,
+    Replaced,
+    Removed,
+}
+
+/// Result context retained with a fenced metadata transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FenceContext {
+    operation: FenceOperation,
+    result: FenceResult,
+    declaration: Option<FenceDeclaration>,
+    replaced_mapping: Option<FenceMapping>,
+    replaced_declaration: Option<FenceDeclaration>,
+}
+
+impl FenceContext {
+    pub fn add() -> Self {
+        Self {
+            operation: FenceOperation::Add,
+            result: FenceResult::Recorded,
+            declaration: None,
+            replaced_mapping: None,
+            replaced_declaration: None,
+        }
+    }
+
+    pub fn replacement(
+        declaration: &crate::mapping::PortableMapping,
+        replaced_mapping: &Mapping,
+        replaced_declaration: &crate::mapping::PortableMapping,
+    ) -> Self {
+        Self {
+            operation: FenceOperation::Add,
+            result: FenceResult::Replaced,
+            declaration: Some(FenceDeclaration::from(declaration)),
+            replaced_mapping: Some(FenceMapping::from(replaced_mapping)),
+            replaced_declaration: Some(FenceDeclaration::from(replaced_declaration)),
+        }
+    }
+
+    pub fn removal(declaration: &crate::mapping::PortableMapping) -> Self {
+        Self {
+            operation: FenceOperation::Remove,
+            result: FenceResult::Removed,
+            declaration: Some(FenceDeclaration::from(declaration)),
+            replaced_mapping: None,
+            replaced_declaration: None,
+        }
+    }
+}
+
 /// A single, exact add transition which must be completed or restored by a later `add`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AddPublicationFenceV1 {
     pub schema_version: u8,
     pub mapping: FenceMapping,
+    #[serde(default)]
+    pub operation: FenceOperation,
+    #[serde(default)]
+    pub result: FenceResult,
+    #[serde(default)]
+    pub declaration: Option<FenceDeclaration>,
+    #[serde(default)]
+    pub replaced_mapping: Option<FenceMapping>,
+    #[serde(default)]
+    pub replaced_declaration: Option<FenceDeclaration>,
     pub prior_descriptor_digest: String,
     pub candidate_descriptor_digest: String,
     pub prior_state_digest: Option<String>,
@@ -45,6 +120,15 @@ pub struct FenceMapping {
     pub destination: String,
 }
 
+/// Portable declaration spelling retained for deterministic fenced result rendering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FenceDeclaration {
+    pub kind: MappingKind,
+    pub source: String,
+    pub destination: String,
+}
+
 impl AddPublicationFenceV1 {
     pub fn new(
         mapping: &Mapping,
@@ -53,9 +137,32 @@ impl AddPublicationFenceV1 {
         prior_state_bytes: Option<Vec<u8>>,
         candidate_state_bytes: Vec<u8>,
     ) -> Self {
+        Self::with_context(
+            mapping,
+            FenceContext::add(),
+            prior_descriptor_bytes,
+            candidate_descriptor_bytes,
+            prior_state_bytes,
+            candidate_state_bytes,
+        )
+    }
+
+    pub fn with_context(
+        mapping: &Mapping,
+        context: FenceContext,
+        prior_descriptor_bytes: Vec<u8>,
+        candidate_descriptor_bytes: Vec<u8>,
+        prior_state_bytes: Option<Vec<u8>>,
+        candidate_state_bytes: Vec<u8>,
+    ) -> Self {
         Self {
             schema_version: 1,
             mapping: FenceMapping::from(mapping),
+            operation: context.operation,
+            result: context.result,
+            declaration: context.declaration,
+            replaced_mapping: context.replaced_mapping,
+            replaced_declaration: context.replaced_declaration,
             prior_descriptor_digest: digest(&prior_descriptor_bytes),
             candidate_descriptor_digest: digest(&candidate_descriptor_bytes),
             prior_state_digest: prior_state_bytes.as_deref().map(digest),
@@ -105,6 +212,16 @@ impl From<&Mapping> for FenceMapping {
             kind: mapping.kind,
             source: mapping.source.to_string_lossy().into_owned(),
             destination: mapping.destination.to_string_lossy().into_owned(),
+        }
+    }
+}
+
+impl From<&crate::mapping::PortableMapping> for FenceDeclaration {
+    fn from(mapping: &crate::mapping::PortableMapping) -> Self {
+        Self {
+            kind: mapping.kind,
+            source: mapping.source.as_str().into(),
+            destination: mapping.destination.as_str().into(),
         }
     }
 }
