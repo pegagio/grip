@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.5.1 -> 1.6.0
-Bump rationale: Backfill five implemented features that were absent from the ledger.
+Version change: 1.6.0 -> 1.7.0
+Bump rationale: Add two planned performance-investigation specifications.
 
 Changes this revision:
-  - Added implemented ledger entries for Features 013 and 016 through 019
+  - Added planned ledger entries for Features 020 and 021
 
-Specs affected: 013, 016, 017, 018, 019
-Open questions added/resolved: None
+Specs affected: 020, 021
+Open questions added/resolved: Added Q-17 through Q-20
 
-Notes: Direct active-user authorization on 2026-09-13. These entries preserve delivered scope and implementation provenance; each remains implemented until a feature-specific debrief supports verification.
+Notes: Direct active-user authorization on 2026-09-14. The entries establish investigation and evidence-backed improvement work without preselecting mechanisms or acceptance thresholds.
 -->
 
 # Grip — Spec Roadmap
@@ -282,6 +282,30 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `specs/019-executable-force-guidance/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
 - **Notes:** Delivered in `af6f9af` with complete feature artifacts and full validation. The existing exact-entry force boundary remains authoritative; aggregate guidance is inspection-only. It remains implemented pending a feature-specific debrief.
 
+### 020 — Release Binary Size Investigation  [status: planned]
+
+- **Spec dir:** To be assigned when specification work begins
+- **Description:** Investigate the approximately 19 MB `grip` binary, identify its material size contributors, determine whether that size is justified for the supported release target, and apply evidence-backed reductions that preserve the supported CLI contract.
+- **Outcome:** Maintainers can explain the release binary's size with reproducible measurements, decide whether a reduction is warranted against an explicit budget, and deliver only reductions whose compatibility, safety, and operational tradeoffs are validated.
+- **Scope (in):** Reproducible release-artifact measurement; target, profile, dependency, symbol, and packaging contribution analysis; comparison of justified reduction options; selected implementation changes; release-size regression coverage; and documentation of the resulting evidence and tradeoffs.
+- **Scope (out):** Feature delivery unrelated to release-artifact size; unmeasured stripping or compression changes; unsupported-target expansion; and weakening diagnostics, safety behavior, or supported CLI functionality solely to reduce bytes.
+- **Depends on:** none
+- **Governed by:** C-04, C-08, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-14 reporting an approximately 19 MB `grip` binary and requesting investigation of whether it must be that large and easy reduction opportunities.
+- **Notes:** The target platform, packaging configuration, acceptable size budget, and compatibility constraints remain open for the specification. Any reduction must be selected from measured evidence rather than assumed to be beneficial.
+
+### 021 — Large-File Operation Performance  [status: planned]
+
+- **Spec dir:** To be assigned when specification work begins
+- **Description:** Measure why Grip operations degrade on a representative approximately 19 MB file, remove demonstrated bottlenecks, and establish regression coverage for the resulting performance contract.
+- **Outcome:** Operators can run the selected Grip operations on representative large files within explicit, reproducible acceptance targets without weakening classification, mutation safety, verification, or baseline correctness.
+- **Scope (in):** Representative workload definition; operation-level profiling and measurement; analysis of file reading, hashing, metadata capture, comparison, staging, copying, verification, and output costs where applicable; evidence-backed implementation improvements; performance regression coverage; and documentation of measured tradeoffs.
+- **Scope (out):** Speculative caching, indexing, parallelism, locking, watcher, daemon, or filesystem-integration mechanisms without evidence; changes to ownership, conflict, recovery, or baseline semantics; and unmeasured optimization of unrelated workflows.
+- **Depends on:** none
+- **Governed by:** C-04, C-05, C-08, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-14 reporting slow Grip operations on an approximately 19 MB file and requesting diagnosis and correction.
+- **Notes:** The representative operations, storage conditions, latency or throughput targets, and acceptable resource tradeoffs remain open for the specification. The investigation must establish causality before choosing a fix.
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -302,6 +326,10 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-14 — Project descriptor and destination notation (010):** Resolved by Features 012 and 014 and C-14. Destinations may be absolute, `~`, `~/`-prefixed, or project-relative; accepted spelling is preserved in mapping intent and resolved only for validation and use. Sources remain project-relative.
 - **Q-15 — Machine-local project identity (010):** Define how machine-local state is keyed to a project without creating collisions between multiple clones.
 - **Q-16 — Initialization and discovery boundaries (010):** Define initialization idempotency, nested-project discovery, and behavior when an explicit project conflicts with an enclosing project.
+- **Q-17 — Release target and package configuration (020):** Define the release target, profile, packaging method, and artifact form whose binary size is evaluated.
+- **Q-18 — Binary-size acceptance budget (020):** Define the acceptable binary-size budget and the compatibility, diagnostics, and operational tradeoffs that may or may not be made to meet it.
+- **Q-19 — Representative large-file workload (021):** Define the Grip operations, file types, storage conditions, and measurement environment that represent the reported large-file degradation.
+- **Q-20 — Large-file performance acceptance (021):** Define latency, throughput, memory, and regression thresholds for the representative workload.
 
 ## Cross-Cutting Notes
 
@@ -318,4 +346,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.6.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-13
+**Version**: 1.7.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
