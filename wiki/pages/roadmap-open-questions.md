@@ -2,12 +2,12 @@
 title: Roadmap open questions
 type: reference
 sources: [S003]
-updated: 2026-09-11
+updated: 2026-09-14
 ---
 
 # Roadmap open questions
 
-The roadmap retains sixteen numbered questions for the specification that owns each decision; resolved questions remain recorded as provenance and do not change the completed initial-product boundary. (S003)
+The roadmap retains numbered questions for the specification that owns each decision; resolved questions remain recorded as provenance and do not change the completed initial-product boundary. (S003)
 
 - **001:** confirm package and executable identity, choose registry and state serialization, and establish stable machine-output and exit-code contracts. (S003)
 - **002 (resolved):** the historical nested mapping lifecycle is superseded by the flat `add`, `list [SOURCE]`, and `remove` contract. Tracking records intent only, and complete-registry validation conservatively rejects duplicate, overlapping, equal, nested, and cross-recursive ownership. (S003)
@@ -20,6 +20,7 @@ The roadmap retains sixteen numbered questions for the specification that owns e
 - **004 (resolved for automation):** `status`, `diff`, and baseline acceptance expose stable structured results and distinguish successful inspection, attention-required state, and operational failure; the former `check` interface is superseded. (S003)
 - **Governance:** name the integration branch whose acceptance freezes a feature directory under merge-bounded persistence. (S003)
 - **010, 012, and 014 (resolved):** project metadata is `.grip/config.toml` plus canonical `.grip/.gitignore`; sources are project-relative; destinations may be absolute, `~`, `~/`-prefixed, or relative to the selected project root and retain their accepted declaration text; local state lives beneath `.grip/state/` without a generated project ID; initialization is exactly idempotent; and discovery is exhaustive and fail-closed across candidate boundaries. (S003)
+- **021 (resolved):** the representative large-file workload uses isolated local macOS ARM64 release builds with differing 19 MiB regular endpoints, exercising `grip add` and JSON `grip status` for 100 warm samples each. Both operations have a one-second p95 regression threshold; the final recorded p95 values were 573.669375 ms and 184.788375 ms respectively. (S003)
 
 Each feature must clarify its assigned questions without silently expanding scope. Performance measurements precede new caches, indexing, parallelism, or coordination complexity, and filesystem behavior is tested in isolated temporary roots. (S003)
 

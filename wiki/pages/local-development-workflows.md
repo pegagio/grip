@@ -1,8 +1,8 @@
 ---
 title: Local development workflows
 type: howto
-sources: [S004, S008, S009, S010, S011, S012, S013]
-updated: 2026-09-13
+sources: [S004, S008, S009, S010, S011, S012, S013, S021]
+updated: 2026-09-14
 ---
 
 # Local development workflows
@@ -24,6 +24,8 @@ Feature 008 adds documented 10,000-entry deletion-preview and recovery-inventory
 Feature 009's final 10,000-entry release qualification measures status plus push, pull, and mixed-sync dry-run and plan workloads over 100 samples. Every asserted p95 remained below two seconds after operation-local capability reuse and removal of redundant metadata reads, payload hashing, and duplicate result state; representative synchronization was reported separately. Explicit ignored tests qualify case-sensitive and case-insensitive APFS, cross-volume logical fidelity, and path collisions. (S012)
 
 Feature 010 adds a 100-sample implicit-discovery workload from 100 levels below a project root; its recorded p95 was 4.960 ms against the one-second requirement. The converted 10,000-entry project fixtures retained their established thresholds, and five explicit ignored APFS qualification tests passed on distinct disposable case-sensitive and case-insensitive volumes. (S013)
+
+Feature 021 adds isolated 19 MiB unequal-file release workloads for `grip add` and JSON `grip status`, each with 100 warm samples and a one-second p95 limit. The final measurements were 573.669375 ms for add and 184.788375 ms for status after eliminating only duplicate same-pass observation; the full safety evidence and fenced add reinspection remain in place. [Large-file observation performance](./large-file-observation-performance.md) records the component boundary. (S021)
 
 ## Related pages
 
