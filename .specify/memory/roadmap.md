@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.6.0 -> 1.7.0
-Bump rationale: Add two planned performance-investigation specifications.
+Version change: 1.7.1 -> 1.7.2
+Bump rationale: Record the direct active-user decision to abandon Feature 020 after the release artifact was observed to be below its stretch target.
 
 Changes this revision:
-  - Added planned ledger entries for Features 020 and 021
+  - Moved Feature 020 from in-progress to abandoned
 
-Specs affected: 020, 021
-Open questions added/resolved: Added Q-17 through Q-20
+Specs affected: 020
+Open questions added/resolved: Resolved Q-17 and Q-18 by abandonment
 
-Notes: Direct active-user authorization on 2026-09-14. The entries establish investigation and evidence-backed improvement work without preselecting mechanisms or acceptance thresholds.
+Notes: Direct active-user authorization on 2026-09-14. The user reported that the release artifact is approximately 4.5 MB, already below the 10 MiB stretch target; no further size investigation or reduction work is requested.
 -->
 
 # Grip — Spec Roadmap
@@ -282,7 +282,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `specs/019-executable-force-guidance/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
 - **Notes:** Delivered in `af6f9af` with complete feature artifacts and full validation. The existing exact-entry force boundary remains authoritative; aggregate guidance is inspection-only. It remains implemented pending a feature-specific debrief.
 
-### 020 — Release Binary Size Investigation  [status: planned]
+### 020 — Release Binary Size Investigation  [status: abandoned]
 
 - **Spec dir:** To be assigned when specification work begins
 - **Description:** Investigate the approximately 19 MB `grip` binary, identify its material size contributors, determine whether that size is justified for the supported release target, and apply evidence-backed reductions that preserve the supported CLI contract.
@@ -292,7 +292,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** none
 - **Governed by:** C-04, C-08, C-10, C-11
 - **Addresses:** Direct active-user decision on 2026-09-14 reporting an approximately 19 MB `grip` binary and requesting investigation of whether it must be that large and easy reduction opportunities.
-- **Notes:** The target platform, packaging configuration, acceptable size budget, and compatibility constraints remain open for the specification. Any reduction must be selected from measured evidence rather than assumed to be beneficial.
+- **Notes:** Abandoned by direct active-user decision on 2026-09-14 after the user reported an approximately 4.5 MB release artifact, already below the feature's 10 MiB stretch target. No size investigation, reduction, or acceptance claim is implied by this abandonment.
 
 ### 021 — Large-File Operation Performance  [status: planned]
 
@@ -326,8 +326,8 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-14 — Project descriptor and destination notation (010):** Resolved by Features 012 and 014 and C-14. Destinations may be absolute, `~`, `~/`-prefixed, or project-relative; accepted spelling is preserved in mapping intent and resolved only for validation and use. Sources remain project-relative.
 - **Q-15 — Machine-local project identity (010):** Define how machine-local state is keyed to a project without creating collisions between multiple clones.
 - **Q-16 — Initialization and discovery boundaries (010):** Define initialization idempotency, nested-project discovery, and behavior when an explicit project conflicts with an enclosing project.
-- **Q-17 — Release target and package configuration (020):** Define the release target, profile, packaging method, and artifact form whose binary size is evaluated.
-- **Q-18 — Binary-size acceptance budget (020):** Define the acceptable binary-size budget and the compatibility, diagnostics, and operational tradeoffs that may or may not be made to meet it.
+- **Q-17 — Release target and package configuration (020):** No longer applicable. Feature 020 was abandoned by direct active-user decision on 2026-09-14 after the reported release artifact was already below the stretch target.
+- **Q-18 — Binary-size acceptance budget (020):** No longer applicable. Feature 020 was abandoned by direct active-user decision on 2026-09-14 after the reported release artifact was already below the stretch target.
 - **Q-19 — Representative large-file workload (021):** Define the Grip operations, file types, storage conditions, and measurement environment that represent the reported large-file degradation.
 - **Q-20 — Large-file performance acceptance (021):** Define latency, throughput, memory, and regression thresholds for the representative workload.
 
@@ -346,4 +346,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.7.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
+**Version**: 1.7.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
