@@ -164,4 +164,4 @@ mise run validate
 mise run performance
 ```
 
-`validate` checks formatting, runs Clippy with warnings denied, runs the default test suite, and builds the release binary. The ignored performance and platform-specific suites are explicit release gates.
+`build` produces the debug binary at `target/debug/grip`; run `mise run build --release` to produce the optimized release binary at `target/release/grip`. `validate` checks formatting, runs Clippy with warnings denied, runs the default test suite, and builds the release binary. The ignored performance and platform-specific suites are explicit release gates.

@@ -8,7 +8,7 @@ rust = { version = "1.98.0", components = "rustfmt,clippy" }
 run_auto_install = false
 
 [tasks.build]
-description = "Build Grip in the default development profile"
+description = "Build Grip; pass --release for the optimized release profile"
 run = "cargo build"
 
 [tasks.clean]
