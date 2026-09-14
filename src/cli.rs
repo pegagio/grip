@@ -54,6 +54,9 @@ pub enum Command {
 
 #[derive(Debug, clap::Args)]
 pub struct AddArgs {
+    /// Replace one exact equal-destination file mapping after full validation.
+    #[arg(short = 'f', long)]
+    pub force: bool,
     #[arg(value_name = "SOURCE")]
     pub source: OsString,
     #[arg(value_name = "DESTINATION")]

@@ -1,18 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.8.1 -> 1.8.2
-Bump rationale: Record the completed debriefs and verified lifecycle transitions for Features 018 and 019.
+Version change: 1.8.4 -> 1.8.5
+Bump rationale: Record independent verification of the implemented Feature 022 outcome.
 
 Changes this revision:
-  - Moved Feature 018 from implemented to verified
-  - Moved Feature 019 from implemented to verified
-  - Recorded their attributable implementation debrief evidence
+  - Transitioned Feature 022 from `in-progress` to `verified`
+  - Recorded its no-finding implementation debrief as verification evidence
 
-Specs affected: 018, 019
+Specs affected: 022
 Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-14, supported by the implementation debriefs in `specs/018-source-authoritative-add/roadmap-reviews/` and `specs/019-executable-force-guidance/roadmap-reviews/`. Feature 018 has one non-blocking shared-delivery provenance recommendation; Feature 019 has no findings. Both passed the verified lifecycle gates.
+Notes: Direct active-user authorization on 2026-09-14 to transition the completed Feature 022 after its no-finding roadmap debrief.
 -->
 
 # Grip — Spec Roadmap
@@ -308,9 +307,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-14 reporting slow Grip operations on an approximately 19 MB file and requesting diagnosis and correction.
 - **Notes:** Verified on 2026-09-14 by the no-finding debrief at `specs/021-large-file-performance/roadmap-reviews/debrief-20260914T161151Z.md`. The representative workload is an isolated local macOS ARM64 release build with differing 19 MiB regular source and destination files; it runs `grip add` and JSON `grip status` for 100 warm samples each with a one-second p95 target. The measured cause was duplicate same-pass complete observation of discovery-backed file mappings. The operation-local deduplication retained descriptor-bound content and metadata evidence, independent stable-observation passes, fenced add reinspection, initial comparison behavior, and discovery-absent fallback. Final acceptance p95 was 573.669375 ms for `grip add` and 184.788375 ms for `grip status`. No cache, index, parallelism, lock, watcher, daemon, or baseline-semantics change was introduced.
 
-### 022 — Force Mapping Replacement  [status: planned]
+### 022 — Force Mapping Replacement  [status: verified]
 
-- **Spec dir:** To be assigned when specification work begins
+- **Spec dir:** `specs/022-force-mapping-replacement`
 - **Description:** Allow an operator to explicitly force `grip add` to replace an existing conflicting mapping when the requested mapping would otherwise be rejected by accepted-registry ownership validation.
 - **Outcome:** An operator can deliberately replace the prior mapping in the reported equal-destination case, such as switching a managed executable destination from a debug artifact to a release artifact, while Grip preserves exact ownership validation, prevents partial registry or state publication, and leaves endpoint payloads unchanged by `add`. An operator who successfully removes that exact conflicting mapping can later add a replacement without force or stale ownership rejection.
 - **Scope (in):** An explicit force-add interface; exact conflicting-mapping identification and replacement eligibility; descriptor, baseline, fence, and operation-state handling for the displaced mapping; verification that `remove` fully retires the removed mapping from every ownership-validation input before a later ordinary add; complete registry revalidation; atomic publication and failure behavior; human and JSON results; documentation; and isolated file- and tree-conflict regression coverage.
@@ -318,7 +317,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 018, 019
 - **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-10, C-11, C-12, C-13, C-14
 - **Addresses:** Direct active-user decision on 2026-09-14, supported by the reported rejected command `grip add target/release/grip ~/.local/bin/grip` against an existing `target/debug/grip` mapping to the same destination and a request that re-adding after removal of that exact mapping must not require force.
-- **Notes:** The roadmap authorizes no implementation yet. The feature specification must decide the exact `add` force spelling and whether it may replace only one exact equal-destination file mapping or a broader precisely identified ownership conflict; it must also define displaced baseline and incomplete-fence treatment, the post-remove ownership invariant, conflict reporting, and user confirmation or preview requirements. The reported transcript removes `target/debug/mise` while `grip status` still shows `target/debug/grip`; that is evidence that removal of a different mapping cannot clear the active `grip` conflict.
+- **Notes:** The completed specification selects `grip add --force` as explicit confirmation and limits initial delivery to one exact equal-destination file mapping. Tree, source-overlap, nested, and multi-mapping conflicts remain rejected. It requires all-or-nothing displaced-mapping retirement, current-evidence handling, and ordinary re-addition after exact removal. The reported transcript removes `target/debug/mise` while `grip status` still shows `target/debug/grip`; removal of a different mapping therefore cannot clear the active `grip` conflict. Verified on 2026-09-14 by the no-finding debrief at `specs/022-force-mapping-replacement/roadmap-reviews/debrief-20260914T182235Z.md`.
 
 ## Open Questions
 
@@ -344,7 +343,7 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-18 — Binary-size acceptance budget (020):** No longer applicable. Feature 020 was abandoned by direct active-user decision on 2026-09-14 after the reported release artifact was already below the stretch target.
 - **Q-19 — Representative large-file workload (021):** Resolved by verified Feature 021. The representative workload is an isolated local macOS ARM64 release build with differing 19 MiB regular source and destination files, exercising `grip add` and JSON `grip status` for 100 warm samples each.
 - **Q-20 — Large-file performance acceptance (021):** Resolved by verified Feature 021. Both representative operations have a one-second p95 release-build acceptance threshold, enforced by the isolated performance gate; final recorded p95 values were 573.669375 ms for `grip add` and 184.788375 ms for `grip status`.
-- **Q-21 — Force-add replacement contract (022):** Define the `grip add` force spelling; exact replacement eligibility across equal-destination, source-overlap, and tree conflicts; whether preview or confirmation is required; how the displaced mapping's baseline, incomplete fence, operation evidence, and state are retired or preserved without partial publication; and the proof that removal of the exact conflicting mapping clears every ownership-validation input before a later ordinary add.
+- **Q-21 — Force-add replacement contract (022):** Resolved for initial delivery by Feature 022. `grip add --force` is explicit confirmation for exactly one equal-destination file mapping; tree, source-overlap, nested, and multi-mapping conflicts remain rejected. The displaced mapping and its current evidence are retired all-or-nothing, and removal of the exact mapping clears ownership-validation inputs before a later ordinary add.
 
 ## Cross-Cutting Notes
 
@@ -361,4 +360,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.8.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
+**Version**: 1.8.5 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14

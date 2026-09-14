@@ -27,6 +27,7 @@ page files, not here.
 - [Mapping registry publication](./pages/mapping-registry-publication.md)
 - [Large-file observation performance](./pages/large-file-observation-performance.md)
 - [Mapping addition and initial baselines](./pages/mapping-addition-and-initial-baselines.md)
+- [Force mapping replacement](./pages/force-mapping-replacement.md)
 - [Metadata and filesystem contract](./pages/metadata-and-filesystem-contract.md)
 - [Synchronization and conflicts](./pages/synchronization-and-conflicts.md)
 

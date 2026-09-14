@@ -86,6 +86,37 @@ fn equivalent_normalized_destination_declarations_conflict() {
 }
 
 #[test]
+fn force_add_does_not_replace_tree_or_nested_destination_conflicts() {
+    let fixture = ProjectFixture::initialized();
+    fs::create_dir_all(fixture.project_root.join("a/child")).unwrap();
+    fs::create_dir_all(fixture.project_root.join("b")).unwrap();
+    assert!(add(&fixture, "a", "~/destination"));
+    let before = fs::read(fixture.descriptor_path()).unwrap();
+
+    let output = fixture.command(&["add", "--force", "b", "~/destination/child"]);
+    assert!(!output.status.success());
+    assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
+    assert!(!fixture.metadata_dir().join("state/add-fence.json").exists());
+}
+
+#[test]
+fn force_add_retains_residual_source_overlap_rejection() {
+    let fixture = ProjectFixture::initialized();
+    fs::create_dir_all(fixture.project_root.join("tree")).unwrap();
+    fs::write(fixture.project_root.join("tree/child"), "child").unwrap();
+    fs::write(fixture.project_root.join("old"), "old").unwrap();
+    fs::write(fixture.home_destination("destination"), "destination").unwrap();
+    assert!(add(&fixture, "tree", "~/tree-destination"));
+    assert!(add(&fixture, "old", "~/destination"));
+    let before = fs::read(fixture.descriptor_path()).unwrap();
+
+    let output = fixture.command(&["add", "--force", "tree/child", "~/destination"]);
+    assert!(!output.status.success());
+    assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
+    assert!(!fixture.metadata_dir().join("state/add-fence.json").exists());
+}
+
+#[test]
 fn project_relative_destinations_use_resolved_topology_for_conflicts() {
     let fixture = ProjectFixture::initialized();
     fs::write(fixture.project_root.join("a"), "a").unwrap();

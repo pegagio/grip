@@ -591,8 +591,7 @@ fn reject_fenced_selection(
     };
     if selected {
         return Err(GripError::InvalidConfiguration(
-            "selected mapping has an incomplete add publication; rerun grip add for that mapping"
-                .into(),
+            incomplete_fence_message(&fence).into(),
         ));
     }
     Ok(())
@@ -609,12 +608,12 @@ fn reject_fenced_selector(
     let Some(selector) = selector else {
         return Ok(());
     };
-    if state::add_fence::load(home)?
-        .is_some_and(|fence| fence.protects_selector(selector, path_space))
-    {
+    let Some(fence) = state::add_fence::load(home)? else {
+        return Ok(());
+    };
+    if fence.protects_selector(selector, path_space) {
         return Err(GripError::InvalidConfiguration(
-            "selected mapping has an incomplete add publication; rerun grip add for that mapping"
-                .into(),
+            incomplete_fence_message(&fence).into(),
         ));
     }
     Ok(())
@@ -690,7 +689,7 @@ fn execute_inspection(
                 record.prospective_direction = classification::model::Direction::None;
                 record.attention = true;
                 record.blocking = true;
-                record.reasons = vec!["incomplete_add_publication".into()];
+                record.reasons = vec![incomplete_fence_reason(fence).into()];
             }
         }
         if !present && selector.is_none() {
@@ -776,8 +775,26 @@ fn fenced_classification_record(
         },
         attention: true,
         blocking: true,
-        reasons: vec!["incomplete_add_publication".into()],
+        reasons: vec![incomplete_fence_reason(fence).into()],
     })
+}
+
+fn incomplete_fence_reason(fence: &state::add_fence::AddPublicationFenceV1) -> &'static str {
+    match fence.operation {
+        state::add_fence::FenceOperation::Add => "incomplete_add_publication",
+        state::add_fence::FenceOperation::Remove => "incomplete_remove_publication",
+    }
+}
+
+fn incomplete_fence_message(fence: &state::add_fence::AddPublicationFenceV1) -> &'static str {
+    match fence.operation {
+        state::add_fence::FenceOperation::Add => {
+            "selected mapping has an incomplete add publication; rerun grip add for that mapping"
+        }
+        state::add_fence::FenceOperation::Remove => {
+            "selected mapping has an incomplete remove publication; rerun grip remove for that mapping"
+        }
+    }
 }
 
 fn classification_scope(
@@ -1029,7 +1046,44 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
             .for_mapping_operation(operation)
             .for_mapping_kind(kind)
     })?;
+    let replacement = if args.force {
+        let matches = snapshot
+            .registry
+            .mappings()
+            .iter()
+            .filter(|mapping| {
+                mapping.kind == mapping::MappingKind::File
+                    && mapping.destination == added.destination
+                    && mapping.source != added.source
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(GripError::mapping(
+                operation,
+                "force_add_requires_exact_destination_mapping",
+                vec![added.destination.display().to_string()],
+                "force add requires exactly one distinct active file mapping with the requested destination",
+            ));
+        }
+        let displaced = matches.into_iter().next().expect("one replacement match");
+        let declaration = snapshot
+            .portable_mappings()?
+            .into_iter()
+            .find(|mapping| mapping.source.resolve(&context.root) == displaced.source)
+            .ok_or_else(|| {
+                GripError::CorruptState(
+                    "accepted replacement mapping has no portable declaration".into(),
+                )
+            })?;
+        Some((displaced, declaration))
+    } else {
+        None
+    };
     let mut declarations = snapshot.portable_mappings()?;
+    if let Some((displaced, _)) = &replacement {
+        declarations.retain(|mapping| mapping.source.resolve(&context.root) != displaced.source);
+    }
     declarations.push(portable.clone());
     let candidate_descriptor = registry::ProjectDescriptorV2::new(declarations)?;
     let candidate = registry::ResolvedRegistry::new(
@@ -1039,6 +1093,84 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
             .map(|mapping| mapping.ownership_mapping())
             .collect(),
     )?;
+    if let Some((displaced, displaced_declaration)) = &replacement {
+        let state_snapshot = state::publication::load(&home)?;
+        let mut accepted = state_snapshot.accepted.clone();
+        let displaced_identity = observation::model::ResolvedMapping::from(displaced);
+        accepted
+            .complete_baselines
+            .retain(|identity, _| identity.mapping != displaced_identity);
+        let descriptor_bytes = registry::encode_descriptor(&candidate_descriptor)?;
+        let selection = observation::model::Selection::Mapping(
+            observation::model::ResolvedMapping::from(&added),
+        );
+        let observed = observation::inspect_candidate(
+            &home,
+            &candidate,
+            &descriptor_bytes,
+            &snapshot,
+            &accepted,
+            &selection,
+        )?;
+        state::publication::revalidate(&home, &state_snapshot)?;
+        let records = observed
+            .values()
+            .map(|entry| classification::classify_accepted(entry, &accepted))
+            .collect::<Vec<_>>();
+        let initial_state = baseline::build_for_add(&accepted, &records)?;
+        let state_bytes = state::publication::prepare_candidate_for_descriptor(
+            &home,
+            &state_snapshot,
+            &initial_state.next.complete_baselines,
+            &descriptor_bytes,
+        )?;
+        let fence = state::add_fence::AddPublicationFenceV1::with_context(
+            &added,
+            state::add_fence::FenceContext::replacement(
+                &portable,
+                displaced,
+                displaced_declaration,
+            ),
+            snapshot.bytes.clone(),
+            descriptor_bytes.clone(),
+            state_snapshot.bytes.clone(),
+            state_bytes.clone(),
+        );
+        state::add_fence::create_verified(&home, &fence)?;
+        registry::publication::publish_with_evidence(
+            &home,
+            &snapshot,
+            &candidate,
+            &candidate_descriptor,
+            &[source_evidence, destination_evidence],
+        )?;
+        let published_registry = registry::publication::load(&home, false)?;
+        if !fenced_candidate_is_current(&home, &added, &published_registry, &fence)? {
+            return Err(GripError::InvalidConfiguration(
+                "destination changed before Grip could record the replacement state; rerun grip add for this mapping"
+                    .into(),
+            ));
+        }
+        state::publication::publish_prepared_locked(
+            &home,
+            &state_snapshot,
+            &initial_state.next.complete_baselines,
+            &state_bytes,
+        )?;
+        let published_state = state::publication::load(&home)?;
+        if published_registry.bytes != descriptor_bytes
+            || published_state.bytes.as_deref() != Some(state_bytes.as_slice())
+        {
+            return Err(GripError::CorruptState(
+                "replacement publication did not match its fenced candidate".into(),
+            ));
+        }
+        state::add_fence::clear_verified(&home, &fence)?;
+        return Ok(CommandOutcome::mapping_replaced(
+            &result::MappingResultDetails::from_parts(&portable, &added),
+            &result::MappingResultDetails::from_parts(displaced_declaration, displaced),
+        ));
+    }
     if source_kind.is_some() && destination_kind.is_some() {
         let state_snapshot = state::publication::load(&home)?;
         let descriptor_bytes = registry::encode_descriptor(&candidate_descriptor)?;
@@ -1143,6 +1275,11 @@ fn resume_fenced_add(
     let Some(fence) = state::add_fence::load(home)? else {
         return Ok(None);
     };
+    if fence.operation != state::add_fence::FenceOperation::Add {
+        return Err(GripError::InvalidConfiguration(
+            "another mapping has an incomplete remove publication".into(),
+        ));
+    }
     if !fence.protects(added) {
         return Err(GripError::InvalidConfiguration(
             "another mapping has an incomplete add publication".into(),
@@ -1162,6 +1299,12 @@ fn resume_fenced_add(
             return Ok(None);
         }
         if state_digest != Some(fence.candidate_state_digest.clone()) {
+            if state_digest != fence.prior_state_digest {
+                return Err(GripError::InvalidConfiguration(
+                    "incomplete add publication state differs from both its prior and candidate state; retry cannot safely continue"
+                        .into(),
+                ));
+            }
             let candidate_state = state::decode_v4(&fence.candidate_state_bytes)?;
             let runtime = state::runtime_from_accepted_v4(home, &candidate_state)?;
             state::publication::publish_prepared_locked(
@@ -1178,11 +1321,7 @@ fn resume_fenced_add(
             ));
         }
         state::add_fence::clear_verified(home, &fence)?;
-        return Ok(Some(CommandOutcome::mapping_success(
-            "add",
-            "Mapping recorded",
-            &result::MappingResultDetails::from_parts(portable, added),
-        )));
+        return Ok(Some(add_fence_outcome(portable, added, &fence)?));
     }
 
     if descriptor_digest == fence.prior_descriptor_digest
@@ -1196,6 +1335,56 @@ fn resume_fenced_add(
         "incomplete add publication differs from both its prior and candidate state; retry cannot safely continue"
             .into(),
     ))
+}
+
+fn add_fence_outcome(
+    portable: &mapping::PortableMapping,
+    added: &mapping::Mapping,
+    fence: &state::add_fence::AddPublicationFenceV1,
+) -> Result<CommandOutcome, GripError> {
+    if fence.result == state::add_fence::FenceResult::Replaced {
+        let added = mapping_details_from_fence(fence.declaration.as_ref(), &fence.mapping)?;
+        let replaced = replacement_details_from_fence(fence)?;
+        Ok(CommandOutcome::mapping_replaced(&added, &replaced))
+    } else {
+        let added = result::MappingResultDetails::from_parts(portable, added);
+        Ok(CommandOutcome::mapping_success(
+            "add",
+            "Mapping recorded",
+            &added,
+        ))
+    }
+}
+
+fn replacement_details_from_fence(
+    fence: &state::add_fence::AddPublicationFenceV1,
+) -> Result<result::MappingResultDetails, GripError> {
+    let replaced = fence.replaced_mapping.as_ref().ok_or_else(|| {
+        GripError::CorruptState("replacement fence omitted the displaced mapping".into())
+    })?;
+    mapping_details_from_fence(fence.replaced_declaration.as_ref(), replaced)
+}
+
+fn mapping_details_from_fence(
+    declaration: Option<&state::add_fence::FenceDeclaration>,
+    expected: &state::add_fence::FenceMapping,
+) -> Result<result::MappingResultDetails, GripError> {
+    let declaration = declaration.ok_or_else(|| {
+        GripError::CorruptState("publication fence omitted the protected declaration".into())
+    })?;
+    Ok(result::MappingResultDetails {
+        declared: result::DeclaredMappingDetails {
+            kind: declaration.kind,
+            source: declaration.source.clone(),
+            destination: declaration.destination.clone(),
+        },
+        resolved: result::ResolvedMappingDetails {
+            source: discovery::model::SafePath::from_path(std::path::Path::new(&expected.source)),
+            destination: discovery::model::SafePath::from_path(std::path::Path::new(
+                &expected.destination,
+            )),
+        },
+    })
 }
 
 /// Reinspect the candidate mapping against the destination-derived State V4 evidence captured
@@ -1324,10 +1513,15 @@ fn execute_list(args: &cli::ListArgs) -> Result<CommandOutcome, GripError> {
 fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
     let context = selected_project()?;
     let home = selected_home()?;
-    let snapshot = registry::publication::load(&home, true)
-        .map_err(|error| error.for_mapping_operation("remove"))?;
     let source =
         path_policy::ProjectRelativePath::parse_cli(&args.source, true)?.resolve(&context.root);
+    let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, "remove")?;
+    revalidate_project_for_mutation()?;
+    if let Some(outcome) = resume_fenced_remove(&home, &source)? {
+        return Ok(outcome);
+    }
+    let snapshot = registry::publication::load(&home, true)
+        .map_err(|error| error.for_mapping_operation("remove"))?;
     let removed = snapshot
         .mapping_details()?
         .into_iter()
@@ -1342,6 +1536,13 @@ fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
                 "Mapping not found",
             )
         })?;
+    let removed_mapping = snapshot
+        .registry
+        .mappings()
+        .iter()
+        .find(|mapping| mapping.source == source)
+        .cloned()
+        .ok_or_else(|| GripError::CorruptState("removed mapping is absent from registry".into()))?;
     let mappings = snapshot
         .registry
         .mappings()
@@ -1350,21 +1551,128 @@ fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
         .cloned()
         .collect();
     let candidate = registry::ResolvedRegistry::new(mappings)?;
-    let _mutation_guard = state::mutation_lock::MutationLock::acquire(&home, "remove")?;
-    revalidate_project_for_mutation()?;
+    let declarations = snapshot.portable_mappings()?;
+    let removed_declaration = declarations
+        .iter()
+        .find(|mapping| mapping.source.resolve(&context.root) == source)
+        .cloned()
+        .ok_or_else(|| {
+            GripError::CorruptState("removed mapping has no portable declaration".into())
+        })?;
     let portable = registry::ProjectDescriptorV2::new(
-        snapshot
-            .portable_mappings()?
+        declarations
             .into_iter()
             .filter(|mapping| mapping.source.resolve(&context.root) != source)
             .collect(),
     )?;
+    let descriptor_bytes = registry::encode_descriptor(&portable)?;
+    let state_snapshot = state::publication::load(&home)?;
+    let mut next = state_snapshot.accepted.clone();
+    next.complete_baselines
+        .retain(|identity, _| identity.mapping.source != source);
+    let state_bytes = state::publication::prepare_candidate_for_descriptor(
+        &home,
+        &state_snapshot,
+        &next.complete_baselines,
+        &descriptor_bytes,
+    )?;
+    let fence = state::add_fence::AddPublicationFenceV1::with_context(
+        &removed_mapping,
+        state::add_fence::FenceContext::removal(&removed_declaration),
+        snapshot.bytes.clone(),
+        descriptor_bytes.clone(),
+        state_snapshot.bytes.clone(),
+        state_bytes.clone(),
+    );
+    state::add_fence::create_verified(&home, &fence)?;
     registry::publication::publish_with_descriptor(&home, &snapshot, &candidate, &portable)?;
-    prune_removed_baseline(&home, &source)?;
+    state::publication::publish_prepared_locked(
+        &home,
+        &state_snapshot,
+        &next.complete_baselines,
+        &state_bytes,
+    )?;
+    let published_registry = registry::publication::load(&home, false)?;
+    let published_state = state::publication::load(&home)?;
+    if published_registry.bytes != descriptor_bytes
+        || published_state.bytes.as_deref() != Some(state_bytes.as_slice())
+    {
+        return Err(GripError::CorruptState(
+            "remove publication did not match its fenced candidate".into(),
+        ));
+    }
+    state::add_fence::clear_verified(&home, &fence)?;
     Ok(CommandOutcome::mapping_success(
         "remove",
         "Mapping removed",
         &removed,
+    ))
+}
+
+fn resume_fenced_remove(
+    home: &project::ProjectPaths,
+    source: &std::path::Path,
+) -> Result<Option<CommandOutcome>, GripError> {
+    let Some(fence) = state::add_fence::load(home)? else {
+        return Ok(None);
+    };
+    if fence.operation != state::add_fence::FenceOperation::Remove {
+        return Err(GripError::InvalidConfiguration(
+            "another mapping has an incomplete add publication".into(),
+        ));
+    }
+    if !fence.protects_selector(source, observation::model::PathSpace::Source) {
+        return Err(GripError::InvalidConfiguration(
+            "another mapping has an incomplete remove publication".into(),
+        ));
+    }
+    let registry = registry::publication::load(home, false)?;
+    let state_snapshot = state::publication::load(home)?;
+    let descriptor_digest = state::add_fence::digest(&registry.bytes);
+    let state_digest = state_snapshot
+        .bytes
+        .as_deref()
+        .map(state::add_fence::digest);
+    if descriptor_digest == fence.candidate_descriptor_digest {
+        if state_digest != Some(fence.candidate_state_digest.clone()) {
+            if state_digest != fence.prior_state_digest {
+                return Err(GripError::InvalidConfiguration(
+                    "incomplete remove publication state differs from both its prior and candidate state; retry cannot safely continue"
+                        .into(),
+                ));
+            }
+            let candidate_state = state::decode_v4(&fence.candidate_state_bytes)?;
+            let runtime = state::runtime_from_accepted_v4(home, &candidate_state)?;
+            state::publication::publish_prepared_locked(
+                home,
+                &state_snapshot,
+                &runtime.baselines,
+                &fence.candidate_state_bytes,
+            )?;
+        }
+        let verified = state::publication::load(home)?;
+        if verified.bytes.as_deref() != Some(fence.candidate_state_bytes.as_slice()) {
+            return Err(GripError::CorruptState(
+                "fenced remove retry did not publish the expected State V4 candidate".into(),
+            ));
+        }
+        let removed = mapping_details_from_fence(fence.declaration.as_ref(), &fence.mapping)?;
+        state::add_fence::clear_verified(home, &fence)?;
+        return Ok(Some(CommandOutcome::mapping_success(
+            "remove",
+            "Mapping removed",
+            &removed,
+        )));
+    }
+    if descriptor_digest == fence.prior_descriptor_digest
+        && state_digest == fence.prior_state_digest
+    {
+        state::add_fence::clear_verified(home, &fence)?;
+        return Ok(None);
+    }
+    Err(GripError::InvalidConfiguration(
+        "incomplete remove publication differs from both its prior and candidate state; retry cannot safely continue"
+            .into(),
     ))
 }
 
@@ -1387,19 +1695,6 @@ fn establish_added_baseline(
     if candidate.changed_count > 0 {
         state::publication::publish_current_locked(home, &state, &candidate.next)?;
     }
-    Ok(())
-}
-
-/// Forget accepted evidence for a removed declaration without changing endpoint payloads.
-fn prune_removed_baseline(
-    home: &project::ProjectPaths,
-    source: &std::path::Path,
-) -> Result<(), GripError> {
-    let state = state::publication::load(home)?;
-    let mut next = state.accepted.clone();
-    next.complete_baselines
-        .retain(|identity, _| identity.mapping.source != source);
-    state::publication::publish_current_locked(home, &state, &next)?;
     Ok(())
 }
 
