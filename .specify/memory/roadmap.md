@@ -1,18 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.8.0 -> 1.8.1
-Bump rationale: Clarify that Feature 022 also covers ordinary re-addition after successful removal, which must not retain a stale ownership conflict or require force.
+Version change: 1.8.1 -> 1.8.2
+Bump rationale: Record the completed debriefs and verified lifecycle transitions for Features 018 and 019.
 
 Changes this revision:
-  - Added planned Feature 022, Force Mapping Replacement
-  - Recorded the reported equal-destination ownership collision and the requested explicit force-add capability
-  - Added the removed-mapping re-addition invariant: a successfully removed conflicting mapping cannot require force on a later add
+  - Moved Feature 018 from implemented to verified
+  - Moved Feature 019 from implemented to verified
+  - Recorded their attributable implementation debrief evidence
 
-Specs affected: 022
-Open questions added/resolved: Clarified Q-21
+Specs affected: 018, 019
+Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-14. The reported `grip add target/release/grip ~/.local/bin/grip` collision is an exact equal-destination conflict with an existing file mapping. A successful removal of that exact mapping must allow a later add without force; removal of a different mapping does not. Feature 022 is roadmap-only; its specification must settle the replacement contract before implementation.
+Notes: Direct active-user authorization on 2026-09-14, supported by the implementation debriefs in `specs/018-source-authoritative-add/roadmap-reviews/` and `specs/019-executable-force-guidance/roadmap-reviews/`. Feature 018 has one non-blocking shared-delivery provenance recommendation; Feature 019 has no findings. Both passed the verified lifecycle gates.
 -->
 
 # Grip — Spec Roadmap
@@ -260,7 +260,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** `specs/017-simplify-command-output/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
 - **Notes:** Delivered in `1b65b74` with complete feature artifacts and validation. Feature 019 supersedes only its force-guidance rendering where an aggregate selector is not executable. It remains implemented pending a feature-specific debrief.
 
-### 018 — Source-Authoritative Mapping Addition  [status: implemented]
+### 018 — Source-Authoritative Mapping Addition  [status: verified]
 
 - **Spec dir:** `specs/018-source-authoritative-add`
 - **Description:** Keep `grip add` non-mutating for endpoint payloads while making a newly added unequal source-defined member immediately eligible for an ordinary push.
@@ -270,9 +270,9 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 004, 011
 - **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-10, C-11, C-12, C-13, C-14
 - **Addresses:** `specs/018-source-authoritative-add/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
-- **Notes:** Delivered in `1b65b74` with complete feature artifacts and validation. Source authority is represented by the destination comparison reference, not by payload copying or a permanent source-wins rule. It remains implemented pending a feature-specific debrief.
+- **Notes:** Verified on 2026-09-14 by `specs/018-source-authoritative-add/roadmap-reviews/debrief-20260914T164539Z.md`. The `b67be255..1b65b743` evidence boundary met the outcome and lifecycle gates. Its one non-blocking recommendation records that the commit co-delivered Feature 017, reducing exclusive attribution; future feature commits should be isolated or explicitly declare shared delivery. Source authority remains represented by the destination comparison reference, not by payload copying or a permanent source-wins rule.
 
-### 019 — Executable Force-Resolution Guidance  [status: implemented]
+### 019 — Executable Force-Resolution Guidance  [status: verified]
 
 - **Spec dir:** `specs/019-executable-force-guidance`
 - **Description:** Display force-resolution commands only when the shown selector resolves to one exact established managed entry; give aggregate conflicts a read-only inspection step instead.
@@ -282,7 +282,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 017
 - **Governed by:** C-02, C-04, C-05, C-07, C-10, C-11, C-12
 - **Addresses:** `specs/019-executable-force-guidance/spec.md`; direct active-user authorization for this ledger backfill on 2026-09-13.
-- **Notes:** Delivered in `af6f9af` with complete feature artifacts and full validation. The existing exact-entry force boundary remains authoritative; aggregate guidance is inspection-only. It remains implemented pending a feature-specific debrief.
+- **Notes:** Verified on 2026-09-14 by the no-finding debrief at `specs/019-executable-force-guidance/roadmap-reviews/debrief-20260914T164539Z.md`. The `1b65b743..af6f9af0` evidence boundary met the outcome and lifecycle gates. The existing exact-entry force boundary remains authoritative; aggregate guidance is inspection-only.
 
 ### 020 — Release Binary Size Investigation  [status: abandoned]
 
@@ -361,4 +361,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.8.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
+**Version**: 1.8.2 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
