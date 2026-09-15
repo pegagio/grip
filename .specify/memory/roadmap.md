@@ -1,18 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.10.1 -> 1.10.4
-Bump rationale: Correct the Feature 020 and Feature 024 specification-directory links and record Feature 024's completed verification.
+Version change: 1.11.0 -> 1.11.1
+Bump rationale: Record Feature 025's completed verification without changing its approved scope.
 
 Changes this revision:
-  - Restored Feature 020's canonical specification directory
-  - Recorded Feature 024's canonical specification directory
-  - Transitioned Feature 024 from `in-progress` to `verified` after its no-finding debrief
+  - Transitioned Feature 025 from `in-progress` to `verified`
+  - Recorded the no-finding debrief and completed lifecycle gates as verification evidence
 
-Specs affected: 024
+Specs affected: 025
 Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-15. This correction preserves Feature 020's abandoned record, resolves Feature 024's non-blocking roadmap-brief linkage finding, and records the no-finding verification result without changing Feature 024's approved scope.
+Notes: Direct active-user authorization on 2026-09-15. The no-finding debrief confirmed that the implementation meets the approved contained-source outcome and scope with a trustworthy complete worktree delta.
 -->
 
 # Grip — Spec Roadmap
@@ -344,6 +343,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-15 to continue artifact releases and automate their local preparation with mise tasks.
 - **Notes:** The task prepares reviewable local artifacts and creates a local release identity only after successful validation and packaging. It must never overwrite an existing tag. Pushing and release publication remain explicit maintainer actions so the workflow does not bundle irreversible external mutations into a local command. Verified on 2026-09-15 by the no-finding debrief at `specs/024-local-artifact-release-automation/roadmap-reviews/debrief-20260915T174336Z.md` (`PROCEED`; all verification gates passed).
 
+### 025 — Contained-Source Tree Mappings  [status: verified]
+
+- **Spec dir:** `specs/025-contained-source-tree-mappings`
+- **Description:** Support the dotfiles layout in which a source tree such as `home/` resides transitively beneath its destination such as `~/`, without permitting general recursive topology or traversing unrelated destination content.
+- **Outcome:** A user can add and operate a source-defined tree mapping from a repository's `home/` directory to the invoking user's home directory while Grip manages only safe current or previously accepted members, leaves unrelated home content untouched, and blocks any member whose resolved pair would equal, contain, or fall within the source tree.
+- **Scope (in):** Strict source-beneath-destination tree mappings; current-source and accepted-baseline destination inspection; member-level recursive-topology validation after source policy; safe handling of ignored and removed members; source-deletion observation; machine-local topology rebinding; deterministic human and machine blockers; documentation; isolated filesystem regression coverage; and representative home-overlay performance acceptance.
+- **Scope (out):** Equal endpoints; destinations contained by their source; contained file mappings; a general force or topology-bypass option; relaxing source/source, destination/destination, or cross-mapping ownership rules; importing or owning never-managed destination-only content; implicit ignore rules; following links; broad destination traversal; and changes to ordinary or forced synchronization authority.
+- **Depends on:** 002, 003, 004, 010, 014
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-08, C-09, C-10, C-11, C-12, C-13, C-14
+- **Addresses:** Direct active-user decision on 2026-09-15 after `grip add home/ ~/` was correctly identified as transitively recursive but blocked a core dotfiles-management use case.
+- **Notes:** This feature flows forward from Features 002 and 003. It replaces their conservative same-mapping prospective-tree rejection only for a tree source that is a strict descendant of its destination, and replaces arbitrary destination-only enumeration with inspection bounded to current source membership and retained accepted identities. Existing cross-mapping ownership rejection remains authoritative. A newly discovered unsafe member blocks before mutation and may be excluded only through ordinary explicit source policy. Verified on 2026-09-15 by the no-finding debrief at `specs/025-contained-source-tree-mappings/roadmap-reviews/debrief-20260915T232753Z.md` (`PROCEED`; all verification gates passed).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -385,4 +396,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.10.4 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15
+**Version**: 1.11.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15

@@ -268,6 +268,7 @@ fn unsupported_filesystem_findings_have_safe_human_json_parity() {
         ),
         node_kind,
         reason: Some(reason),
+        relation: None,
         blocking: true,
     })
     .collect();

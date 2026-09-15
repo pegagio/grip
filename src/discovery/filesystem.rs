@@ -48,6 +48,11 @@ impl Directory {
         self.descriptor.as_fd()
     }
 
+    /// Consume this directory and return its already validated descriptor.
+    pub(crate) fn into_descriptor(self) -> OwnedFd {
+        self.descriptor
+    }
+
     /// Enumerate exact child names in deterministic raw-byte order.
     pub fn child_names(&self) -> io::Result<Vec<Vec<u8>>> {
         let mut directory = Dir::read_from(&self.descriptor).map_err(errno)?;

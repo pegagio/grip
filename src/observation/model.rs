@@ -181,6 +181,14 @@ pub enum Selection {
 }
 
 impl Selection {
+    pub fn mapping(&self) -> Option<&ResolvedMapping> {
+        match self {
+            Self::Mapping(mapping) => Some(mapping),
+            Self::Entry(identity) | Self::Subtree(identity) => Some(&identity.mapping),
+            Self::All | Self::Unmanaged(_) => None,
+        }
+    }
+
     pub fn includes(&self, identity: &EntryIdentity) -> bool {
         match self {
             Self::All => true,

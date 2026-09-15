@@ -19,7 +19,7 @@ pub fn inspect(
     accepted: &AcceptedState,
     selection: &Selection,
 ) -> Result<Observation, GripError> {
-    let inventory = crate::discovery::inspect(home, registry, None)?;
+    let inventory = crate::discovery::inspect(home, registry, accepted, None)?;
     let first = inspect_once(&registry.registry, accepted, selection, &inventory)?;
     let second = inspect_once(&registry.registry, accepted, selection, &inventory)?;
     crate::registry::publication::revalidate_readonly(home, registry, "classification")?;
@@ -44,8 +44,13 @@ pub fn inspect_candidate(
     accepted: &AcceptedState,
     selection: &Selection,
 ) -> Result<Observation, GripError> {
-    let inventory =
-        crate::discovery::inspect_candidate(home, candidate, candidate_descriptor_bytes, expected)?;
+    let inventory = crate::discovery::inspect_candidate(
+        home,
+        candidate,
+        candidate_descriptor_bytes,
+        expected,
+        accepted,
+    )?;
     let first = inspect_once(candidate, accepted, selection, &inventory)?;
     let second = inspect_once(candidate, accepted, selection, &inventory)?;
     crate::registry::publication::revalidate_readonly(home, expected, "classification")?;
@@ -73,6 +78,7 @@ fn inspect_once(
         .collect();
     let mut observed = Observation::new();
     let mut relative_inspectors = BTreeMap::new();
+    let mut complete_inspectors = BTreeMap::new();
 
     for mapping in registry.mappings() {
         if mapping.kind == MappingKind::File
@@ -146,34 +152,29 @@ fn inspect_once(
         match record.category {
             RecordCategory::Eligible => {
                 entry.membership = Membership::Active;
-                entry.source_complete = inspect_complete_identity(&identity, true)?;
-                entry.destination_complete = inspect_complete_identity(&identity, false)?;
-                if let Some(complete) = &entry.source_complete {
-                    let (state, diagnostic) = legacy_from_complete(complete);
-                    entry.source = Some(state);
-                    entry.source_diagnostic = Some(diagnostic);
-                }
-                if let Some(complete) = &entry.destination_complete {
-                    let (state, diagnostic) = legacy_from_complete(complete);
-                    entry.destination = Some(state);
-                    entry.destination_diagnostic = Some(diagnostic);
-                }
+                observe_complete_identity(entry, true, record.node_kind, &mut complete_inspectors)?;
+                observe_complete_identity(
+                    entry,
+                    false,
+                    record.node_kind,
+                    &mut complete_inspectors,
+                )?;
             }
             RecordCategory::Ignored => {
                 entry.membership = Membership::Ignored;
                 if accepted.complete_baselines.contains_key(&identity) {
-                    entry.source_complete = inspect_complete_identity(&identity, true)?;
-                    entry.destination_complete = inspect_complete_identity(&identity, false)?;
-                    if let Some(complete) = &entry.source_complete {
-                        let (state, diagnostic) = legacy_from_complete(complete);
-                        entry.source = Some(state);
-                        entry.source_diagnostic = Some(diagnostic);
-                    }
-                    if let Some(complete) = &entry.destination_complete {
-                        let (state, diagnostic) = legacy_from_complete(complete);
-                        entry.destination = Some(state);
-                        entry.destination_diagnostic = Some(diagnostic);
-                    }
+                    observe_complete_identity(
+                        entry,
+                        true,
+                        record.node_kind,
+                        &mut complete_inspectors,
+                    )?;
+                    observe_complete_identity(
+                        entry,
+                        false,
+                        record.node_kind,
+                        &mut complete_inspectors,
+                    )?;
                 }
             }
             RecordCategory::DestinationOnly => {
@@ -181,12 +182,12 @@ fn inspect_once(
                     entry.membership = Membership::DestinationOnly;
                 }
                 if matches!(record.node_kind, NodeKind::File | NodeKind::Directory) {
-                    entry.destination_complete = inspect_complete_identity(&identity, false)?;
-                    if let Some(complete) = &entry.destination_complete {
-                        let (state, diagnostic) = legacy_from_complete(complete);
-                        entry.destination = Some(state);
-                        entry.destination_diagnostic = Some(diagnostic);
-                    }
+                    observe_complete_identity(
+                        entry,
+                        false,
+                        record.node_kind,
+                        &mut complete_inspectors,
+                    )?;
                 }
             }
             RecordCategory::UnsupportedSource => {
@@ -201,6 +202,9 @@ fn inspect_once(
                     "destination:{}",
                     record.reason.unwrap_or("wrong_node_kind")
                 ));
+                if let Some(relation) = record.relation {
+                    entry.unsupported.push(format!("relation:{relation}"));
+                }
             }
         }
     }
@@ -262,8 +266,14 @@ fn inspect_once(
         };
         append_ownership_findings(entry)?;
     }
+    let selected_mapping = selection.mapping().cloned();
     observed.retain(|identity, entry| {
-        selection.includes(identity)
+        let selected_recursive_blocker = selected_mapping.as_ref() == Some(&identity.mapping)
+            && entry
+                .unsupported
+                .iter()
+                .any(|reason| reason == "destination:recursive_member_topology");
+        (selection.includes(identity) || selected_recursive_blocker)
             && !(matches!(selection, Selection::All | Selection::Mapping(_))
                 && entry.membership == Membership::Ignored
                 && !accepted.complete_baselines.contains_key(identity))
@@ -586,16 +596,78 @@ fn inspect_complete_supported(
     fingerprint::inspect_complete(path, kind).map(Some)
 }
 
-fn inspect_complete_identity(
-    identity: &EntryIdentity,
+fn observe_complete_identity(
+    entry: &mut ObservedEntry,
     source: bool,
-) -> Result<Option<model::CompleteObservedState>, GripError> {
-    let path = if source {
-        identity.source_path()
+    expected_kind: NodeKind,
+    inspectors: &mut BTreeMap<(ResolvedMapping, bool), Option<fingerprint::RelativeInspector>>,
+) -> Result<(), GripError> {
+    let identity = &entry.identity;
+    let outcome = if identity.mapping.kind == MappingKind::Tree {
+        let root = if source {
+            &identity.mapping.source
+        } else {
+            &identity.mapping.destination
+        };
+        let inspector = match inspectors.entry((identity.mapping.clone(), source)) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let value = match crate::discovery::filesystem::metadata_at_path(root) {
+                    Ok(_) => Some(fingerprint::RelativeInspector::open(root)?),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        return Err(GripError::from_io(
+                            "could not inspect mapped tree root",
+                            error,
+                        ));
+                    }
+                };
+                entry.insert(value)
+            }
+        };
+        match inspector {
+            Some(inspector) => {
+                inspector.inspect_complete(&identity.relative_path, expected_kind)?
+            }
+            None => fingerprint::RelativeCompleteObservation::Missing,
+        }
     } else {
-        identity.destination_path()
+        let path = if source {
+            identity.source_path()
+        } else {
+            identity.destination_path()
+        };
+        match inspect_complete_supported(&path)? {
+            Some(complete) => {
+                fingerprint::RelativeCompleteObservation::Supported(Box::new(complete))
+            }
+            None => fingerprint::RelativeCompleteObservation::Missing,
+        }
     };
-    inspect_complete_supported(&path)
+    match outcome {
+        fingerprint::RelativeCompleteObservation::Missing => {}
+        fingerprint::RelativeCompleteObservation::Supported(complete) => {
+            let (state, diagnostic) = legacy_from_complete(&complete);
+            if source {
+                entry.source = Some(state);
+                entry.source_diagnostic = Some(diagnostic);
+                entry.source_complete = Some(*complete);
+            } else {
+                entry.destination = Some(state);
+                entry.destination_diagnostic = Some(diagnostic);
+                entry.destination_complete = Some(*complete);
+            }
+        }
+        fingerprint::RelativeCompleteObservation::Blocking { reason } => {
+            entry.blocking = true;
+            entry.unsupported.push(if source {
+                reason.into()
+            } else {
+                format!("destination:{reason}")
+            });
+        }
+    }
+    Ok(())
 }
 
 fn inspect_identity(
@@ -661,6 +733,7 @@ mod tests {
                 destination_path: SafePath::from_path(std::path::Path::new("/destination/file")),
                 node_kind: NodeKind::File,
                 reason: None,
+                relation: None,
                 blocking: false,
             }],
         )

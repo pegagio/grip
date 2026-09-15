@@ -1768,6 +1768,14 @@ fn render_human_conflict_guidance(
 }
 
 fn classification_blocker_message(record: &Value) -> &'static str {
+    let reasons = record.get("reasons").and_then(Value::as_array);
+    if reasons.is_some_and(|reasons| {
+        reasons
+            .iter()
+            .any(|reason| reason == "destination:recursive_member_topology")
+    }) {
+        return "Grip cannot manage this recursive member because its destination intersects the mapping source. Exclude the member explicitly with .gripignore if it should remain unmanaged.";
+    }
     if record
         .get("reasons")
         .and_then(Value::as_array)

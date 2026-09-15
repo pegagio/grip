@@ -69,7 +69,7 @@ fn one_conflict_blocks_the_complete_mixed_plan() {
 }
 
 #[test]
-fn unmanaged_destination_content_remains_a_non_action() {
+fn unmanaged_destination_content_is_outside_the_plan() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
@@ -93,10 +93,11 @@ fn unmanaged_destination_content_remains_a_non_action() {
         .as_array()
         .unwrap()
         .clone();
-    assert!(entries.iter().any(|entry| {
-        entry["classification"] == "destination_only_unmanaged"
-            && entry["disposition"] == "no_action"
-    }));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| { entry["relative_path"]["display"] != "unmanaged" })
+    );
     assert!(!source.join("unmanaged").exists());
 }
 

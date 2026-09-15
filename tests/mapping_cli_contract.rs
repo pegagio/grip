@@ -549,9 +549,10 @@ fn add_of_a_mixed_tree_uses_destination_state_only_for_managed_unequal_members()
             .iter()
             .all(|record| record["relative_path"]["display"] != "ignored.txt")
     );
-    assert_eq!(
-        classification("destination-only.txt"),
-        "destination_only_unmanaged"
+    assert!(
+        records
+            .iter()
+            .all(|record| record["relative_path"]["display"] != "destination-only.txt")
     );
 }
 

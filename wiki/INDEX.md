@@ -15,20 +15,21 @@ page files, not here.
 - [Git-inspired command hierarchy](./pages/git-inspired-command-hierarchy.md)
 - [Implementation and delivery direction](./pages/implementation-and-delivery-direction.md)
 - [Proportional engineering rigor](./pages/proportional-engineering-rigor.md)
-- [Safety and recovery model](./pages/safety-and-recovery-model.md)
+- [Safety model and recovery boundary](./pages/safety-and-recovery-model.md)
 - [Spec evolution and merge-bounded persistence](./pages/spec-evolution-and-merge-bounded-persistence.md)
 
 ## Components
 
-- [Baseline classification and status](./pages/baseline-classification-and-status.md)
+- [Absence, removal, and recovery boundaries](./pages/deletion-retirement-and-recovery.md)
+- [Baselines, classification, and status](./pages/baseline-classification-and-status.md)
 - [Command-line and path selection](./pages/command-line-and-path-selection.md)
 - [Configuration and state](./pages/configuration-and-state.md)
-- [Deletion, retirement, and recovery](./pages/deletion-retirement-and-recovery.md)
-- [Mapping registry publication](./pages/mapping-registry-publication.md)
+- [Contained-source tree mappings](./pages/contained-source-tree-mappings.md)
+- [Force mapping replacement](./pages/force-mapping-replacement.md)
 - [Large-file observation performance](./pages/large-file-observation-performance.md)
 - [Local artifact release preparation](./pages/local-artifact-release-preparation.md)
 - [Mapping addition and initial baselines](./pages/mapping-addition-and-initial-baselines.md)
-- [Force mapping replacement](./pages/force-mapping-replacement.md)
+- [Mapping registry publication](./pages/mapping-registry-publication.md)
 - [Metadata and filesystem contract](./pages/metadata-and-filesystem-contract.md)
 - [Synchronization and conflicts](./pages/synchronization-and-conflicts.md)
 
@@ -37,6 +38,7 @@ page files, not here.
 - [Filesystem support boundaries](./pages/filesystem-support-boundaries.md)
 - [Initial delivery roadmap](./pages/initial-delivery-roadmap.md)
 - [Initial delivery roadmap later features](./pages/initial-delivery-roadmap-later-features.md)
+- [Initial delivery roadmap recent features](./pages/initial-delivery-roadmap-recent-features.md)
 - [Roadmap open questions](./pages/roadmap-open-questions.md)
 
 ## How-tos

@@ -61,6 +61,10 @@ Mapped:
 
 For a tree mapping, Grip discovers ordinary non-ignored source entries on every inspection. Source-side `.gripignore` files use Gitignore-compatible rules. The project metadata directory `.grip` is structurally reserved and is never mapping payload, even if ignore rules attempt to re-include it.
 
+A tree source may be strictly beneath its own destination root, which supports a dotfiles repository layout such as `grip add home/ ~/`. Grip inspects only current non-ignored source members and retained accepted identities at their exact paired destination paths; it does not enumerate unrelated home content. Equal roots, destinations beneath their source, contained file mappings, and ownership overlap between mappings remain invalid.
+
+For a contained-source tree, each managed relative path must be disjoint from the destination-relative path that locates the source tree. If a managed member equals, contains, or falls beneath that path, Grip blocks with `recursive_member_topology` and reports the relation. This blocker cannot be forced or bypassed with an exact selector. If the subtree is intentionally unmanaged, exclude it explicitly in the source tree's `.gripignore`.
+
 ## Inspect and synchronize
 
 ```sh

@@ -43,20 +43,32 @@ pub fn assess(
             continue;
         }
         let relative = decode_v4_identity_path(&identity.relative_path_hex)?;
-        let source = append_raw(
-            &identity.mapping.source.resolve(home.project_root()?),
-            &relative,
-        );
+        let source_root = identity.mapping.source.resolve(home.project_root()?);
         let destination_home = home.destination_home().ok_or_else(|| {
             GripError::InvalidConfiguration("project destination home is unavailable".into())
         })?;
-        let destination = append_raw(
-            &identity
-                .mapping
-                .destination
-                .resolve(home.project_root()?, destination_home),
-            &relative,
+        let destination_root = identity
+            .mapping
+            .destination
+            .resolve(home.project_root()?, destination_home);
+        let resolved = crate::mapping::Mapping::new(
+            identity.mapping.kind,
+            source_root.clone(),
+            destination_root.clone(),
         );
+        if let Some(prefix) = crate::mapping::contained_source_prefix(&resolved) {
+            let relation = crate::mapping::managed_member_relation(&relative, &prefix);
+            if relation.is_recursive() {
+                blockers.push(format!(
+                    "recursive_member_topology:{}:{}",
+                    crate::discovery::model::SafePath::from_bytes(&relative).display,
+                    relation.as_str()
+                ));
+                continue;
+            }
+        }
+        let source = append_raw(&source_root, &relative);
+        let destination = append_raw(&destination_root, &relative);
         for (role, path) in [("source", source), ("destination", destination)] {
             match crate::observation::fingerprint::inspect_complete(&path, accepted.node_kind) {
                 Ok(observed)

@@ -329,3 +329,55 @@ fn warm_release_commands_meet_p95_targets() {
     assert!(help.p95 <= Duration::from_millis(100));
     assert!(version.p95 <= Duration::from_millis(100));
 }
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[test]
+#[ignore = "contained-home representative-workstation acceptance harness"]
+fn contained_home_status_is_bounded_by_managed_identity_count() {
+    const STATUS_SAMPLES: usize = 100;
+    let binary = release_binary();
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let home = root.path().join("home");
+    let project = home.join("dotfiles");
+    let source = project.join("home");
+    fs::create_dir_all(&source).unwrap();
+    let _metadata = support::initialize_project_metadata(&project);
+    for index in 0..100 {
+        fs::write(
+            source.join(format!("managed-{index:03}")),
+            index.to_string(),
+        )
+        .unwrap();
+    }
+    let unrelated = home.join("unrelated");
+    fs::create_dir(&unrelated).unwrap();
+    for index in 0..10_000 {
+        fs::write(unrelated.join(format!("item-{index:05}")), b"").unwrap();
+    }
+    let add = Command::new(&binary)
+        .env_clear()
+        .env("HOME", &home)
+        .current_dir(&project)
+        .args(["add", "home/", "~/"])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let measured = measure_outputs("contained-home status", STATUS_SAMPLES, || {
+        Command::new(&binary)
+            .env_clear()
+            .env("HOME", &home)
+            .current_dir(&project)
+            .args(["--output=json", "status"])
+            .output()
+            .unwrap()
+    });
+    assert!(
+        measured.p95 <= Duration::from_secs(1),
+        "contained-home status p95 exceeded one second: {measured:?}"
+    );
+}

@@ -286,3 +286,32 @@ fn ambiguous_mapping_and_unsafe_ancestry_are_rejected_before_rebinding() {
         .unwrap();
     assert!(!output.status.success());
 }
+
+#[test]
+fn retained_identity_that_becomes_recursive_blocks_rebinding_before_probing() {
+    let fixture = ProjectFixture::initialized();
+    let source = fixture.project_root.join("home");
+    fs::create_dir_all(source.join("dotfiles/home")).unwrap();
+    fs::write(source.join("dotfiles/home/unsafe"), "accepted\n").unwrap();
+    assert!(fixture.command(&["add", "home/", "~/"]).status.success());
+    assert!(fixture.command(&["push"]).status.success());
+
+    let staged = fixture.copy_project("staged-contained-project");
+    let copied_home = fixture.root.path().join("copied-contained-home");
+    fs::create_dir(&copied_home).unwrap();
+    let copied_root = copied_home.join("dotfiles");
+    fs::rename(staged, &copied_root).unwrap();
+
+    let value = status_json(&fixture, &copied_root, &copied_home);
+    assert_eq!(value["details"]["project"]["state"], "rebind_blocked");
+    assert!(
+        value["details"]["project"]["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|blocker| blocker
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("recursive_member_topology:"))
+    );
+}

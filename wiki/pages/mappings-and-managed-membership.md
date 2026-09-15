@@ -1,8 +1,8 @@
 ---
 title: Mappings and managed membership
 type: concept
-sources: [S001, S015, S017, S020]
-updated: 2026-09-13
+sources: [S001, S004, S015, S017, S020, S025]
+updated: 2026-09-15
 ---
 
 # Mappings and managed membership
@@ -17,4 +17,8 @@ Ownership and topology validation apply after destination resolution, so distinc
 
 Tree membership comes from source-side discovery subject to `.gripignore`. Operators edit `.gripignore` directly; Grip provides no `ignore` command. (S001)
 
+A tree source may be strictly beneath its own destination root, enabling `grip add home/ ~/` when the project is stored under that home. Grip examines only current non-ignored source members and retained accepted identities at their exact paired destination paths; unrelated destination content is outside inventory and ownership. A managed member that equals, contains, or falls beneath the destination-relative source location blocks as `recursive_member_topology`; an intentionally unmanaged unsafe subtree must be excluded explicitly through `.gripignore`. Equal roots, destinations beneath their source, contained file mappings, and cross-mapping ownership overlap remain invalid. (S001) (S004) (S025)
+
 See [Mapping addition and initial baselines](./mapping-addition-and-initial-baselines.md) for the unequal-endpoint and fenced-publication contract.
+
+See [Contained-source tree mappings](./contained-source-tree-mappings.md) for the managed-identity inspection boundary, member-topology rule, and revalidation contract.

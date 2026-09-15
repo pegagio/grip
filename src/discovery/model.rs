@@ -140,6 +140,9 @@ pub enum NodeKind {
     NestedMount,
 }
 
+/// Ephemeral, canonical set of non-root managed identities for one tree inspection.
+pub type ManagedIdentitySet = BTreeMap<Vec<u8>, NodeKind>;
+
 /// One classified source, ignored, overlay, or collision path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiscoveryRecord {
@@ -154,6 +157,8 @@ pub struct DiscoveryRecord {
     pub node_kind: NodeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relation: Option<&'static str>,
     pub blocking: bool,
 }
 
@@ -278,6 +283,7 @@ mod tests {
             destination_path: relative,
             node_kind: NodeKind::File,
             reason: None,
+            relation: None,
             blocking,
         }
     }

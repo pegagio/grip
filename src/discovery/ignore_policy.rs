@@ -14,6 +14,27 @@ use std::path::Path;
 const POLICY_NAME: &[u8] = b".gripignore";
 const OPERATION: &str = "mapping_inspect";
 
+/// Pruned directory prefixes that cover retained identities without opening their descendants.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RetainedIgnoredPrefixes(Vec<Vec<u8>>);
+
+impl RetainedIgnoredPrefixes {
+    pub fn new(mut prefixes: Vec<Vec<u8>>) -> Self {
+        prefixes.sort();
+        prefixes.dedup();
+        Self(prefixes)
+    }
+
+    pub fn covers(&self, relative: &[u8]) -> bool {
+        self.0.iter().any(|prefix| {
+            relative == prefix
+                || relative
+                    .strip_prefix(prefix.as_slice())
+                    .is_some_and(|suffix| suffix.first() == Some(&b'/'))
+        })
+    }
+}
+
 /// One compiled policy document scoped to its containing source directory.
 #[derive(Clone, Debug)]
 pub struct GripignorePolicy {
