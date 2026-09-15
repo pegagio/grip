@@ -251,3 +251,142 @@ fn cli_push_creates_nested_tree_directories_in_dependency_order() {
     assert_eq!(actions[1]["dependencies"], serde_json::json!([0]));
     assert_eq!(actions[2]["dependencies"], serde_json::json!([1]));
 }
+
+#[test]
+fn forced_push_restores_only_the_selected_missing_tree_destination() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("restored"), "accepted").unwrap();
+    fs::write(source.join("sibling"), "sibling").unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+
+    fs::remove_file(destination.join("restored")).unwrap();
+    fs::write(source.join("restored"), "source winner").unwrap();
+    let ordinary = support::project_command(root.path(), &metadata_dir, &["push"]);
+    assert!(!ordinary.status.success());
+
+    let preview = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "push",
+            "--force",
+            "--dry-run",
+            "source-tree/restored",
+        ],
+    );
+    assert!(preview.status.success());
+    assert_eq!(
+        support::json(&preview)["details"]["actions"][0]["kind"],
+        "add_file"
+    );
+    assert!(!destination.join("restored").exists());
+
+    let restored = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "source-tree/restored"],
+    );
+    assert!(
+        restored.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&restored.stdout),
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("restored")).unwrap(),
+        "source winner"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("sibling")).unwrap(),
+        "sibling"
+    );
+    let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
+    assert_eq!(support::json(&status)["details"]["attention_count"], 0);
+}
+
+#[test]
+fn forced_push_with_a_missing_source_winner_deletes_the_destination() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "accepted").unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+
+    fs::remove_file(&source).unwrap();
+    let deleted =
+        support::project_command(root.path(), &metadata_dir, &["push", "--force", "source"]);
+    assert!(
+        deleted.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&deleted.stdout),
+        String::from_utf8_lossy(&deleted.stderr)
+    );
+    assert!(!destination.exists());
+}
+
+#[test]
+fn forced_push_restores_a_missing_file_destination() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "accepted").unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+
+    fs::remove_file(&destination).unwrap();
+    let restored =
+        support::project_command(root.path(), &metadata_dir, &["push", "--force", "source"]);
+    assert!(restored.status.success());
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "accepted");
+}
+
+#[test]
+fn forced_push_restores_a_missing_mapped_directory() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(source.join("nested")).unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+
+    fs::remove_dir(destination.join("nested")).unwrap();
+    let restored = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "source-tree/nested"],
+    );
+    assert!(
+        restored.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&restored.stdout),
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    assert!(fs::metadata(destination.join("nested")).unwrap().is_dir());
+}

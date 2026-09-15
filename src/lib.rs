@@ -855,7 +855,11 @@ fn force_resolution_guidance(
         .map(|blocker| {
             if !matches!(
                 blocker.reason.as_str(),
-                "initial_collision" | "divergent_change"
+                "initial_collision"
+                    | "divergent_change"
+                    | "one_sided_absence_requires_force"
+                    | "delete_change_conflict"
+                    | "change_delete_conflict"
             ) || blocker.paths.len() < 2
             {
                 return None;
@@ -881,6 +885,10 @@ fn is_ordinary_force_conflict(
         classification,
         classification::model::Classification::InitialCollision
             | classification::model::Classification::DivergentConflict
+            | classification::model::Classification::SourceSideDeletion
+            | classification::model::Classification::DestinationSideDeletion
+            | classification::model::Classification::DeleteChangeConflict
+            | classification::model::Classification::ChangeDeleteConflict
     ) && !findings.iter().any(|finding| finding.blocking)
 }
 

@@ -1,17 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.8.4 -> 1.8.5
-Bump rationale: Record independent verification of the implemented Feature 022 outcome.
+Version change: 1.8.8 -> 1.8.9
+Bump rationale: Mark Feature 023 verified after its no-finding roadmap debrief.
 
 Changes this revision:
-  - Transitioned Feature 022 from `in-progress` to `verified`
-  - Recorded its no-finding implementation debrief as verification evidence
+  - Transitioned Feature 023 from `specced` to `in-progress`
+  - Recorded the no-finding pre-implementation roadmap brief
+  - Marked Feature 023 `verified` after the post-implementation debrief
 
-Specs affected: 022
+Specs affected: 023
 Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-14 to transition the completed Feature 022 after its no-finding roadmap debrief.
+Notes: Direct active-user authorization on 2026-09-14 to correct the reproduced forced tree-entry restoration failure without rewriting Feature 011 history. The Feature 023 brief found no outcome, scope, constraint, dependency, or status drift.
 -->
 
 # Grip — Spec Roadmap
@@ -318,6 +319,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-10, C-11, C-12, C-13, C-14
 - **Addresses:** Direct active-user decision on 2026-09-14, supported by the reported rejected command `grip add target/release/grip ~/.local/bin/grip` against an existing `target/debug/grip` mapping to the same destination and a request that re-adding after removal of that exact mapping must not require force.
 - **Notes:** The completed specification selects `grip add --force` as explicit confirmation and limits initial delivery to one exact equal-destination file mapping. Tree, source-overlap, nested, and multi-mapping conflicts remain rejected. It requires all-or-nothing displaced-mapping retirement, current-evidence handling, and ordinary re-addition after exact removal. The reported transcript removes `target/debug/mise` while `grip status` still shows `target/debug/grip`; removal of a different mapping therefore cannot clear the active `grip` conflict. Verified on 2026-09-14 by the no-finding debrief at `specs/022-force-mapping-replacement/roadmap-reviews/debrief-20260914T182235Z.md`.
+
+### 023 — Forced Missing-Peer Restoration  [status: verified]
+
+- **Spec dir:** `specs/023-force-missing-peer-restoration`
+- **Description:** Repair exact forced directional synchronization when the chosen winner exists but its peer is missing.
+- **Outcome:** An operator can use `grip push --force` on one exact managed entry to restore a missing destination from its present source, or `grip pull --force` to restore a missing source from its present destination. Existing forced propagation of a chosen absent winner remains unchanged.
+- **Scope (in):** Exact selected file and tree-entry restoration in both directions; dry-run and execution behavior; baseline refresh; accurate one-sided-absence human guidance; documentation; and isolated regression coverage.
+- **Scope (out):** Aggregate force; selector-interpretation changes; automatic conflict resolution; mapping changes; user-facing history or recovery; new storage; and changes to unrelated synchronization semantics.
+- **Depends on:** 011, 019
+- **Governed by:** C-02, C-03, C-04, C-05, C-07, C-10, C-11, C-12
+- **Addresses:** Direct active-user authorization on 2026-09-14 after reproducing that `grip push --force` rejects an exact tree entry whose destination was removed despite the source remaining authoritative.
+- **Notes:** This is a forward-flowing correction to the verified Feature 011 forced-direction contract. It preserves force's exact-entry boundary and existing absent-winner deletion behavior. The pre-implementation review at `specs/023-force-missing-peer-restoration/roadmap-reviews/brief-20260914T234222Z.md` and post-implementation debrief at `specs/023-force-missing-peer-restoration/roadmap-reviews/debrief-20260914T235956Z.md` returned `PROCEED` with no findings.
 
 ## Open Questions
 

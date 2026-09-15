@@ -438,12 +438,42 @@ pub fn publish_complete_locked_with_fault(
     >,
     fault: Option<PublicationFault>,
 ) -> Result<Option<u64>, GripError> {
+    publish_complete_locked_with_fault_mode(home, expected, next_baselines, fault, false)
+}
+
+/// Publish accepted evidence after an action-bearing mutation, even when its baseline bytes are
+/// unchanged because the action repaired a missing peer from already accepted state.
+pub fn publish_complete_after_action_locked_with_fault(
+    home: &ProjectPaths,
+    expected: &StateSnapshot,
+    next_baselines: &std::collections::BTreeMap<
+        crate::observation::model::EntryIdentity,
+        crate::metadata::model::SupportedEntryStateV3,
+    >,
+    fault: Option<PublicationFault>,
+) -> Result<u64, GripError> {
+    publish_complete_locked_with_fault_mode(home, expected, next_baselines, fault, true)?.ok_or(
+        GripError::Internal("action-bearing mutation published no accepted generation".into()),
+    )
+}
+
+fn publish_complete_locked_with_fault_mode(
+    home: &ProjectPaths,
+    expected: &StateSnapshot,
+    next_baselines: &std::collections::BTreeMap<
+        crate::observation::model::EntryIdentity,
+        crate::metadata::model::SupportedEntryStateV3,
+    >,
+    fault: Option<PublicationFault>,
+    force_generation: bool,
+) -> Result<Option<u64>, GripError> {
     revalidate(home, expected)?;
     if expected
         .complete
         .as_ref()
         .is_some_and(|state| &state.baselines == next_baselines)
         && expected.rebinding.outcome != crate::result::RebindingOutcome::RebindEligible
+        && !force_generation
     {
         return Ok(None);
     }

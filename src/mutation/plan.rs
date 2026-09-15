@@ -211,6 +211,13 @@ fn build_with_parents(
                         .is_some_and(|(origin, target)| {
                             origin.node_kind == target.node_kind && origin.content == target.content
                         });
+                    let restoring_missing_destination = operation == MutationOperation::Resolve
+                        && winner == Some(ConflictWinner::Source)
+                        && matches!(
+                            record.classification,
+                            Classification::DestinationSideDeletion
+                                | Classification::ChangeDeleteConflict
+                        );
                     let kind = match (record.classification, complete_kind) {
                         (Classification::SourceAddition, NodeKind::Directory) => {
                             ActionKind::CreateDirectory
@@ -225,6 +232,16 @@ fn build_with_parents(
                         (Classification::SourceOnlyChange, NodeKind::Directory) => {
                             ActionKind::FinalizeDirectoryMetadata
                         }
+                        (
+                            Classification::DestinationSideDeletion
+                            | Classification::ChangeDeleteConflict,
+                            NodeKind::File,
+                        ) if restoring_missing_destination => ActionKind::AddFile,
+                        (
+                            Classification::DestinationSideDeletion
+                            | Classification::ChangeDeleteConflict,
+                            NodeKind::Directory,
+                        ) if restoring_missing_destination => ActionKind::CreateDirectory,
                         (
                             Classification::InitialCollision
                             | Classification::DivergentConflict
@@ -269,7 +286,18 @@ fn build_with_parents(
                         .is_some_and(|(target, origin)| {
                             origin.node_kind == target.node_kind && origin.content == target.content
                         });
+                    let restoring_missing_source = operation == MutationOperation::Resolve
+                        && winner == Some(ConflictWinner::Destination)
+                        && matches!(
+                            record.classification,
+                            Classification::SourceSideDeletion
+                                | Classification::DeleteChangeConflict
+                        );
                     let kind = match complete_kind {
+                        NodeKind::File if restoring_missing_source => ActionKind::AddFile,
+                        NodeKind::Directory if restoring_missing_source => {
+                            ActionKind::CreateDirectory
+                        }
                         NodeKind::File if metadata_only => ActionKind::ApplyMetadata,
                         NodeKind::File => ActionKind::ReplaceFile,
                         NodeKind::Directory => ActionKind::FinalizeDirectoryMetadata,
@@ -291,7 +319,7 @@ fn build_with_parents(
                 identity: Some(record.identity.clone()),
                 dependent_identities: Vec::new(),
                 source_path: Some(record.source_path.clone()),
-                destination: target,
+                destination: target.clone(),
                 destination_path: record.destination_path.clone(),
                 expected_source: record.source.clone(),
                 expected_destination: record.destination.clone(),
@@ -309,8 +337,12 @@ fn build_with_parents(
                 finalizers.push(finalizer);
                 action_indexes.clear();
             }
+            let expected_after = match direction {
+                MutationDirection::Push => record.source_complete.clone(),
+                MutationDirection::Pull => record.destination_complete.clone(),
+            };
             if kind == ActionKind::CreateDirectory
-                && let Some(expected_after) = record.source_complete.clone()
+                && let Some(expected_after) = expected_after
             {
                 finalizers.push(MutationAction {
                     index: usize::MAX,
@@ -319,10 +351,10 @@ fn build_with_parents(
                     identity: Some(record.identity.clone()),
                     dependent_identities: Vec::new(),
                     source_path: Some(record.source_path.clone()),
-                    destination: record.identity.destination_path(),
+                    destination: target,
                     destination_path: record.destination_path.clone(),
                     expected_source: record.source.clone(),
-                    expected_destination: None,
+                    expected_destination: record.destination.clone(),
                     metadata: Some(crate::mutation::model::MetadataActionEvidence {
                         expected_before: None,
                         expected_after,
@@ -677,20 +709,35 @@ pub fn disposition_for_operation(
             }
         }
         MutationOperation::Resolve => {
-            if winner.is_some()
-                && matches!(
-                    classification,
-                    Classification::InitialCollision
-                        | Classification::DivergentConflict
-                        | Classification::MetadataMigrationConflict
-                )
-            {
+            if winner.is_some_and(|winner| resolution_is_actionable(winner, classification)) {
                 Disposition::Action
             } else {
                 Disposition::Blocked
             }
         }
     }
+}
+
+/// Whether an exact forced winner can safely resolve this classification.
+pub(crate) fn resolution_is_actionable(
+    winner: ConflictWinner,
+    classification: Classification,
+) -> bool {
+    matches!(
+        classification,
+        Classification::InitialCollision
+            | Classification::DivergentConflict
+            | Classification::MetadataMigrationConflict
+    ) || matches!(
+        (winner, classification),
+        (
+            ConflictWinner::Source,
+            Classification::DestinationSideDeletion | Classification::ChangeDeleteConflict
+        ) | (
+            ConflictWinner::Destination,
+            Classification::SourceSideDeletion | Classification::DeleteChangeConflict
+        )
+    )
 }
 
 fn action_direction(
@@ -846,7 +893,20 @@ mod tests {
                     classification,
                     true,
                 ),
-                if matches!(classification, InitialCollision | DivergentConflict) {
+                if resolution_is_actionable(ConflictWinner::Source, classification) {
+                    Disposition::Action
+                } else {
+                    Disposition::Blocked
+                }
+            );
+            assert_eq!(
+                disposition_for_operation(
+                    MutationOperation::Resolve,
+                    Some(ConflictWinner::Destination),
+                    classification,
+                    true,
+                ),
+                if resolution_is_actionable(ConflictWinner::Destination, classification) {
                     Disposition::Action
                 } else {
                     Disposition::Blocked

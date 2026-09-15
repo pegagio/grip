@@ -470,89 +470,80 @@ where
     if let Err(error) = fault(crate::mutation::FaultPhase::BeforeBaselinePublication) {
         return terminal_baseline_failure(receipt, plan, &locked_state, error, false, None);
     }
-    let generation = match crate::state::publication::publish_complete_locked_with_fault(
-        home,
-        &locked_state,
-        &candidate.next.complete_baselines,
-        state_fault,
-    ) {
-        Ok(Some(generation)) => generation,
-        Ok(None) => {
-            return terminal_baseline_failure(
-                receipt,
-                plan,
-                &locked_state,
-                GripError::Internal("actionful mutation published no accepted generation".into()),
-                false,
-                None,
-            );
-        }
-        Err(error) => {
-            let publication_visible = matches!(
-                &error,
-                GripError::Mapping {
-                    publication_visible: true,
-                    ..
-                }
-            );
-            let candidate_generation = locked_state
-                .accepted
-                .generation
-                .map_or(Some(0), |value| value.checked_add(1));
-            let baseline = crate::mutation::model::BaselineOutcome {
-                outcome: if publication_visible {
-                    "publication_failed".into()
-                } else {
-                    "not_published".into()
-                },
-                prior_generation: locked_state.accepted.generation,
-                published_generation: publication_visible
-                    .then_some(candidate_generation)
-                    .flatten(),
-                authoritative_generation: if publication_visible {
-                    candidate_generation
-                } else {
-                    locked_state.accepted.generation
-                },
-                publication_visible,
-                durability_confirmed: !publication_visible,
-            };
-            let reason = "baseline_publication_failure".to_owned();
-            let message = error.to_string();
-            plan.counts.completed = plan.actions.len();
-            plan.counts.unattempted = 0;
-            let _ = receipt.checkpoint_summary(
-                "failed",
-                serde_json::to_value(&baseline).expect("baseline outcome serializes"),
-                "prepared",
-                Some(reason.clone()),
-            );
-            return Err(mutation_failure(
-                operation,
-                crate::error::MutationFailure {
-                    operation_id: receipt.operation_id().to_owned(),
-                    plan,
-                    baseline,
-                    reason,
-                    phase: "baseline_publication".into(),
-                    paths: Vec::new(),
-                    failed_action_index: None,
-                    expected_source: None,
-                    expected_destination: None,
-                    observed_source: None,
-                    observed_destination: None,
-                    completion: if publication_visible {
-                        "failed"
-                    } else {
-                        "partial"
+    let generation =
+        match crate::state::publication::publish_complete_after_action_locked_with_fault(
+            home,
+            &locked_state,
+            &candidate.next.complete_baselines,
+            state_fault,
+        ) {
+            Ok(generation) => generation,
+            Err(error) => {
+                let publication_visible = matches!(
+                    &error,
+                    GripError::Mapping {
+                        publication_visible: true,
+                        ..
                     }
-                    .into(),
-                    category: error.category(),
-                    message,
-                },
-            ));
-        }
-    };
+                );
+                let candidate_generation = locked_state
+                    .accepted
+                    .generation
+                    .map_or(Some(0), |value| value.checked_add(1));
+                let baseline = crate::mutation::model::BaselineOutcome {
+                    outcome: if publication_visible {
+                        "publication_failed".into()
+                    } else {
+                        "not_published".into()
+                    },
+                    prior_generation: locked_state.accepted.generation,
+                    published_generation: publication_visible
+                        .then_some(candidate_generation)
+                        .flatten(),
+                    authoritative_generation: if publication_visible {
+                        candidate_generation
+                    } else {
+                        locked_state.accepted.generation
+                    },
+                    publication_visible,
+                    durability_confirmed: !publication_visible,
+                };
+                let reason = "baseline_publication_failure".to_owned();
+                let message = error.to_string();
+                plan.counts.completed = plan.actions.len();
+                plan.counts.unattempted = 0;
+                let _ = receipt.checkpoint_summary(
+                    "failed",
+                    serde_json::to_value(&baseline).expect("baseline outcome serializes"),
+                    "prepared",
+                    Some(reason.clone()),
+                );
+                return Err(mutation_failure(
+                    operation,
+                    crate::error::MutationFailure {
+                        operation_id: receipt.operation_id().to_owned(),
+                        plan,
+                        baseline,
+                        reason,
+                        phase: "baseline_publication".into(),
+                        paths: Vec::new(),
+                        failed_action_index: None,
+                        expected_source: None,
+                        expected_destination: None,
+                        observed_source: None,
+                        observed_destination: None,
+                        completion: if publication_visible {
+                            "failed"
+                        } else {
+                            "partial"
+                        }
+                        .into(),
+                        category: error.category(),
+                        message,
+                    },
+                ));
+            }
+        };
     if let Err(error) = fault(crate::mutation::FaultPhase::AfterBaselinePublication) {
         return terminal_baseline_failure(
             receipt,
@@ -709,7 +700,6 @@ fn revalidate_action(
         )
     })?;
     let record = classification::classify_accepted(entry, &state.accepted);
-    let source_matches = record.source == action.expected_source;
     let created_directory_finalizer = action.kind == ActionKind::FinalizeDirectoryMetadata
         && action
             .metadata
@@ -745,29 +735,45 @@ fn revalidate_action(
     } else {
         true
     };
-    let destination_matches = if created_directory_finalizer {
-        record.destination.as_ref().is_some_and(|destination| {
-            destination.node_kind == crate::discovery::model::NodeKind::Directory
-        }) && action.metadata.as_ref().is_some_and(|metadata| {
-            record.source_complete.as_ref() == Some(&metadata.expected_after)
-        })
+    let endpoint_matches = if created_directory_finalizer {
+        match action.direction {
+            MutationDirection::Push => {
+                record.source == action.expected_source
+                    && record.destination.as_ref().is_some_and(|destination| {
+                        destination.node_kind == crate::discovery::model::NodeKind::Directory
+                    })
+                    && action.metadata.as_ref().is_some_and(|metadata| {
+                        record.source_complete.as_ref() == Some(&metadata.expected_after)
+                    })
+            }
+            MutationDirection::Pull => {
+                record.destination == action.expected_destination
+                    && record.source.as_ref().is_some_and(|source| {
+                        source.node_kind == crate::discovery::model::NodeKind::Directory
+                    })
+                    && action.metadata.as_ref().is_some_and(|metadata| {
+                        record.destination_complete.as_ref() == Some(&metadata.expected_after)
+                    })
+            }
+        }
     } else {
-        record.destination == action.expected_destination
+        record.source == action.expected_source && record.destination == action.expected_destination
     };
     let classification_matches = operation != MutationOperation::Resolve
-        || matches!(
+        || created_directory_finalizer
+        || crate::mutation::plan::resolution_is_actionable(
+            match action.direction {
+                MutationDirection::Push => crate::mutation::model::ConflictWinner::Source,
+                MutationDirection::Pull => crate::mutation::model::ConflictWinner::Destination,
+            },
             record.classification,
-            crate::classification::model::Classification::InitialCollision
-                | crate::classification::model::Classification::DivergentConflict
-                | crate::classification::model::Classification::MetadataMigrationConflict
         );
     if record.blocking
         && operation != MutationOperation::Resolve
         && !created_directory_finalizer
         && !descendant_directory_finalizer
         || !classification_matches
-        || !source_matches
-        || !destination_matches
+        || !endpoint_matches
         || !complete_finalizer_matches
     {
         return Err(stale(

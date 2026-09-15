@@ -111,7 +111,7 @@ Needs baseline:
 
 Read-only commands and dry runs do not create `.grip/state`, acquire writer locks, publish operation evidence, or change payloads. An actual writer lazily creates owner-only project state, takes a bounded project-local mutation lock, repeats inspection and revalidation, stages and verifies each replacement, and publishes State V4 only after final verification.
 
-`remove` changes only Grip's declaration and baseline; it never changes either endpoint. Normal synchronization blocks one-sided absence. An exact forced `push` or `pull` is the explicit authority to choose a winner, including an absent winner. Use Git for history and recovery.
+`remove` changes only Grip's declaration and baseline; it never changes either endpoint. Normal synchronization blocks one-sided absence. An exact forced `push` or `pull` is the explicit authority to choose a winner: a present winner restores its missing peer, while a selected absent winner preserves the existing deletion behavior when the present peer is unchanged. Use Git for history and recovery.
 
 When `push`, `pull`, or `sync` is blocked by an exact initial collision or ordinary divergent conflict, its output lists the conflicting path and repeats the two force choices beneath it. An aggregate tree conflict instead gives `Run: grip diff SOURCE`; a technical or mixed blocker says `Run: grip status`, where the current detailed safety evidence remains available. The ordinary human result omits planner IDs, winner fields, baseline authority, and operation-record evidence; the blocked result and exit status remain unchanged until you explicitly resolve it.
 
