@@ -693,6 +693,17 @@ fn revalidate_action(
     let selected = Selection::Entry(identity.clone());
     let observed = crate::observation::inspect(home, &current_registry, &state.accepted, &selected)
         .map_err(|error| error.for_operation(operation_name))?;
+    if observed.values().any(|entry| {
+        entry
+            .unsupported
+            .iter()
+            .any(|reason| reason == "destination:recursive_member_topology")
+    }) {
+        return Err(stale(
+            operation,
+            "recursive member topology appeared during action revalidation",
+        ));
+    }
     let entry = observed.get(identity).ok_or_else(|| {
         stale(
             operation,

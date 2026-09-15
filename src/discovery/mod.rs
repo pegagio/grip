@@ -5,9 +5,10 @@ pub mod ignore_policy;
 pub mod model;
 
 use crate::error::GripError;
-use crate::mapping::{Mapping, MappingKind};
+use crate::mapping::{Mapping, MappingKind, contained_source_prefix, managed_member_relation};
 use crate::project::ProjectPaths;
 use crate::registry::publication::{self, RegistrySnapshot};
+use crate::state::AcceptedState;
 use filesystem::{Directory, evidence, metadata_at_path, unsupported_reason};
 use model::{
     DiscoveryInventory, DiscoveryPass, DiscoveryRecord, DiscoveryScope, EvidenceSide, NodeKind,
@@ -24,9 +25,10 @@ const OPERATION: &str = "mapping_inspect";
 pub fn inspect(
     home: &ProjectPaths,
     initial: &RegistrySnapshot,
+    accepted: &AcceptedState,
     selected_source: Option<PathBuf>,
 ) -> Result<DiscoveryInventory, GripError> {
-    inspect_with_between_pass(home, initial, selected_source, || {})
+    inspect_with_between_pass(home, initial, accepted, selected_source, || {})
 }
 
 /// Inspect a proposed registry without making its descriptor visible. The accepted descriptor is
@@ -37,16 +39,19 @@ pub fn inspect_candidate(
     candidate: &crate::registry::ResolvedRegistry,
     candidate_descriptor_bytes: &[u8],
     expected: &RegistrySnapshot,
+    accepted: &AcceptedState,
 ) -> Result<DiscoveryInventory, GripError> {
     let first = inspect_pass(
         candidate_descriptor_bytes,
         candidate.mappings().iter().collect::<Vec<_>>(),
         home.path(),
+        accepted,
     )?;
     let second = inspect_pass(
         candidate_descriptor_bytes,
         candidate.mappings().iter().collect::<Vec<_>>(),
         home.path(),
+        accepted,
     )?;
     publication::revalidate_readonly(home, expected, OPERATION)?;
     if first != second {
@@ -61,6 +66,7 @@ pub fn inspect_candidate(
 fn inspect_with_between_pass<F>(
     home: &ProjectPaths,
     initial: &RegistrySnapshot,
+    accepted: &AcceptedState,
     selected_source: Option<PathBuf>,
     between_passes: F,
 ) -> Result<DiscoveryInventory, GripError>
@@ -71,7 +77,7 @@ where
         .clone()
         .map_or(DiscoveryScope::All, DiscoveryScope::Mapping);
     let selected = select_mappings(initial, selected_source.as_deref())?;
-    let first = inspect_pass(&initial.bytes, selected, home.path())?;
+    let first = inspect_pass(&initial.bytes, selected, home.path(), accepted)?;
     between_passes();
 
     let current = publication::load(home, false).map_err(|error| {
@@ -87,7 +93,7 @@ where
         ));
     }
     let selected = select_mappings(&current, selected_source.as_deref())?;
-    let second = inspect_pass(&current.bytes, selected, home.path())?;
+    let second = inspect_pass(&current.bytes, selected, home.path(), accepted)?;
     publication::revalidate_readonly(home, initial, OPERATION)?;
     if first != second {
         return Err(stale(
@@ -126,6 +132,7 @@ fn inspect_pass(
     registry_bytes: &[u8],
     mappings: Vec<&Mapping>,
     reserved_metadata: &Path,
+    accepted: &AcceptedState,
 ) -> Result<DiscoveryPass, GripError> {
     let mut records = Vec::new();
     let mut node_evidence = BTreeMap::new();
@@ -143,7 +150,8 @@ fn inspect_pass(
                 &mut node_evidence,
                 &mut policy_evidence,
             )
-            .and_then(|()| inspect_tree_destination(mapping, &mut records, &mut node_evidence))?,
+            .and_then(|()| append_retained_identities(mapping, accepted, &mut records))
+            .and_then(|()| append_recursive_member_findings(mapping, &mut records))?,
         }
         append_name_compatibility_findings(mapping, &mut records)?;
     }
@@ -270,50 +278,90 @@ fn inspect_file_destination(
             destination_path: SafePath::from_path(&mapping.destination),
             node_kind: kind,
             reason: unsupported_reason(kind).or(Some("wrong_node_kind")),
+            relation: None,
             blocking: true,
         });
     }
     Ok(())
 }
 
-fn inspect_tree_destination(
+fn append_retained_identities(
+    mapping: &Mapping,
+    accepted: &AcceptedState,
+    records: &mut Vec<DiscoveryRecord>,
+) -> Result<(), GripError> {
+    let resolved = crate::observation::model::ResolvedMapping::from(mapping);
+    let ignored_prefixes = ignore_policy::RetainedIgnoredPrefixes::new(
+        records
+            .iter()
+            .filter(|record| {
+                record.mapping_source == mapping.source
+                    && record.category == RecordCategory::Ignored
+            })
+            .filter_map(|record| record.relative_path.as_ref())
+            .filter(|relative| {
+                relative.raw_bytes().is_empty()
+                    || record_is_directory(records, mapping, relative.raw_bytes())
+            })
+            .map(|relative| relative.raw_bytes().to_vec())
+            .collect::<Vec<_>>(),
+    );
+
+    for (identity, baseline) in &accepted.complete_baselines {
+        if identity.mapping != resolved || identity.relative_path.is_empty() {
+            continue;
+        }
+        if records.iter().any(|record| {
+            record.mapping_source == mapping.source
+                && record
+                    .relative_path
+                    .as_ref()
+                    .is_some_and(|path| path.raw_bytes() == identity.relative_path)
+        }) {
+            continue;
+        }
+        let ignored = ignored_prefixes.covers(&identity.relative_path);
+        let source_path = append_raw(&mapping.source, &identity.relative_path);
+        let destination_path = append_raw(&mapping.destination, &identity.relative_path);
+        records.push(DiscoveryRecord {
+            category: if ignored {
+                RecordCategory::Ignored
+            } else {
+                RecordCategory::Eligible
+            },
+            mapping_kind: mapping.kind,
+            mapping_source: mapping.source.clone(),
+            relative_path: Some(SafePath::from_bytes(&identity.relative_path)),
+            source_path: Some(SafePath::from_path(&source_path)),
+            destination_path: SafePath::from_path(&destination_path),
+            node_kind: baseline.node_kind,
+            reason: None,
+            relation: None,
+            blocking: false,
+        });
+    }
+    Ok(())
+}
+
+fn record_is_directory(records: &[DiscoveryRecord], mapping: &Mapping, relative: &[u8]) -> bool {
+    records.iter().any(|record| {
+        record.mapping_source == mapping.source
+            && record.node_kind == NodeKind::Directory
+            && record
+                .relative_path
+                .as_ref()
+                .is_some_and(|path| path.raw_bytes() == relative)
+    })
+}
+
+fn append_recursive_member_findings(
     mapping: &Mapping,
     records: &mut Vec<DiscoveryRecord>,
-    evidence_map: &mut BTreeMap<(EvidenceSide, PathBuf, Vec<u8>), model::NodeEvidence>,
 ) -> Result<(), GripError> {
-    let root_metadata = match metadata_at_path(&mapping.destination) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(unavailable(&mapping.destination, "path_unavailable", error)),
+    let Some(prefix) = contained_source_prefix(mapping) else {
+        return Ok(());
     };
-    if root_metadata.file_type() != rustix::fs::FileType::Directory {
-        return Err(unavailable(
-            &mapping.destination,
-            "path_unavailable",
-            std::io::Error::other("tree mapping destination root is not a directory"),
-        ));
-    }
-    let root = Directory::open(&mapping.destination)
-        .map_err(|error| unavailable(&mapping.destination, "directory_unreadable", error))?;
-    let root_device = root.root_metadata().st_dev as u64;
-    let names = root
-        .child_names()
-        .map_err(|error| unavailable(&mapping.destination, "directory_unreadable", error))?;
-    evidence_map.insert(
-        (
-            EvidenceSide::Destination,
-            mapping.source.clone(),
-            Vec::new(),
-        ),
-        evidence(
-            &root_metadata,
-            EvidenceSide::Destination,
-            &mapping.source,
-            &[],
-            Some(names.clone()),
-        ),
-    );
-    let eligible: BTreeMap<Vec<u8>, NodeKind> = records
+    let managed: model::ManagedIdentitySet = records
         .iter()
         .filter(|record| {
             record.mapping_source == mapping.source && record.category == RecordCategory::Eligible
@@ -322,109 +370,30 @@ fn inspect_tree_destination(
             record
                 .relative_path
                 .as_ref()
-                .map(|path| (path.raw_bytes().to_vec(), record.node_kind))
+                .map(|relative| (relative.raw_bytes().to_vec(), record.node_kind))
         })
         .collect();
-    walk_destination(
-        mapping,
-        &root,
-        root_device,
-        Vec::new(),
-        names,
-        &eligible,
-        records,
-        evidence_map,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn walk_destination(
-    mapping: &Mapping,
-    directory: &Directory,
-    root_device: u64,
-    parent_relative: Vec<u8>,
-    names: Vec<Vec<u8>>,
-    eligible: &BTreeMap<Vec<u8>, NodeKind>,
-    records: &mut Vec<DiscoveryRecord>,
-    evidence_map: &mut BTreeMap<(EvidenceSide, PathBuf, Vec<u8>), model::NodeEvidence>,
-) -> Result<(), GripError> {
-    for name in names {
-        let relative = join_relative(&parent_relative, &name);
-        let destination_path = append_raw(&mapping.destination, &relative);
-        let source_path = append_raw(&mapping.source, &relative);
-        let metadata = directory
-            .metadata(&name)
-            .map_err(|error| unavailable(&destination_path, "path_unavailable", error))?;
-        let kind = metadata.classify(root_device);
-        let child_scan = if kind == NodeKind::Directory {
-            let child = directory
-                .open_child_directory(&name)
-                .map_err(|error| unavailable(&destination_path, "directory_unreadable", error))?;
-            let names = child
-                .child_names()
-                .map_err(|error| unavailable(&destination_path, "directory_unreadable", error))?;
-            Some((child, names))
-        } else {
-            None
-        };
-        evidence_map.insert(
-            (
-                EvidenceSide::Destination,
-                mapping.source.clone(),
-                relative.clone(),
-            ),
-            evidence(
-                &metadata,
-                EvidenceSide::Destination,
-                &mapping.source,
-                &relative,
-                child_scan.as_ref().map(|(_, names)| names.clone()),
-            ),
-        );
-
-        match eligible.get(&relative) {
-            Some(expected) if *expected == kind => {}
-            Some(_) => records.push(DiscoveryRecord {
-                category: RecordCategory::UnsafeDestinationCollision,
-                mapping_kind: mapping.kind,
-                mapping_source: mapping.source.clone(),
-                relative_path: Some(SafePath::from_bytes(&relative)),
-                source_path: Some(SafePath::from_path(&source_path)),
-                destination_path: SafePath::from_path(&destination_path),
-                node_kind: kind,
-                reason: unsupported_reason(kind).or(Some("wrong_node_kind")),
-                blocking: true,
-            }),
-            None => records.push(DiscoveryRecord {
-                category: RecordCategory::DestinationOnly,
-                mapping_kind: mapping.kind,
-                mapping_source: mapping.source.clone(),
-                relative_path: Some(SafePath::from_bytes(&relative)),
-                source_path: None,
-                destination_path: SafePath::from_path(&destination_path),
-                node_kind: kind,
-                reason: if std::str::from_utf8(&relative).is_err() {
-                    Some("non_utf8_path")
-                } else {
-                    unsupported_reason(kind)
-                },
-                blocking: false,
-            }),
-        }
-
-        if let Some((child, names)) = child_scan {
-            walk_destination(
-                mapping,
-                &child,
-                root_device,
-                relative,
-                names,
-                eligible,
-                records,
-                evidence_map,
-            )?;
-        }
-    }
+    let findings = records
+        .iter()
+        .filter(|record| {
+            record.mapping_source == mapping.source && record.category == RecordCategory::Eligible
+        })
+        .filter_map(|record| {
+            let relative = record.relative_path.as_ref()?;
+            let node_kind = managed.get(relative.raw_bytes())?;
+            let relation = managed_member_relation(relative.raw_bytes(), &prefix);
+            relation.is_recursive().then(|| {
+                let mut finding = record.clone();
+                finding.node_kind = *node_kind;
+                finding.category = RecordCategory::UnsafeDestinationCollision;
+                finding.reason = Some("recursive_member_topology");
+                finding.relation = Some(relation.as_str());
+                finding.blocking = true;
+                finding
+            })
+        })
+        .collect::<Vec<_>>();
+    records.extend(findings);
     Ok(())
 }
 
@@ -461,6 +430,7 @@ fn inspect_file_mapping(
         destination_path: SafePath::from_path(&mapping.destination),
         node_kind: kind,
         reason,
+        relation: None,
         blocking,
     });
     Ok(())
@@ -604,6 +574,7 @@ fn walk_source(
             destination_path: SafePath::from_path(&destination_path),
             node_kind: kind,
             reason,
+            relation: None,
             blocking,
         });
 
@@ -695,9 +666,15 @@ mod stale_tests {
     fn second_pass_rejects_directory_enumeration_addition() {
         let (_root, home, source) = tree_fixture();
         let snapshot = publication::load(&home, false).unwrap();
-        let error = inspect_with_between_pass(&home, &snapshot, None, || {
-            fs::write(source.join("added"), "new").unwrap();
-        })
+        let error = inspect_with_between_pass(
+            &home,
+            &snapshot,
+            &AcceptedState::uninitialized(),
+            None,
+            || {
+                fs::write(source.join("added"), "new").unwrap();
+            },
+        )
         .unwrap_err();
         assert!(matches!(
             error,
@@ -709,9 +686,15 @@ mod stale_tests {
     fn second_pass_rejects_directory_enumeration_removal() {
         let (_root, home, source) = tree_fixture();
         let snapshot = publication::load(&home, false).unwrap();
-        let error = inspect_with_between_pass(&home, &snapshot, None, || {
-            fs::remove_file(source.join("existing")).unwrap();
-        })
+        let error = inspect_with_between_pass(
+            &home,
+            &snapshot,
+            &AcceptedState::uninitialized(),
+            None,
+            || {
+                fs::remove_file(source.join("existing")).unwrap();
+            },
+        )
         .unwrap_err();
         assert!(matches!(
             error,
@@ -723,10 +706,16 @@ mod stale_tests {
     fn second_pass_rejects_entry_replacement() {
         let (_root, home, source) = tree_fixture();
         let snapshot = publication::load(&home, false).unwrap();
-        let error = inspect_with_between_pass(&home, &snapshot, None, || {
-            fs::remove_file(source.join("existing")).unwrap();
-            fs::create_dir(source.join("existing")).unwrap();
-        })
+        let error = inspect_with_between_pass(
+            &home,
+            &snapshot,
+            &AcceptedState::uninitialized(),
+            None,
+            || {
+                fs::remove_file(source.join("existing")).unwrap();
+                fs::create_dir(source.join("existing")).unwrap();
+            },
+        )
         .unwrap_err();
         assert!(matches!(
             error,
@@ -739,9 +728,15 @@ mod stale_tests {
         let (_root, home, source) = tree_fixture();
         fs::write(source.join(".gripignore"), "first\n").unwrap();
         let snapshot = publication::load(&home, false).unwrap();
-        let error = inspect_with_between_pass(&home, &snapshot, None, || {
-            fs::write(source.join(".gripignore"), "second\n").unwrap();
-        })
+        let error = inspect_with_between_pass(
+            &home,
+            &snapshot,
+            &AcceptedState::uninitialized(),
+            None,
+            || {
+                fs::write(source.join(".gripignore"), "second\n").unwrap();
+            },
+        )
         .unwrap_err();
         assert!(matches!(
             error,

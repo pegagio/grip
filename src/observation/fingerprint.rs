@@ -31,6 +31,13 @@ pub fn inspect_complete(
             error.into(),
         )
     })?;
+    inspect_complete_descriptor(descriptor, expected_kind)
+}
+
+fn inspect_complete_descriptor(
+    descriptor: OwnedFd,
+    expected_kind: NodeKind,
+) -> Result<super::model::CompleteObservedState, GripError> {
     let before = fstat(&descriptor)
         .map_err(|error| GripError::from_io("could not inspect entry descriptor", error.into()))?;
     let actual_kind = rustix::fs::FileType::from_raw_mode(before.st_mode);
@@ -98,6 +105,13 @@ pub fn inspect_complete(
         unknown_xattrs: observed_metadata.xattrs.unknown,
         unsupported_bsd_flags: observed_metadata.unsupported_bsd_flags,
     })
+}
+
+/// Result of probing one exact managed target below an opened tree root.
+pub enum RelativeCompleteObservation {
+    Missing,
+    Supported(Box<super::model::CompleteObservedState>),
+    Blocking { reason: &'static str },
 }
 
 /// Reuses descriptor-bound ancestor directories during one observation pass.
@@ -186,6 +200,103 @@ impl RelativeInspector {
             .open_child_file(final_component)
             .map_err(|error| GripError::from_io("could not open observed file", error))?;
         inspect_file_descriptor(descriptor, || {})
+    }
+
+    /// Probe one exact managed target without enumerating siblings or following links.
+    pub fn inspect_complete(
+        &mut self,
+        relative: &[u8],
+        expected_kind: NodeKind,
+    ) -> Result<RelativeCompleteObservation, GripError> {
+        let components = relative
+            .split(|byte| *byte == b'/')
+            .filter(|component| !component.is_empty())
+            .collect::<Vec<_>>();
+        if components.is_empty() {
+            return Ok(RelativeCompleteObservation::Blocking {
+                reason: "tree_root_anchor",
+            });
+        }
+        let root_device = self.root.root_metadata().st_dev as u64;
+        let mut parent_key = Vec::new();
+        for component in &components[..components.len() - 1] {
+            let mut child_key = parent_key.clone();
+            if !child_key.is_empty() {
+                child_key.push(b'/');
+            }
+            child_key.extend_from_slice(component);
+            if !self.directories.contains_key(&child_key) {
+                let parent = if parent_key.is_empty() {
+                    &self.root
+                } else {
+                    self.directories
+                        .get(&parent_key)
+                        .expect("cached parent directory exists")
+                };
+                let metadata = match parent.metadata(component) {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(RelativeCompleteObservation::Missing);
+                    }
+                    Err(error) => {
+                        return Err(GripError::from_io(
+                            "could not inspect mapped tree ancestor",
+                            error,
+                        ));
+                    }
+                };
+                let kind = metadata.classify(root_device);
+                if kind != NodeKind::Directory {
+                    return Ok(RelativeCompleteObservation::Blocking {
+                        reason: crate::discovery::filesystem::unsupported_reason(kind)
+                            .unwrap_or("wrong_node_kind"),
+                    });
+                }
+                let child = parent.open_child_directory(component).map_err(|error| {
+                    GripError::from_io("could not open mapped tree ancestor", error)
+                })?;
+                self.directories.insert(child_key.clone(), child);
+            }
+            parent_key = child_key;
+        }
+        let parent = if parent_key.is_empty() {
+            &self.root
+        } else {
+            self.directories
+                .get(&parent_key)
+                .expect("cached parent directory exists")
+        };
+        let final_component = components[components.len() - 1];
+        let metadata = match parent.metadata(final_component) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(RelativeCompleteObservation::Missing);
+            }
+            Err(error) => {
+                return Err(GripError::from_io(
+                    "could not inspect managed target",
+                    error,
+                ));
+            }
+        };
+        let kind = metadata.classify(root_device);
+        if kind != expected_kind || !matches!(kind, NodeKind::File | NodeKind::Directory) {
+            return Ok(RelativeCompleteObservation::Blocking {
+                reason: crate::discovery::filesystem::unsupported_reason(kind)
+                    .unwrap_or("wrong_node_kind"),
+            });
+        }
+        let descriptor = if kind == NodeKind::Directory {
+            parent
+                .open_child_directory(final_component)
+                .map(|directory| directory.into_descriptor())
+        } else {
+            parent.open_child_file(final_component)
+        }
+        .map_err(|error| GripError::from_io("could not open managed target", error))?;
+        inspect_complete_descriptor(descriptor, kind)
+            .map(Box::new)
+            .map(RelativeCompleteObservation::Supported)
     }
 }
 

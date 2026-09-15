@@ -450,6 +450,19 @@ fn revalidate_action(
             "accepted deletion membership or baseline changed".into(),
         ));
     }
+    let selected = Selection::Entry(action.identity.clone());
+    let observed =
+        crate::observation::inspect(home, &registry, &expected_state.accepted, &selected)?;
+    if observed.values().any(|entry| {
+        entry
+            .unsupported
+            .iter()
+            .any(|reason| reason == "destination:recursive_member_topology")
+    }) {
+        return Err(GripError::InvalidConfiguration(
+            "recursive member topology appeared during deletion revalidation".into(),
+        ));
+    }
     let authoritative_path = match action.authority {
         crate::delete::model::DeletionAuthority::Source => action.identity.source_path(),
         crate::delete::model::DeletionAuthority::Destination => action.identity.destination_path(),

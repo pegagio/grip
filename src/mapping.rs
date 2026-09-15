@@ -168,6 +168,34 @@ enum Relation {
     Disjoint,
 }
 
+/// Component-aware relationship between a managed member and the path locating its source below
+/// the destination root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedMemberRelation {
+    Equal,
+    Ancestor,
+    Descendant,
+    Disjoint,
+}
+
+impl ManagedMemberRelation {
+    /// Return the stable machine-readable relationship name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Equal => "equal",
+            Self::Ancestor => "ancestor",
+            Self::Descendant => "descendant",
+            Self::Disjoint => "disjoint",
+        }
+    }
+
+    /// Return whether this relationship can make a contained-source mapping recursive.
+    pub const fn is_recursive(self) -> bool {
+        !matches!(self, Self::Disjoint)
+    }
+}
+
 fn relation(first: &Path, second: &Path) -> Relation {
     if first == second {
         Relation::Equal
@@ -187,6 +215,40 @@ fn relation_name(value: Relation) -> &'static str {
         Relation::Descendant => "descendant",
         Relation::Disjoint => "disjoint",
     }
+}
+
+/// Derive the non-empty destination-relative path locating a contained tree source.
+pub fn contained_source_prefix(mapping: &Mapping) -> Option<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if mapping.kind != MappingKind::Tree || mapping.source == mapping.destination {
+        return None;
+    }
+    mapping
+        .source
+        .strip_prefix(&mapping.destination)
+        .ok()
+        .map(|relative| relative.as_os_str().as_bytes().to_vec())
+        .filter(|relative| !relative.is_empty())
+}
+
+/// Compare one non-empty managed relative identity with a contained source prefix.
+pub fn managed_member_relation(member: &[u8], prefix: &[u8]) -> ManagedMemberRelation {
+    if member == prefix {
+        ManagedMemberRelation::Equal
+    } else if raw_descendant(prefix, member) {
+        ManagedMemberRelation::Ancestor
+    } else if raw_descendant(member, prefix) {
+        ManagedMemberRelation::Descendant
+    } else {
+        ManagedMemberRelation::Disjoint
+    }
+}
+
+fn raw_descendant(candidate: &[u8], parent: &[u8]) -> bool {
+    candidate
+        .strip_prefix(parent)
+        .is_some_and(|suffix| suffix.first() == Some(&b'/'))
 }
 
 fn namespaces_overlap(
@@ -227,12 +289,14 @@ fn conflict(
 pub fn validate_ownership(mappings: &[Mapping]) -> Vec<OwnershipConflict> {
     let mut conflicts = Vec::new();
     for mapping in mappings {
-        if let Some(path_relation) = namespaces_overlap(
-            &mapping.source,
-            mapping.kind,
-            &mapping.destination,
-            mapping.kind,
-        ) {
+        let path_relation = relation(&mapping.source, &mapping.destination);
+        if path_relation != Relation::Disjoint {
+            if mapping.kind == MappingKind::Tree
+                && path_relation == Relation::Descendant
+                && contained_source_prefix(mapping).is_some()
+            {
+                continue;
+            }
             let reason = if path_relation == Relation::Equal {
                 "equal_endpoints"
             } else {
@@ -359,5 +423,44 @@ mod tests {
             mapping(MappingKind::File, "/source/a/file", "/destination/b"),
         ];
         assert_eq!(validate_ownership(&mappings)[0].reason, "source_overlap");
+    }
+
+    #[test]
+    fn validate_ownership_allows_only_tree_source_beneath_destination() {
+        assert!(
+            validate_ownership(&[mapping(MappingKind::Tree, "/home/project/home", "/home")])
+                .is_empty()
+        );
+        assert_eq!(
+            validate_ownership(&[mapping(MappingKind::Tree, "/home", "/home/project/home")])[0]
+                .reason,
+            "recursive_topology"
+        );
+        assert_eq!(
+            validate_ownership(&[mapping(MappingKind::File, "/home/project/file", "/home")])[0]
+                .reason,
+            "recursive_topology"
+        );
+    }
+
+    #[test]
+    fn managed_member_relations_use_component_boundaries() {
+        let prefix = b"dotfiles/home";
+        assert_eq!(
+            managed_member_relation(b"dotfiles/home", prefix),
+            ManagedMemberRelation::Equal
+        );
+        assert_eq!(
+            managed_member_relation(b"dotfiles", prefix),
+            ManagedMemberRelation::Ancestor
+        );
+        assert_eq!(
+            managed_member_relation(b"dotfiles/home/nested", prefix),
+            ManagedMemberRelation::Descendant
+        );
+        assert_eq!(
+            managed_member_relation(b"dotfiles-home", prefix),
+            ManagedMemberRelation::Disjoint
+        );
     }
 }

@@ -178,6 +178,66 @@ impl Default for ProjectFixture {
     }
 }
 
+/// Disposable layout for a project nested beneath the destination home with a `home/` source.
+#[derive(Debug)]
+pub struct ContainedHomeFixture {
+    pub root: tempfile::TempDir,
+    pub home_root: PathBuf,
+    pub project_root: PathBuf,
+    pub source_root: PathBuf,
+}
+
+impl ContainedHomeFixture {
+    pub fn initialized() -> Self {
+        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let home_root = root.path().join("home");
+        let project_root = home_root.join("grip-project");
+        let source_root = project_root.join("home");
+        fs::create_dir_all(&source_root).unwrap();
+        let metadata = project_root.join(".grip");
+        fs::create_dir(&metadata).unwrap();
+        fs::write(metadata.join("config.toml"), EMPTY_DESCRIPTOR_V2).unwrap();
+        fs::write(metadata.join(".gitignore"), PROJECT_GITIGNORE).unwrap();
+        Self {
+            root,
+            home_root,
+            project_root,
+            source_root,
+        }
+    }
+
+    pub fn command(&self, arguments: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_grip"))
+            .env_clear()
+            .env("HOME", &self.home_root)
+            .current_dir(&self.project_root)
+            .args(arguments)
+            .output()
+            .unwrap()
+    }
+
+    pub fn descriptor_path(&self) -> PathBuf {
+        self.project_root.join(".grip/config.toml")
+    }
+
+    pub fn state_path(&self) -> PathBuf {
+        self.project_root.join(".grip/state/state.json")
+    }
+
+    pub fn snapshot_payloads(&self) -> BTreeMap<PathBuf, EntrySnapshot> {
+        let metadata_relative = self
+            .project_root
+            .join(".grip")
+            .strip_prefix(&self.home_root)
+            .unwrap()
+            .to_path_buf();
+        snapshot(&self.home_root)
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(&metadata_relative))
+            .collect()
+    }
+}
+
 #[derive(Debug)]
 pub struct FixtureLock {
     path: PathBuf,

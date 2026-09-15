@@ -1,7 +1,7 @@
 mod support;
 
 use std::fs;
-use support::project::ProjectFixture;
+use support::project::{ContainedHomeFixture, ProjectFixture};
 
 fn add(fixture: &ProjectFixture, source: &str, destination: &str) -> bool {
     fixture
@@ -142,4 +142,37 @@ fn absolute_and_home_relative_equivalent_destinations_conflict() {
         fixture.home_destination("same").to_str().unwrap()
     ));
     assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
+}
+
+#[test]
+fn source_beneath_destination_is_admitted_only_for_tree_mappings() {
+    let contained = ContainedHomeFixture::initialized();
+    fs::write(contained.source_root.join("safe"), "safe\n").unwrap();
+    let accepted = contained.command(&["add", "home/", "~/"]);
+    assert!(
+        accepted.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&accepted.stdout),
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    let reverse = ProjectFixture::initialized();
+    fs::create_dir(reverse.project_root.join("tree")).unwrap();
+    let output = reverse
+        .command_builder(&reverse.project_root)
+        .env("HOME", &reverse.project_root)
+        .args(["add", "tree/", "~/tree/nested/"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let file = ProjectFixture::initialized();
+    fs::write(file.project_root.join("file"), "file\n").unwrap();
+    let output = file
+        .command_builder(&file.project_root)
+        .env("HOME", &file.project_root)
+        .args(["add", "file", "~/"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
 }

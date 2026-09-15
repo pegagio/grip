@@ -140,7 +140,7 @@ fn pull_preview_uses_shared_schema_and_changes_nothing() {
 }
 
 #[test]
-fn pull_reports_unmanaged_destination_content_without_importing_it() {
+fn pull_does_not_inventory_or_import_unmanaged_destination_content() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source-tree");
@@ -170,10 +170,11 @@ fn pull_reports_unmanaged_destination_content_without_importing_it() {
         .as_array()
         .unwrap()
         .clone();
-    assert!(entries.iter().any(|entry| {
-        entry["classification"] == "destination_only_unmanaged"
-            && entry["disposition"] == "no_action"
-    }));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| { entry["relative_path"]["display"] != "unmanaged" })
+    );
     assert!(!source.join("unmanaged").exists());
 }
 

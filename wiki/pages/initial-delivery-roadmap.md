@@ -2,7 +2,7 @@
 title: Initial delivery roadmap
 type: reference
 sources: [S003]
-updated: 2026-09-14
+updated: 2026-09-15
 ---
 
 # Initial delivery roadmap
@@ -21,10 +21,11 @@ Roadmap version 1.7.4 records verified Features 001 through 012, 014, 015, and 0
 10. **010 — Project-Scoped Initialization and Portable Mappings (`verified`):** replaces the global mapping model with initialized projects, committed portable declarations, exact explicit or ancestor-based selection, and isolated machine-local state. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 11. **011 — Git-Inspired Command Hierarchy (`verified`):** replaces the broad nested public surface with `init`, `version`, `add`, `list`, `remove`, `status`, `diff`, `push`, `pull`, and `sync`; retains direct `.gripignore` policy and makes Git or another selected system responsible for history and recovery. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 12. **012 — Destination Path Forms (`verified`):** broadens destination declarations to absolute paths, `~`, and any `~/` spelling while retaining exact declaration text and project-relative source declarations. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
-The [later implemented features](./initial-delivery-roadmap-later-features.md) continue this ledger from Feature 013 through Feature 021. (S003)
+The [later features](./initial-delivery-roadmap-later-features.md) continue this ledger with Features 013 through 020, and the [recent features](./initial-delivery-roadmap-recent-features.md) cover Features 021 through 025. (S003)
 
 ## Related pages
 
 - [Implementation and delivery direction](./implementation-and-delivery-direction.md)
 - [Later implemented features](./initial-delivery-roadmap-later-features.md)
+- [Recent features](./initial-delivery-roadmap-recent-features.md)
 - [Roadmap open questions](./roadmap-open-questions.md)
