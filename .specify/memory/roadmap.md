@@ -1,18 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.8.8 -> 1.8.9
-Bump rationale: Mark Feature 023 verified after its no-finding roadmap debrief.
+Version change: 1.10.1 -> 1.10.4
+Bump rationale: Correct the Feature 020 and Feature 024 specification-directory links and record Feature 024's completed verification.
 
 Changes this revision:
-  - Transitioned Feature 023 from `specced` to `in-progress`
-  - Recorded the no-finding pre-implementation roadmap brief
-  - Marked Feature 023 `verified` after the post-implementation debrief
+  - Restored Feature 020's canonical specification directory
+  - Recorded Feature 024's canonical specification directory
+  - Transitioned Feature 024 from `in-progress` to `verified` after its no-finding debrief
 
-Specs affected: 023
+Specs affected: 024
 Open questions added/resolved: None
 
-Notes: Direct active-user authorization on 2026-09-14 to correct the reproduced forced tree-entry restoration failure without rewriting Feature 011 history. The Feature 023 brief found no outcome, scope, constraint, dependency, or status drift.
+Notes: Direct active-user authorization on 2026-09-15. This correction preserves Feature 020's abandoned record, resolves Feature 024's non-blocking roadmap-brief linkage finding, and records the no-finding verification result without changing Feature 024's approved scope.
 -->
 
 # Grip — Spec Roadmap
@@ -286,7 +286,7 @@ The following specifications form the approved path from a read-only foundation 
 
 ### 020 — Release Binary Size Investigation  [status: abandoned]
 
-- **Spec dir:** To be assigned when specification work begins
+- **Spec dir:** `specs/020-release-binary-size`
 - **Description:** Investigate the approximately 19 MB `grip` binary, identify its material size contributors, determine whether that size is justified for the supported release target, and apply evidence-backed reductions that preserve the supported CLI contract.
 - **Outcome:** Maintainers can explain the release binary's size with reproducible measurements, decide whether a reduction is warranted against an explicit budget, and deliver only reductions whose compatibility, safety, and operational tradeoffs are validated.
 - **Scope (in):** Reproducible release-artifact measurement; target, profile, dependency, symbol, and packaging contribution analysis; comparison of justified reduction options; selected implementation changes; release-size regression coverage; and documentation of the resulting evidence and tradeoffs.
@@ -332,6 +332,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user authorization on 2026-09-14 after reproducing that `grip push --force` rejects an exact tree entry whose destination was removed despite the source remaining authoritative.
 - **Notes:** This is a forward-flowing correction to the verified Feature 011 forced-direction contract. It preserves force's exact-entry boundary and existing absent-winner deletion behavior. The pre-implementation review at `specs/023-force-missing-peer-restoration/roadmap-reviews/brief-20260914T234222Z.md` and post-implementation debrief at `specs/023-force-missing-peer-restoration/roadmap-reviews/debrief-20260914T235956Z.md` returned `PROCEED` with no findings.
 
+### 024 — Local Artifact Release Automation  [status: verified]
+
+- **Spec dir:** `specs/024-local-artifact-release-automation`
+- **Description:** Provide a reproducible local mise release task that validates Grip, packages the supported release artifact with an integrity checksum, and creates a guarded local annotated release tag.
+- **Outcome:** A maintainer can run one documented local task to produce a macOS Apple Silicon Grip archive and SHA-256 checksum from a validated release build, then create an annotated version tag for that exact clean `master` commit without mutating commit history or GitHub state.
+- **Scope (in):** Mise task design; clean-checkout and exact-branch verification; release-build validation; explicit release-version input or derivation; macOS Apple Silicon archive packaging; SHA-256 checksum generation; deterministic artifact naming and output location; guarded annotated local-tag creation that refuses an existing tag; clear failure behavior; documentation; and isolated task-level coverage where practical.
+- **Scope (out):** Pushing Git tags or branches, GitHub Release creation or publication, GitHub API integration, CI workflows, crates.io publishing, cross-platform artifacts, code-signing, notarization, installer packaging, and changes to Grip synchronization behavior.
+- **Depends on:** none
+- **Governed by:** C-01, C-04, C-08, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-15 to continue artifact releases and automate their local preparation with mise tasks.
+- **Notes:** The task prepares reviewable local artifacts and creates a local release identity only after successful validation and packaging. It must never overwrite an existing tag. Pushing and release publication remain explicit maintainer actions so the workflow does not bundle irreversible external mutations into a local command. Verified on 2026-09-15 by the no-finding debrief at `specs/024-local-artifact-release-automation/roadmap-reviews/debrief-20260915T174336Z.md` (`PROCEED`; all verification gates passed).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -373,4 +385,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.8.5 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-14
+**Version**: 1.10.4 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15

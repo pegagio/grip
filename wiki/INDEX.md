@@ -26,6 +26,7 @@ page files, not here.
 - [Deletion, retirement, and recovery](./pages/deletion-retirement-and-recovery.md)
 - [Mapping registry publication](./pages/mapping-registry-publication.md)
 - [Large-file observation performance](./pages/large-file-observation-performance.md)
+- [Local artifact release preparation](./pages/local-artifact-release-preparation.md)
 - [Mapping addition and initial baselines](./pages/mapping-addition-and-initial-baselines.md)
 - [Force mapping replacement](./pages/force-mapping-replacement.md)
 - [Metadata and filesystem contract](./pages/metadata-and-filesystem-contract.md)

@@ -175,3 +175,17 @@ mise run performance
 ```
 
 `build` produces the debug binary at `target/debug/grip`; run `mise run build --release` to produce the optimized release binary at `target/release/grip`. `validate` checks formatting, runs Clippy with warnings denied, runs the default test suite, and builds the release binary. The ignored performance and platform-specific suites are explicit release gates.
+
+## Prepare a local release
+
+On a clean `master` checkout on macOS Apple Silicon, `mise run release` runs both release gates, packages `grip`, `README.md`, and `LICENSE`, writes an archive and SHA-256 checksum under `dist/`, and creates an annotated local `v<version>` tag for that exact commit. The version comes from the Cargo package metadata. Existing artifact files, checksums, and tags are never overwritten.
+
+Inspect the prepared release before publishing it:
+
+```sh
+(cd dist && shasum -a 256 -c grip-v<version>-darwin-arm64.tar.gz.sha256)
+tar -tzf dist/grip-v<version>-darwin-arm64.tar.gz
+git show v<version>
+```
+
+The task does not push anything or create a GitHub Release. After inspection, push deliberately with `git push origin v<version>`, then create the GitHub Release and upload the archive plus checksum. Run `mise run test-release` to execute the isolated release-task contract suite.
