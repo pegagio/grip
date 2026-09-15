@@ -210,6 +210,33 @@ fn human_status_shows_force_choices_for_an_ordinary_divergent_conflict() {
 }
 
 #[test]
+fn human_status_explains_exact_force_choices_for_a_missing_peer() {
+    let (root, metadata_dir, source) = fixture();
+    let destination = root.path().join("destination");
+    fs::remove_file(&destination).unwrap();
+    let destination_display = fs::canonicalize(root.path()).unwrap().join("destination");
+
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert_eq!(status.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(status.stdout).unwrap(),
+        format!(
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            destination_display.display(),
+            destination_display.display(),
+        )
+    );
+
+    let force_push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--force", "--dry-run", "source"],
+    );
+    assert!(force_push.status.success());
+    assert!(source.exists());
+}
+
+#[test]
 fn human_status_uses_diff_for_an_aggregate_tree_conflict() {
     let (root, metadata_dir, _source, destination) = support::aggregate_tree_collision_fixture();
 

@@ -34,3 +34,11 @@ run = [
   "cargo build --release",
   "cargo test --release --test performance_acceptance -- --ignored --nocapture",
 ]
+
+[tasks.release]
+description = "Validate and package a local macOS Apple Silicon release without publishing it"
+run = "bash scripts/prepare-release.sh"
+
+[tasks.test-release]
+description = "Run isolated local release-task contract tests"
+run = "bash tests/release_task_contract.sh"

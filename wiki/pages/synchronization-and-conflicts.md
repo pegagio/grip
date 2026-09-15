@@ -1,8 +1,8 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001, S004]
-updated: 2026-09-13
+sources: [S001, S004, S023]
+updated: 2026-09-14
 ---
 
 # Synchronization and conflicts
@@ -12,3 +12,9 @@ updated: 2026-09-13
 `push -f PATH` makes the source authoritative for exactly one managed entry. `pull -f PATH` makes the destination authoritative for exactly one managed entry. Force may propagate intentional absence. It is rejected for broad, ambiguous, mapping-wide, or tree-wide selection and is unavailable to `sync`. (S001)
 
 Default human conflict guidance presents force commands only when the displayed selector resolves to that one exact managed entry. An aggregate tree conflict instead directs the operator to `grip diff SOURCE` to identify an exact entry before choosing a winner. (S004)
+
+One-sided absence is an ordinary synchronization blocker; human status presents source- and destination-winning force commands for an exact selectable entry. (S001)
+
+For an exact one-sided absence, a present selected winner restores only its missing peer; a selected absent winner retains the established deletion behavior only when the present peer remains unchanged. Deletion/change conflicts remain blocked. (S004) (S023)
+
+An exact forced restoration accepts a current winner that differs from its prior accepted state, applies the same identity during dry-run and execution, and refreshes accepted evidence only after verification. (S023)

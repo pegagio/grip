@@ -1787,12 +1787,12 @@ fn classification_blocker_message(record: &Value) -> &'static str {
             "Grip cannot safely proceed because the endpoints differ without an accepted baseline."
         }
         Some("divergent_conflict") => "Grip cannot safely proceed because both endpoints changed.",
-        Some(
-            "source_side_deletion"
-            | "destination_side_deletion"
-            | "delete_change_conflict"
-            | "change_delete_conflict",
-        ) => "Grip cannot safely proceed because one endpoint is missing while the other changed.",
+        Some("source_side_deletion" | "destination_side_deletion") => {
+            "Grip cannot safely proceed because one endpoint is missing."
+        }
+        Some("delete_change_conflict" | "change_delete_conflict") => {
+            "Grip cannot safely proceed because one endpoint is missing while the other changed."
+        }
         Some("unsupported_managed") => {
             "Grip cannot safely proceed because this managed entry uses an unsupported filesystem state."
         }
@@ -2443,5 +2443,19 @@ mod tests {
         assert_eq!(outcome.details["operation_record"]["available"], true);
         assert_eq!(outcome.details["operation_record"]["id"], "delete-1");
         assert_eq!(outcome.details["baseline"]["authoritative_generation"], 2);
+    }
+
+    #[test]
+    fn missing_peer_blocker_wording_does_not_claim_a_change() {
+        let missing_peer = serde_json::json!({"classification": "source_side_deletion"});
+        let changed_peer = serde_json::json!({"classification": "delete_change_conflict"});
+        assert_eq!(
+            classification_blocker_message(&missing_peer),
+            "Grip cannot safely proceed because one endpoint is missing."
+        );
+        assert_eq!(
+            classification_blocker_message(&changed_peer),
+            "Grip cannot safely proceed because one endpoint is missing while the other changed."
+        );
     }
 }
