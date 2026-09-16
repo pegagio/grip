@@ -2,12 +2,12 @@
 title: Roadmap open questions
 type: reference
 sources: [S003]
-updated: 2026-09-15
+updated: 2026-09-16
 ---
 
 # Roadmap open questions
 
-The roadmap retains numbered questions for the specification that owns each decision; resolved questions remain recorded as provenance and do not change the completed initial-product boundary. (S003)
+The roadmap retains questions for the specification that owns each decision; resolved questions remain provenance and do not change the initial-product boundary. (S003)
 
 - **001:** confirm package and executable identity, choose registry and state serialization, and establish stable machine-output and exit-code contracts. (S003)
 - **002 (resolved):** the historical nested mapping lifecycle is superseded by the flat `add`, `list [SOURCE]`, and `remove` contract. Tracking records intent only, and complete-registry validation conservatively rejects duplicate, overlapping, equal, nested, and cross-recursive ownership. (S003)
@@ -29,3 +29,4 @@ Each feature must clarify its assigned questions without silently expanding scop
 ## Related pages
 
 - [Initial delivery roadmap](./initial-delivery-roadmap.md)
+- [Roadmap open questions recent](./roadmap-open-questions-recent.md)

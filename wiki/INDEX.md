@@ -38,9 +38,11 @@ page files, not here.
 
 - [Filesystem support boundaries](./pages/filesystem-support-boundaries.md)
 - [Initial delivery roadmap](./pages/initial-delivery-roadmap.md)
+- [Initial delivery roadmap future features](./pages/initial-delivery-roadmap-future-features.md)
 - [Initial delivery roadmap later features](./pages/initial-delivery-roadmap-later-features.md)
 - [Initial delivery roadmap recent features](./pages/initial-delivery-roadmap-recent-features.md)
 - [Roadmap open questions](./pages/roadmap-open-questions.md)
+- [Roadmap open questions recent](./pages/roadmap-open-questions-recent.md)
 
 ## How-tos
 

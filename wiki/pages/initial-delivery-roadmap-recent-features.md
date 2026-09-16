@@ -7,7 +7,7 @@ updated: 2026-09-15
 
 # Initial delivery roadmap recent features
 
-This continuation records Features 021 through 026 from the current roadmap ledger. (S003)
+This continuation records Features 021 through 026 from the current roadmap ledger. [Initial delivery roadmap future features](./initial-delivery-roadmap-future-features.md) continues with Features 027 and 028. (S003)
 
 21. **021 — Large-File Operation Performance (`verified`):** defines isolated local macOS ARM64 release workloads with differing 19 MiB regular endpoints for `grip add` and JSON `grip status`, then removes demonstrated same-pass duplicate observation while retaining full content and metadata evidence, independent stable-observation passes, and fenced add reinspection. A 100-sample p95 gate requires both operations to complete within one second; the recorded final p95 values were 573.669375 ms for `grip add` and 184.788375 ms for `grip status`. (S003)
 22. **022 — Force Mapping Replacement (`verified`):** permits `grip add --force` to replace exactly one active file mapping at the same resolved destination, preserves other ownership and topology rejections, and keeps add payload-nonmutating. Exact removal retires the corresponding ownership and accepted comparison evidence so a later ordinary add may reuse the destination. Its no-finding debrief verified the implementation against the roadmap. (S003)
@@ -22,4 +22,5 @@ Features 021 through 026 establish measured large-file responsiveness, exact map
 
 - [Initial delivery roadmap](./initial-delivery-roadmap.md)
 - [Initial delivery roadmap later features](./initial-delivery-roadmap-later-features.md)
+- [Initial delivery roadmap future features](./initial-delivery-roadmap-future-features.md)
 - [Contained-source tree mappings](./contained-source-tree-mappings.md)

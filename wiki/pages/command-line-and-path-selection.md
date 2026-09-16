@@ -1,8 +1,8 @@
 ---
 title: Command-line and path selection
 type: component
-sources: [S004, S014, S015, S016, S017]
-updated: 2026-09-13
+sources: [S003, S004, S014, S015, S016, S017]
+updated: 2026-09-16
 ---
 
 # Command-line and path selection
@@ -27,3 +27,5 @@ Default human `status` renders an actionable source path relative to the invocat
 The destination declaration decision preserves lexical spelling while keeping resolved endpoint safety checks and selector behavior unchanged. [Destination path forms](./destination-path-forms.md) records the scope and persistence boundary. (S015) (S017)
 
 The hierarchy is an intentional pre-release replacement, so superseded commands are rejected rather than accepted as compatibility aliases. [Git-inspired command hierarchy](./git-inspired-command-hierarchy.md) records the durable decision and its force and baseline boundaries. (S014)
+
+Planned Feature 027 makes no-selector `grip push --force` an aggregate source-winning operation across all managed project entries, while a supplied selector retains the exact-entry force contract. Planned Feature 028 makes `grip diff` invoke a configurable external program, with `diff` as the default and no shell-string execution. [Initial delivery roadmap future features](./initial-delivery-roadmap-future-features.md) records their bounded scope. (S003)
