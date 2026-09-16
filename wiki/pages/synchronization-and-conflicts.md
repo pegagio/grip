@@ -1,8 +1,8 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001, S004, S023]
-updated: 2026-09-14
+sources: [S001, S004, S023, S027]
+updated: 2026-09-16
 ---
 
 # Synchronization and conflicts
@@ -18,3 +18,5 @@ One-sided absence is an ordinary synchronization blocker; human status presents 
 For an exact one-sided absence, a present selected winner restores only its missing peer; a selected absent winner retains the established deletion behavior only when the present peer remains unchanged. Deletion/change conflicts remain blocked. (S004) (S023)
 
 An exact forced restoration accepts a current winner that differs from its prior accepted state, applies the same identity during dry-run and execution, and refreshes accepted evidence only after verification. (S023)
+
+No-selector `grip push --force` deliberately selects the complete source-winning state for all managed entries in one project. It performs full preflight validation, keeps destination leaf links and symlink ancestry blocking, revalidates each action, and publishes accepted evidence only after each entry verifies. A later failure stops the aggregate, records completed, failed, and unattempted entries distinctly, and retains only earlier verified publications. (S027)

@@ -454,9 +454,10 @@ impl CommandOutcome {
                 .details
                 .insert("plan_id".into(), plan_id(&plan.plan_id));
             outcome.details.insert("counts".into(), json(&plan.counts));
-            outcome
-                .details
-                .insert("entries".into(), public_mutation_entries(&plan.entries));
+            outcome.details.insert(
+                "entries".into(),
+                public_mutation_entries(plan.operation, &plan.entries, &plan.actions),
+            );
             outcome
                 .details
                 .insert("actions".into(), public_mutation_actions(&plan.actions));
@@ -743,7 +744,10 @@ impl CommandOutcome {
         details.insert("scope".into(), json(&plan.scope));
         details.insert("plan_id".into(), plan_id(&plan.plan_id));
         details.insert("counts".into(), json(&plan.counts));
-        details.insert("entries".into(), public_mutation_entries(&plan.entries));
+        details.insert(
+            "entries".into(),
+            public_mutation_entries(plan.operation, &plan.entries, &plan.actions),
+        );
         details.insert("actions".into(), public_mutation_actions(&plan.actions));
         details.insert("blockers".into(), json(&plan.blockers));
         details.insert("operation_record".into(), Value::Null);
@@ -793,7 +797,10 @@ impl CommandOutcome {
         details.insert("scope".into(), json(&plan.scope));
         details.insert("plan_id".into(), plan_id(&plan.plan_id));
         details.insert("counts".into(), json(&plan.counts));
-        details.insert("entries".into(), public_mutation_entries(&plan.entries));
+        details.insert(
+            "entries".into(),
+            public_mutation_entries(plan.operation, &plan.entries, &plan.actions),
+        );
         details.insert("actions".into(), public_mutation_actions(&plan.actions));
         details.insert("blockers".into(), json(&plan.blockers));
         details.insert(
@@ -846,7 +853,11 @@ fn public_mutation_actions(actions: &[crate::mutation::model::MutationAction]) -
     value
 }
 
-fn public_mutation_entries(entries: &[crate::mutation::model::EntryDisposition]) -> Value {
+fn public_mutation_entries(
+    operation: crate::mutation::model::MutationOperation,
+    entries: &[crate::mutation::model::EntryDisposition],
+    actions: &[crate::mutation::model::MutationAction],
+) -> Value {
     let reportable = entries
         .iter()
         .filter(|entry| {
@@ -854,8 +865,47 @@ fn public_mutation_entries(entries: &[crate::mutation::model::EntryDisposition])
                 || entry.classification
                     != crate::classification::model::Classification::Synchronized
         })
+        .map(|entry| {
+            let mut public =
+                serde_json::to_value(entry).expect("mutation entry disposition serializes");
+            if operation == crate::mutation::model::MutationOperation::AggregateForcePush {
+                let action_statuses = entry
+                    .action_indexes
+                    .iter()
+                    .filter_map(|index| actions.get(*index))
+                    .map(|action| action.status)
+                    .collect::<Vec<_>>();
+                let status = if entry.disposition == crate::mutation::model::Disposition::Blocked {
+                    "blocked"
+                } else if action_statuses.is_empty() {
+                    "unchanged"
+                } else if action_statuses
+                    .iter()
+                    .all(|status| *status == crate::mutation::model::ActionStatus::Completed)
+                {
+                    "completed"
+                } else if action_statuses.contains(&crate::mutation::model::ActionStatus::Failed) {
+                    "failed"
+                } else {
+                    "unattempted"
+                };
+                let object = public
+                    .as_object_mut()
+                    .expect("mutation entry serializes as object");
+                object.insert("status".into(), status.into());
+                object.insert(
+                    "accepted_state".into(),
+                    if status == "completed" {
+                        "published".into()
+                    } else {
+                        "unaccepted".into()
+                    },
+                );
+            }
+            public
+        })
         .collect::<Vec<_>>();
-    json(&reportable)
+    Value::Array(reportable)
 }
 
 fn plan_id(digest: &str) -> Value {
@@ -877,6 +927,7 @@ fn operation_title(operation: &str) -> &str {
         "pull" => "Pull",
         "sync" => "Sync",
         "resolve" => "Resolution",
+        "aggregate_force_push" => "Aggregate forced push",
         _ => "Mutation",
     }
 }

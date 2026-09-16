@@ -249,6 +249,32 @@ fn build_is_deterministic_when_input_order_changes() {
     assert_eq!(first.plan_id.len(), 64);
 }
 
+#[test]
+fn aggregate_force_push_plans_source_winning_changes_and_source_absence() {
+    let changed = record(0, Classification::DivergentConflict, false);
+    let mut removed = record(1, Classification::SourceSideDeletion, true);
+    removed.source = None;
+    let plan = grip::mutation::plan::build_aggregate_force_push(
+        scope(),
+        vec![changed, removed],
+        Vec::new(),
+    )
+    .unwrap();
+
+    assert!(plan.blockers.is_empty());
+    assert_eq!(plan.entries.len(), 2);
+    assert!(
+        plan.entries
+            .iter()
+            .all(|entry| entry.disposition == Disposition::Action)
+    );
+    assert!(
+        plan.actions
+            .iter()
+            .any(|action| action.kind == grip::mutation::model::ActionKind::RemoveDestination)
+    );
+}
+
 fn tree_addition(relative: Vec<u8>, kind: NodeKind) -> ClassificationRecord {
     let mapping = ResolvedMapping {
         kind: MappingKind::Tree,

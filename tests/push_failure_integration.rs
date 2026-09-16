@@ -48,6 +48,152 @@ fn fixture() -> (
     (root, home, registry, state, selection, plan)
 }
 
+fn aggregate_fixture() -> (
+    tempfile::TempDir,
+    grip::project::ProjectPaths,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    Selection,
+    grip::mutation::model::MutationPlan,
+) {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source_a = root.path().join("source-a");
+    let source_b = root.path().join("source-b");
+    let source_c = root.path().join("source-c");
+    let destination_a = root.path().join("destination-a");
+    let destination_b = root.path().join("destination-b");
+    let destination_c = root.path().join("destination-c");
+    fs::write(&source_a, "accepted-a").unwrap();
+    fs::write(&source_b, "accepted-b").unwrap();
+    fs::write(&source_c, "accepted-c").unwrap();
+    support::write_descriptor(
+        &metadata_dir,
+        &[
+            ("file", &source_a, &destination_a),
+            ("file", &source_b, &destination_b),
+            ("file", &source_c, &destination_c),
+        ],
+    );
+    let home = support::project_home(&metadata_dir);
+    let selection = Selection::All;
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let records = grip::observation::inspect(&home, &registry, &state.accepted, &selection)
+        .unwrap()
+        .values()
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .collect();
+    let initial = grip::push::plan::build_with_parent_requirements(
+        ClassificationScope {
+            kind: "all".into(),
+            path_space: PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+        registry.missing_destination_parents(),
+    )
+    .unwrap();
+    grip::mutation::execution::execute(&home, &registry, &state, &selection, &initial).unwrap();
+
+    fs::write(&source_a, "source-wins-a").unwrap();
+    fs::write(&source_b, "source-wins-b").unwrap();
+    fs::write(&source_c, "source-wins-c").unwrap();
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let records = grip::observation::inspect(&home, &registry, &state.accepted, &selection)
+        .unwrap()
+        .values()
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .collect();
+    let plan = grip::mutation::plan::build_aggregate_force_push(
+        ClassificationScope {
+            kind: "all".into(),
+            path_space: PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+        registry.missing_destination_parents(),
+    )
+    .unwrap();
+    (root, home, registry, state, selection, plan)
+}
+
+#[test]
+fn aggregate_force_stops_after_the_first_failure_and_retains_prior_entry_publication() {
+    let (root, home, registry, state, selection, plan) = aggregate_fixture();
+    let completed_identity = plan.actions[0].identity.clone().unwrap();
+    let result = grip::mutation::execution::execute_with_fault_hook(
+        &home,
+        &registry,
+        &state,
+        &selection,
+        &plan,
+        support::fail_push_at(FaultPhase::BeforeActionRevalidation(1)),
+    );
+    let error = result.unwrap_err();
+    let outcome = grip::CommandOutcome::failure(&error);
+    let entries = outcome.details["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["status"], "completed");
+    assert_eq!(entries[1]["status"], "failed");
+    assert_eq!(entries[2]["status"], "unattempted");
+    let grip::GripError::MutationFailed(failure) = error else {
+        panic!("expected aggregate mutation failure");
+    };
+    assert_eq!(
+        failure.plan.operation,
+        grip::mutation::model::MutationOperation::AggregateForcePush
+    );
+    assert_eq!(
+        failure.plan.actions[0].status,
+        grip::mutation::model::ActionStatus::Completed
+    );
+    assert_eq!(
+        failure.plan.actions[1].status,
+        grip::mutation::model::ActionStatus::Failed
+    );
+    assert_eq!(failure.baseline.outcome, "partially_published");
+    assert_eq!(failure.baseline.published_generation, Some(1));
+    assert!(failure.baseline.publication_visible);
+    assert_eq!(
+        fs::read_to_string(root.path().join("destination-a")).unwrap(),
+        "source-wins-a"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("destination-b")).unwrap(),
+        "accepted-b"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("destination-c")).unwrap(),
+        "accepted-c"
+    );
+    let current = grip::state::publication::load(&home).unwrap();
+    assert_eq!(current.accepted.generation, Some(1));
+    assert!(
+        current
+            .accepted
+            .complete_baselines
+            .contains_key(&completed_identity)
+    );
+    let summary = support::read_operation_component::<OperationSummaryPayloadV2>(
+        &home
+            .path()
+            .join("state/operations")
+            .join(&failure.operation_id)
+            .join("operation.json"),
+    );
+    assert_eq!(summary.payload.aggregate_entries.len(), 3);
+    assert_eq!(summary.payload.aggregate_entries[0].status, "completed");
+    assert_eq!(
+        summary.payload.aggregate_entries[0].publication_generation,
+        Some(1)
+    );
+    assert_eq!(summary.payload.aggregate_entries[1].status, "failed");
+    assert_eq!(summary.payload.aggregate_entries[2].status, "unattempted");
+}
+
 fn metadata_only_fixture() -> (
     tempfile::TempDir,
     grip::project::ProjectPaths,

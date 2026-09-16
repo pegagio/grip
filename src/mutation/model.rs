@@ -13,6 +13,7 @@ pub enum MutationOperation {
     Pull,
     Sync,
     Resolve,
+    AggregateForcePush,
 }
 
 impl MutationOperation {
@@ -22,6 +23,7 @@ impl MutationOperation {
             Self::Pull => "pull",
             Self::Sync => "sync",
             Self::Resolve => "resolve",
+            Self::AggregateForcePush => "aggregate_force_push",
         }
     }
 
@@ -119,6 +121,7 @@ pub enum ActionKind {
     ReplaceDestinationLinkDirectory,
     ApplyMetadata,
     FinalizeDirectoryMetadata,
+    RemoveDestination,
 }
 
 /// Complete metadata-specific action evidence retained within Operation Record V1.

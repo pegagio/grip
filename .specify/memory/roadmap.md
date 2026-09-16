@@ -1,18 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.12.2 -> 1.13.0
-Bump rationale: Add two authorized planned specifications that expand the public CLI contract. The prior revision's 1.12.2 footer omission is reconciled by this amendment.
+Version change: 1.13.2 -> 1.13.3
+Bump rationale: Record verified completion of Feature 027 after a trustworthy worktree debrief found no outcome, scope, or constraint findings.
 
 Changes this revision:
-  - Reconciled the prior Feature 026 amendment's version-metadata discrepancy
-  - Added Feature 027 for no-selector aggregate forced push
-  - Added Feature 028 for configurable external diff invocation
+  - Verified Feature 027 Aggregate Forced Push
 
-Specs affected: 027, 028
-Open questions added/resolved: added Q-22 and Q-23
+Specs affected: 027
+Open questions added/resolved: resolved Q-22
 
-Notes: Direct active-user authorization on 2026-09-16. Feature 027 intentionally supersedes the no-selector portion of the exact-entry force boundary, while retaining aggregate baseline-publication semantics as an explicit clarification. Feature 028 defaults to the standard `diff` executable and must not execute shell strings.
+Notes: Debrief `specs/027-aggregate-forced-push/roadmap-reviews/debrief-20260916T141420Z.md` reviewed HEAD through WORKTREE and recommended verified with no findings.
 -->
 
 # Grip — Spec Roadmap
@@ -43,7 +41,7 @@ These constraints apply across the ledger. Each is grounded in the active user-a
 - **C-04 — Proportional rigor:** Designs must address demonstrated local failure modes with the simplest maintainable mechanism. Long-lived tree locks, watchers, persistent inode identity, kernel integration, and snapshot-isolation machinery require explicit evidence that simpler inspection, revalidation, and atomic publication are insufficient.
 - **C-05 — Validate, revalidate, verify:** Mutations require a complete deterministic plan, relevant pre-action revalidation, staged publication where supported, verification, and baseline publication only after successful acceptance. Git or another operator-selected system owns history and recovery; Grip does not provide a competing recovery interface.
 - **C-06 — Bounded concurrency:** External edits are handled through evidence capture, revalidation, and explicit drift errors. Only short-lived coordination around Grip-owned registry or state publication may be introduced without a separately justified governance exception.
-- **C-07 — Explicit mutation semantics:** `push`, `pull`, and `sync` mutate by default; `-n` and `--dry-run` do not mutate. Ordinary operations block on conflicts or known unsafe conditions before the first mutation. `push --force` and `pull --force` may select the source or destination complete state, respectively, including absence, for one exact managed entry. Feature 027 supersedes the exact-entry limit only for a no-selector `push --force`, which selects the complete source state for all managed entries; its baseline-publication behavior remains explicitly unresolved in Q-22.
+- **C-07 — Explicit mutation semantics:** `push`, `pull`, and `sync` mutate by default; `-n` and `--dry-run` do not mutate. Ordinary operations block on conflicts or known unsafe conditions before the first mutation. `push --force` and `pull --force` may select the source or destination complete state, respectively, including absence, for one exact managed entry. Feature 027 supersedes the exact-entry limit only for a no-selector `push --force`, which selects the complete source state for all managed entries. After each verified completed aggregate entry, Grip publishes its accepted evidence; a later failure leaves the aggregate operation failed and all uncompleted entries unaccepted.
 - **C-08 — Responsive by evidence:** Common inspection and planning workflows must remain responsive. Traversal, hashing, caching, parallelism, and indexing decisions are driven by representative measurements rather than speculative optimization.
 - **C-09 — Allowlisted filesystem contract:** Ordinary regular files and directories form the initial payload boundary. Unsupported nodes or unreproducible metadata transitions are reported precisely and never silently coerced; macOS and Unix contracts may precede broader portability.
 - **C-10 — Merge-bounded persistence:** Before merge, feature artifacts and implementation form one mutable, reviewable unit with accepted discoveries flowed back. Merge into the designated integration branch freezes the feature directory semantically, and later behavioral changes flow forward through new features.
@@ -368,7 +366,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-15 after `grip add home/ ~/` rejected exact managed destination symlinks at `.bash_profile` and `.screenrc` with the non-actionable message `selected baseline evidence is not complete and equivalent`.
 - **Notes:** This feature flows forward from verified Features 009, 023, and 025. An exact destination-leaf symlink is an unresolved replaceable obstacle, not supported payload and not baseline evidence. Ordinary `add` records intent without touching it. Replacement requires one exact source-space selector and explicit source-winning force, removes only the verified link object, never follows or mutates its target, and publishes accepted evidence only after the replacement is verified. Any symlink in a required destination ancestor remains a hard blocker requiring explicit operator resolution. The generic add-time baseline error is replaced with actionable path-specific diagnostics. Verification evidence: `specs/026-exact-destination-symlink-replacement/roadmap-reviews/debrief-20260916T030911Z.md` (`PROCEED`, no findings).
 
-### 027 — Aggregate Forced Push  [status: planned]
+### 027 — Aggregate Forced Push  [status: verified]
 
 - **Spec dir:** `specs/027-aggregate-forced-push`
 - **Description:** Allow `grip push --force` without a path selector to force the source-complete state across all managed entries in the selected project.
@@ -378,7 +376,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 011, 023, 026
 - **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-09, C-10, C-11, C-12
 - **Addresses:** Direct active-user decision on 2026-09-16 that `grip push --force` must force push all changes rather than require a specific path.
-- **Notes:** This is an intentional forward-flowing exception to Feature 011's exact-entry force boundary and Feature 019's exact-entry guidance. A no-selector command means all managed entries in the selected project; a supplied selector retains the existing exact-entry contract. Whether aggregate actions require all-or-nothing baseline publication, or may publish verified subsets after an operational failure, remains Q-22 and must be settled before implementation.
+- **Notes:** This is an intentional forward-flowing exception to Feature 011's exact-entry force boundary and Feature 019's exact-entry guidance. A no-selector command means all managed entries in the selected project; a supplied selector retains the existing exact-entry contract. Direct active-user decision resolves Q-22: accepted evidence is published for each verified completed aggregate entry, while a later failure leaves the aggregate failed and uncompleted entries unaccepted. Verified by [Feature 027 debrief](../../specs/027-aggregate-forced-push/roadmap-reviews/debrief-20260916T141420Z.md) with no findings.
 
 ### 028 — Configurable External Diff Program  [status: planned]
 
@@ -417,7 +415,7 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-19 — Representative large-file workload (021):** Resolved by verified Feature 021. The representative workload is an isolated local macOS ARM64 release build with differing 19 MiB regular source and destination files, exercising `grip add` and JSON `grip status` for 100 warm samples each.
 - **Q-20 — Large-file performance acceptance (021):** Resolved by verified Feature 021. Both representative operations have a one-second p95 release-build acceptance threshold, enforced by the isolated performance gate; final recorded p95 values were 573.669375 ms for `grip add` and 184.788375 ms for `grip status`.
 - **Q-21 — Force-add replacement contract (022):** Resolved for initial delivery by Feature 022. `grip add --force` is explicit confirmation for exactly one equal-destination file mapping; tree, source-overlap, nested, and multi-mapping conflicts remain rejected. The displaced mapping and its current evidence are retired all-or-nothing, and removal of the exact mapping clears ownership-validation inputs before a later ordinary add.
-- **Q-22 — Aggregate forced-push publication (027):** Decide whether `grip push --force` without a selector must publish accepted baseline evidence atomically for the full aggregate operation, may publish only verified completed entries after a later failure, or uses another explicit failure model. The user has intentionally left this unresolved.
+- **Q-22 — Aggregate forced-push publication (027):** Resolved by direct active-user decision on 2026-09-16. `grip push --force` without a selector publishes accepted baseline evidence for each verified completed entry; a later failure leaves the aggregate operation failed and every uncompleted entry unaccepted.
 - **Q-23 — External diff configuration contract (028):** Select the configuration location and schema, executable and tokenized-argument representation, supported file and directory invocation forms, comparison-exit interpretation, and temporary-material lifecycle.
 
 ## Cross-Cutting Notes
@@ -435,4 +433,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.13.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16
+**Version**: 1.13.3 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16

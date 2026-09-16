@@ -244,6 +244,9 @@ thread_local! {
 
 fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     if args.force {
+        if args.path.is_none() {
+            return execute_aggregate_force_push(args.dry_run);
+        }
         return execute_forced_direction(
             args.dry_run,
             args.destination,
@@ -309,6 +312,63 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     state::rebinding::require_mutation(&state.rebinding)?;
     let applied = push::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::push_applied(&applied))
+}
+
+/// Execute the sole aggregate directional force shape: source wins for every managed entry in
+/// the selected project. A supplied selector always remains on the exact-resolution path.
+fn execute_aggregate_force_push(dry_run: bool) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)?;
+    let state = state::publication::load(&home)?;
+    let project_root = home.project_root()?;
+    let destination_home = home.destination_home().ok_or_else(|| {
+        GripError::InvalidConfiguration("selected project has no destination home".into())
+    })?;
+    for mapping in registry.portable_mappings()? {
+        let destination = mapping.destination.resolve(project_root, destination_home);
+        if path_policy::has_symbolic_link_component(&destination)? {
+            return Err(GripError::mapping(
+                "aggregate_force_push",
+                "destination_symlink_ancestry",
+                vec![destination.to_string_lossy().into_owned()],
+                "aggregate force does not permit destination symbolic links or symbolic-link ancestry",
+            ));
+        }
+    }
+    let path_space = observation::model::PathSpace::Source;
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        None,
+        path_space,
+        "push",
+    )?;
+    reject_fenced_selection(&home, &selection)?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("aggregate_force_push"))?;
+    state::publication::revalidate(&home, &state)
+        .map_err(|error| error.for_operation("aggregate_force_push"))?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .collect();
+    let scope = classification_scope(&selection, None, path_space);
+    let plan = mutation::plan::build_aggregate_force_push(
+        scope,
+        records,
+        registry.missing_destination_parents(),
+    )?;
+    if dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
+        return Ok(CommandOutcome::mutation_plan(
+            &plan,
+            if dry_run { "dry_run" } else { "execute" },
+            state.accepted.generation,
+        ));
+    }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
+    let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::mutation_applied(&applied))
 }
 
 fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {

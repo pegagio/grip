@@ -106,6 +106,18 @@ impl ProjectFixture {
         self.metadata_dir().join("state")
     }
 
+    /// Return the accepted-state generation for aggregate publication assertions.
+    pub fn accepted_generation(&self) -> Option<u64> {
+        let home = grip::project::ProjectPaths::project_metadata(
+            self.metadata_dir(),
+            self.home_root.clone(),
+        );
+        grip::state::publication::load(&home)
+            .unwrap()
+            .accepted
+            .generation
+    }
+
     pub fn write_descriptor(&self, mappings: &[PortableFixtureMapping<'_>]) {
         let metadata = self.metadata_dir();
         fs::create_dir_all(&metadata).unwrap();
