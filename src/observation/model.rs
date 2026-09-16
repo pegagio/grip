@@ -136,6 +136,20 @@ pub struct CompleteObservedState {
     pub unsupported_bsd_flags: Vec<String>,
 }
 
+/// Runtime-only no-follow identity for an exact managed destination leaf link.
+///
+/// This intentionally excludes link text and target-derived data. It exists only long enough to
+/// classify and revalidate the directory entry that an explicit source-winning force may replace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DestinationLeafLinkEvidence {
+    pub device: u64,
+    pub inode: u64,
+    pub mode: u32,
+    pub size: u64,
+    pub modified_seconds: i64,
+    pub modified_nanoseconds: i64,
+}
+
 /// Current membership interpretation for an observed identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Membership {
@@ -154,6 +168,7 @@ pub struct ObservedEntry {
     pub destination: Option<SupportedState>,
     pub source_complete: Option<CompleteObservedState>,
     pub destination_complete: Option<CompleteObservedState>,
+    pub destination_link: Option<DestinationLeafLinkEvidence>,
     pub metadata_findings: Vec<crate::metadata::model::CompatibilityFinding>,
     pub endpoint_capabilities: Vec<crate::metadata::model::EndpointCapabilityProfile>,
     pub source_diagnostic: Option<DiagnosticEvidence>,
@@ -205,6 +220,34 @@ impl Selection {
 }
 
 pub type Observation = BTreeMap<EntryIdentity, ObservedEntry>;
+
+/// Make descendants of one selected destination-link directory available for the only operation
+/// that can safely create them: a source-winning replacement of that directory link.
+///
+/// Discovery correctly reports those descendants as blocked while the link exists because it is
+/// their destination ancestor. Once the selected directory link itself has been independently
+/// identified, its descendants are planned as absent peers. This helper never applies to status,
+/// ordinary synchronization, or a different selected identity.
+pub fn expose_destination_link_descendants_for_replacement(
+    observation: &mut Observation,
+    selected_link: &EntryIdentity,
+) {
+    for (identity, entry) in observation.iter_mut() {
+        let descendant = identity.mapping == selected_link.mapping
+            && raw_descendant(&identity.relative_path, &selected_link.relative_path);
+        let only_selected_link_ancestor = entry.destination_link.is_none()
+            && entry.blocking
+            && !entry.unsupported.is_empty()
+            && entry
+                .unsupported
+                .iter()
+                .all(|reason| reason == "destination:symlink");
+        if descendant && only_selected_link_ancestor {
+            entry.blocking = false;
+            entry.unsupported.clear();
+        }
+    }
+}
 
 /// Resolve one optional selector against current mappings and retained identities.
 pub fn resolve_selection(

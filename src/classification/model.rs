@@ -25,6 +25,7 @@ pub enum Classification {
     ConvergedDeletion,
     UnsupportedManaged,
     UnsafeCollision,
+    UnresolvedDestinationLink,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -75,6 +76,8 @@ pub struct ClassificationRecord {
     pub destination_complete: Option<crate::metadata::model::SupportedEntryStateV3>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline_complete: Option<crate::metadata::model::SupportedEntryStateV3>,
+    #[serde(skip)]
+    pub destination_link: Option<crate::observation::model::DestinationLeafLinkEvidence>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub compatibility_findings: Vec<crate::metadata::model::CompatibilityFinding>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -106,6 +109,7 @@ pub struct ClassificationCounts {
     pub converged_deletion: usize,
     pub unsupported_managed: usize,
     pub unsafe_collision: usize,
+    pub unresolved_destination_link: usize,
 }
 
 impl ClassificationCounts {
@@ -129,6 +133,7 @@ impl ClassificationCounts {
             Classification::ConvergedDeletion => self.converged_deletion += 1,
             Classification::UnsupportedManaged => self.unsupported_managed += 1,
             Classification::UnsafeCollision => self.unsafe_collision += 1,
+            Classification::UnresolvedDestinationLink => self.unresolved_destination_link += 1,
         }
     }
 }

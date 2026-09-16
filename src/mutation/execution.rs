@@ -138,7 +138,9 @@ where
                     action.milestones.verification = "verified".into();
                     action.milestones.durability_confirmed = true;
                 }
-                ActionKind::AddFile | ActionKind::ReplaceFile => {
+                ActionKind::AddFile
+                | ActionKind::ReplaceFile
+                | ActionKind::ReplaceDestinationLinkFile => {
                     let identity = action.identity.as_ref().ok_or_else(|| {
                         GripError::Internal("managed file action has no identity".into())
                     })?;
@@ -228,6 +230,43 @@ where
                     failure_reason = "cleanup_failure";
                     drop(staged);
                     fault(crate::mutation::FaultPhase::AfterStagingCleanup(index))?;
+                }
+                ActionKind::ReplaceDestinationLinkDirectory => {
+                    let identity = action.identity.as_ref().ok_or_else(|| {
+                        GripError::Internal("managed directory action has no identity".into())
+                    })?;
+                    let expected = action.expected_source.as_ref().ok_or_else(|| {
+                        GripError::Internal(
+                            "managed directory action has no source evidence".into(),
+                        )
+                    })?;
+                    if expected.node_kind != crate::discovery::model::NodeKind::Directory {
+                        return Err(GripError::Internal(
+                            "destination-link directory action has non-directory source evidence"
+                                .into(),
+                        ));
+                    }
+                    failure_reason = "publication_failure";
+                    fault(crate::mutation::FaultPhase::BeforePayloadPublication(index))?;
+                    revalidate_action(home, &locked_registry, &locked_state, action, operation)?;
+                    crate::mutation::filesystem::replace_link_with_empty_directory(&destination)?;
+                    action.milestones.publication = "visible".into();
+                    action.milestones.durability_confirmed = true;
+                    if let Some(metadata) = action.metadata.as_ref() {
+                        crate::metadata::macos::apply_metadata_paths_with_hook(
+                            &identity.source_path(),
+                            &destination,
+                            crate::discovery::model::NodeKind::Directory,
+                            &metadata.expected_after.metadata,
+                            |phase| metadata_fault(&mut fault, index, phase),
+                        )
+                        .map_err(|error| {
+                            GripError::from_io("could not apply complete directory metadata", error)
+                        })?;
+                    }
+                    failure_reason = "verification_failure";
+                    crate::mutation::filesystem::verify_target(&destination, expected)?;
+                    action.milestones.verification = "verified".into();
                 }
                 ActionKind::ApplyMetadata | ActionKind::FinalizeDirectoryMetadata => {
                     let identity = action.identity.as_ref().ok_or_else(|| {
@@ -638,8 +677,19 @@ fn rebuild_plan(
 ) -> Result<MutationPlan, GripError> {
     let operation = expected.operation;
     let operation_name = operation.as_str();
-    let observed = crate::observation::inspect(home, registry, &state.accepted, selection)
+    let mut observed = crate::observation::inspect(home, registry, &state.accepted, selection)
         .map_err(|error| error.for_operation(operation_name))?;
+    let destination_link_directory = expected.actions.iter().find_map(|action| {
+        (action.kind == ActionKind::ReplaceDestinationLinkDirectory)
+            .then_some(action.identity.as_ref())
+            .flatten()
+    });
+    if let Some(identity) = destination_link_directory {
+        crate::observation::model::expose_destination_link_descendants_for_replacement(
+            &mut observed,
+            identity,
+        );
+    }
     let records = observed
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
@@ -660,13 +710,25 @@ fn rebuild_plan(
             records,
             registry.missing_destination_parents(),
         ),
-        MutationOperation::Resolve => crate::mutation::plan::build_resolution(
-            expected.scope.clone(),
-            records,
-            expected.winner.ok_or_else(|| {
+        MutationOperation::Resolve => {
+            let winner = expected.winner.ok_or_else(|| {
                 GripError::Internal("resolution plan has no explicit winner".into())
-            })?,
-        ),
+            })?;
+            if let Some(identity) = destination_link_directory {
+                if winner != crate::mutation::model::ConflictWinner::Source {
+                    return Err(GripError::Internal(
+                        "destination-link directory plan has destination winner".into(),
+                    ));
+                }
+                crate::mutation::plan::build_source_winner_destination_link_subtree_resolution(
+                    expected.scope.clone(),
+                    records,
+                    identity,
+                )
+            } else {
+                crate::mutation::plan::build_resolution(expected.scope.clone(), records, winner)
+            }
+        }
     }
 }
 
@@ -711,6 +773,12 @@ fn revalidate_action(
         )
     })?;
     let record = classification::classify_accepted(entry, &state.accepted);
+    if action.expected_destination_link != record.destination_link {
+        return Err(stale(
+            operation,
+            "destination link object changed before mutation action",
+        ));
+    }
     let created_directory_finalizer = action.kind == ActionKind::FinalizeDirectoryMetadata
         && action
             .metadata
@@ -770,8 +838,16 @@ fn revalidate_action(
     } else {
         record.source == action.expected_source && record.destination == action.expected_destination
     };
+    let replacement_descendant_is_still_absent = operation == MutationOperation::Resolve
+        && action.expected_destination.is_none()
+        && matches!(
+            action.kind,
+            ActionKind::AddFile | ActionKind::CreateDirectory
+        )
+        && record.classification == classification::model::Classification::SourceAddition;
     let classification_matches = operation != MutationOperation::Resolve
         || created_directory_finalizer
+        || replacement_descendant_is_still_absent
         || crate::mutation::plan::resolution_is_actionable(
             match action.direction {
                 MutationDirection::Push => crate::mutation::model::ConflictWinner::Source,

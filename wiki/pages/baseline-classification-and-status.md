@@ -1,8 +1,8 @@
 ---
 title: Baselines, classification, and status
 type: component
-sources: [S001, S004, S018, S019, S020]
-updated: 2026-09-13
+sources: [S001, S004, S018, S019, S020, S026]
+updated: 2026-09-15
 ---
 
 # Baselines, classification, and status
@@ -18,3 +18,9 @@ Feature 015 introduced concise path-centered status groups. Feature 017 defines 
 For a newly added unequal source-defined member, Grip records the destination as the initial comparison reference without changing either payload. The existing classifier then presents the source as an ordinary pending push; later destination drift remains a conflict. [Mapping addition and initial baselines](./mapping-addition-and-initial-baselines.md) records the publication boundary. (S020)
 
 Unambiguous one-sided changes can synchronize normally. Divergence, initial collision, unbaselined differences, and one-sided absence block ordinary operations. Removing a mapping or ignoring an entry prunes its baseline; later reintroduction is new membership. (S001)
+
+An exact managed destination symlink is classified as `unresolved_destination_link`, not as supported payload or accepted baseline evidence. Status and blocked dry runs identify the managed source and link path; only an executable exact source-winning force command is presented. (S026)
+
+## Related pages
+
+- [Exact destination symlink replacement](./exact-destination-symlink-replacement.md)

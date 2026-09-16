@@ -409,14 +409,41 @@ fn execute_forced_direction(
         path_space,
         "force",
     )?;
-    let selection = exact_resolution_selection(selected, &state.accepted, &selector)?;
+    let unbaselined_link_candidate = match &selected {
+        observation::model::Selection::Subtree(identity)
+            if !state.accepted.complete_baselines.contains_key(identity) =>
+        {
+            Some(identity.clone())
+        }
+        _ => None,
+    };
+    let selection = match exact_resolution_selection(selected.clone(), &state.accepted, &selector) {
+        Ok(selection) => selection,
+        Err(_) if unbaselined_link_candidate.is_some() => selected,
+        Err(error) => return Err(error),
+    };
     reject_fenced_selection(&home, &selection)?;
-    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)?;
+    let mut observed = observation::inspect(&home, &registry, &state.accepted, &selection)?;
+    if let Some(identity) = unbaselined_link_candidate.as_ref() {
+        observation::model::expose_destination_link_descendants_for_replacement(
+            &mut observed,
+            identity,
+        );
+    }
     state::publication::revalidate(&home, &state)?;
     let records = observed
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect::<Vec<_>>();
+    if let Some(identity) = unbaselined_link_candidate.as_ref()
+        && !records.iter().any(|record| {
+            record.identity == *identity
+                && record.classification
+                    == classification::model::Classification::UnresolvedDestinationLink
+        })
+    {
+        return Err(resolution_selector_error(&selector));
+    }
     let scope = classification_scope(&selection, Some(&selector), path_space);
     let absence_authority = match (winner, records.first().map(|record| record.classification)) {
         (
@@ -463,7 +490,16 @@ fn execute_forced_direction(
             applied.baseline,
         ));
     }
-    let plan = mutation::plan::build_resolution(scope, records, winner)?;
+    let plan = if let Some(identity) = unbaselined_link_candidate.as_ref() {
+        if winner != mutation::model::ConflictWinner::Source {
+            return Err(resolution_selector_error(&selector));
+        }
+        mutation::plan::build_source_winner_destination_link_subtree_resolution(
+            scope, records, identity,
+        )?
+    } else {
+        mutation::plan::build_resolution(scope, records, winner)?
+    };
     if dry_run || !plan.blockers.is_empty() {
         let outcome = CommandOutcome::mutation_plan(
             &plan,
@@ -765,6 +801,7 @@ fn fenced_classification_record(
         source_complete: None,
         destination_complete: None,
         baseline_complete: None,
+        destination_link: None,
         compatibility_findings: Vec::new(),
         endpoint_capabilities: Vec::new(),
         prospective_direction: classification::model::Direction::None,
@@ -840,6 +877,8 @@ fn status_conflict_guidance(
                 &record.destination_path.display,
                 accepted,
                 invocation_directory,
+                record.classification
+                    == classification::model::Classification::UnresolvedDestinationLink,
             ))
         })
         .collect()
@@ -853,25 +892,33 @@ fn force_resolution_guidance(
     plan.blockers
         .iter()
         .map(|blocker| {
-            if !matches!(
-                blocker.reason.as_str(),
-                "initial_collision"
-                    | "divergent_change"
-                    | "one_sided_absence_requires_force"
-                    | "delete_change_conflict"
-                    | "change_delete_conflict"
-            ) || blocker.paths.len() < 2
-            {
+            if blocker.paths.len() < 2 {
                 return None;
             }
             let entry = plan.entries.iter().find(|entry| {
                 entry.source_path == blocker.paths[0] && entry.destination_path == blocker.paths[1]
             })?;
+            let unresolved_destination_link = entry.classification
+                == classification::model::Classification::UnresolvedDestinationLink;
+            if !unresolved_destination_link
+                && !matches!(
+                    blocker.reason.as_str(),
+                    "initial_collision"
+                        | "divergent_change"
+                        | "one_sided_absence_requires_force"
+                        | "delete_change_conflict"
+                        | "change_delete_conflict"
+                        | "destination_leaf_symlink"
+                )
+            {
+                return None;
+            }
             Some(force_resolution_guidance_for_identity(
                 &entry.identity,
                 &entry.destination_path.display,
                 accepted,
                 invocation_directory,
+                unresolved_destination_link,
             ))
         })
         .collect()
@@ -889,6 +936,7 @@ fn is_ordinary_force_conflict(
             | classification::model::Classification::DestinationSideDeletion
             | classification::model::Classification::DeleteChangeConflict
             | classification::model::Classification::ChangeDeleteConflict
+            | classification::model::Classification::UnresolvedDestinationLink
     ) && !findings.iter().any(|finding| finding.blocking)
 }
 
@@ -897,6 +945,7 @@ fn force_resolution_guidance_for_identity(
     destination: &str,
     accepted: &state::AcceptedState,
     invocation_directory: &std::path::Path,
+    destination_link_replacement: bool,
 ) -> result::HumanConflictGuidance {
     use observation::model::Selection;
     let selection = match (identity.mapping.kind, identity.relative_path.is_empty()) {
@@ -906,7 +955,11 @@ fn force_resolution_guidance_for_identity(
     };
     let source_path = identity.source_path();
     let source = path_policy::git_relative_display(&source_path, invocation_directory);
-    if exact_resolution_selection(selection, accepted, &source_path).is_ok() {
+    let established_exact = matches!(selection, Selection::Entry(_))
+        || accepted.complete_baselines.contains_key(identity);
+    if destination_link_replacement {
+        result::HumanConflictGuidance::ForceSource { source }
+    } else if established_exact {
         result::HumanConflictGuidance::ForcePair {
             source,
             destination: destination.into(),
@@ -993,8 +1046,8 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         path_policy::ProjectRelativePath::parse_cli(&args.source, true)?.resolve(&context.root);
     let destination_path = path_policy::DestinationPath::parse(&args.destination)?
         .resolve(&context.root, context.user_home.path());
-    let source_kind = existing_mapping_kind(&source_path, operation)?;
-    let destination_kind = existing_mapping_kind(&destination_path, operation)?;
+    let source_kind = existing_mapping_kind(&source_path, operation, false)?;
+    let destination_kind = existing_mapping_kind(&destination_path, operation, true)?;
     let kind = match (source_kind, destination_kind) {
         (None, None) => {
             return Err(GripError::mapping(
@@ -1028,12 +1081,11 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         true,
         operation,
     )?;
-    let destination_evidence = path_policy::inspect_durable_endpoint(
+    let destination_evidence = path_policy::inspect_durable_destination_leaf_link(
         &portable
             .destination
             .resolve(&context.root, context.user_home.path()),
         kind,
-        false,
         operation,
     )?;
     let added = Mapping::new(
@@ -1472,8 +1524,10 @@ fn restore_fenced_add(
 fn existing_mapping_kind(
     path: &std::path::Path,
     operation: &str,
+    allow_final_link: bool,
 ) -> Result<Option<mapping::MappingKind>, GripError> {
     match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() && allow_final_link => Ok(None),
         Ok(metadata) if metadata.file_type().is_symlink() => Err(GripError::mapping(
             operation,
             "symlink_endpoint",

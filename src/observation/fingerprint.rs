@@ -1,6 +1,8 @@
 //! Descriptor-bound fingerprints for supported filesystem entries.
 
-use super::model::{ContentFingerprint, DiagnosticEvidence, SupportedState};
+use super::model::{
+    ContentFingerprint, DestinationLeafLinkEvidence, DiagnosticEvidence, SupportedState,
+};
 use crate::discovery::model::NodeKind;
 use crate::error::GripError;
 use rustix::fd::OwnedFd;
@@ -111,7 +113,21 @@ fn inspect_complete_descriptor(
 pub enum RelativeCompleteObservation {
     Missing,
     Supported(Box<super::model::CompleteObservedState>),
+    DestinationLeafLink(DestinationLeafLinkEvidence),
     Blocking { reason: &'static str },
+}
+
+pub(crate) fn destination_leaf_link(
+    metadata: crate::discovery::filesystem::NodeMetadata,
+) -> DestinationLeafLinkEvidence {
+    DestinationLeafLinkEvidence {
+        device: metadata.stat.st_dev as u64,
+        inode: metadata.stat.st_ino,
+        mode: metadata.stat.st_mode as u32,
+        size: metadata.stat.st_size as u64,
+        modified_seconds: metadata.stat.st_mtime,
+        modified_nanoseconds: metadata.stat.st_mtime_nsec,
+    }
 }
 
 /// Reuses descriptor-bound ancestor directories during one observation pass.
@@ -280,6 +296,11 @@ impl RelativeInspector {
             }
         };
         let kind = metadata.classify(root_device);
+        if kind == NodeKind::Symlink {
+            return Ok(RelativeCompleteObservation::DestinationLeafLink(
+                destination_leaf_link(metadata),
+            ));
+        }
         if kind != expected_kind || !matches!(kind, NodeKind::File | NodeKind::Directory) {
             return Ok(RelativeCompleteObservation::Blocking {
                 reason: crate::discovery::filesystem::unsupported_reason(kind)

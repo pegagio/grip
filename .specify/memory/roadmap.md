@@ -1,17 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.11.0 -> 1.11.1
-Bump rationale: Record Feature 025's completed verification without changing its approved scope.
+Version change: 1.12.1 -> 1.12.2
+Bump rationale: Record the completed Feature 026 verification evidence and authorized transition from in-progress to verified.
 
 Changes this revision:
-  - Transitioned Feature 025 from `in-progress` to `verified`
-  - Recorded the no-finding debrief and completed lifecycle gates as verification evidence
+  - Marked Feature 026 verified after a no-finding implementation debrief
 
-Specs affected: 025
-Open questions added/resolved: None
+Specs affected: 026
+Open questions added/resolved: none
 
-Notes: Direct active-user authorization on 2026-09-15. The no-finding debrief confirmed that the implementation meets the approved contained-source outcome and scope with a trustworthy complete worktree delta.
+Notes: Direct active-user authorization on 2026-09-15 to close Feature 026 after a trustworthy HEAD-to-worktree debrief. The feature preserves payload-nonmutating `add`, exact-entry force authority, no-follow filesystem safety, and the hard blocker for symbolic-link ancestors.
 -->
 
 # Grip — Spec Roadmap
@@ -355,6 +354,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-15 after `grip add home/ ~/` was correctly identified as transitively recursive but blocked a core dotfiles-management use case.
 - **Notes:** This feature flows forward from Features 002 and 003. It replaces their conservative same-mapping prospective-tree rejection only for a tree source that is a strict descendant of its destination, and replaces arbitrary destination-only enumeration with inspection bounded to current source membership and retained accepted identities. Existing cross-mapping ownership rejection remains authoritative. A newly discovered unsafe member blocks before mutation and may be excluded only through ordinary explicit source policy. Verified on 2026-09-15 by the no-finding debrief at `specs/025-contained-source-tree-mappings/roadmap-reviews/debrief-20260915T232753Z.md` (`PROCEED`; all verification gates passed).
 
+### 026 — Exact Destination Symlink Replacement  [status: verified]
+
+- **Spec dir:** `specs/026-exact-destination-symlink-replacement`
+- **Description:** Allow mapping intent to be recorded when an exact managed destination leaf is a symbolic link, report the link precisely, and permit explicit exact-entry forced push to replace the link object with the mapped source state without following its target.
+- **Outcome:** A user can add a source-defined mapping such as `home/` to `~/` even when exact managed destinations such as `~/.bash_profile` or `~/.screenrc` are symbolic links, understand each unresolved link from deterministic diagnostics, and explicitly replace one selected destination link through `grip push --force SOURCE` while unrelated links and link targets remain untouched.
+- **Scope (in):** Nonmutating `grip add` admission for exact destination-leaf symlinks; unresolved managed-entry representation without an accepted baseline; precise human and machine diagnostics naming the managed entry and symlink path; status and dry-run guidance; exact-entry source-winning forced push for a regular-file or directory source; no-follow link-object removal and staged source-state replacement; pre-action link identity and ancestry revalidation; verification and accepted-state publication after successful replacement; documentation; and isolated filesystem regression coverage.
+- **Scope (out):** Following or modifying a symlink target; automatic replacement during `add`; replacement of a symlink ancestor; source symlink support; ordinary push, pull, sync, or delete bypass of link safety; destination-winning pull replacement; aggregate or mapping-wide force; multiple selectors; broad destination traversal; implicit ignore policy; and weakening cross-mapping ownership, topology, metadata, or publication safeguards.
+- **Depends on:** 009, 011, 019, 023, 025
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-09, C-10, C-11, C-12, C-13, C-14
+- **Addresses:** Direct active-user decision on 2026-09-15 after `grip add home/ ~/` rejected exact managed destination symlinks at `.bash_profile` and `.screenrc` with the non-actionable message `selected baseline evidence is not complete and equivalent`.
+- **Notes:** This feature flows forward from verified Features 009, 023, and 025. An exact destination-leaf symlink is an unresolved replaceable obstacle, not supported payload and not baseline evidence. Ordinary `add` records intent without touching it. Replacement requires one exact source-space selector and explicit source-winning force, removes only the verified link object, never follows or mutates its target, and publishes accepted evidence only after the replacement is verified. Any symlink in a required destination ancestor remains a hard blocker requiring explicit operator resolution. The generic add-time baseline error is replaced with actionable path-specific diagnostics. Verification evidence: `specs/026-exact-destination-symlink-replacement/roadmap-reviews/debrief-20260916T030911Z.md` (`PROCEED`, no findings).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -365,7 +376,7 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-04 — Initial tracking behavior (002):** Decide whether tracking creates intent only or may also execute an explicitly previewed initial synchronization.
 - **Q-05 — Gripignore contract (003):** Select the normative Gitignore behavior and decide whether `.gripignore` can ever be explicitly synchronized as payload.
 - **Q-06 — Directory membership and retirement (003, 008, 009):** Directory membership and metadata questions remain historical Feature 003/009 evidence. The retirement-command portion is superseded by Feature 011: `.gripignore` directly defines exclusions, and excluded entries do not retain separate user-managed tracking state.
-- **Q-07 — Symbolic links (003, 009):** Decide whether links are supported as non-followed link objects in the initial product or rejected entirely.
+- **Q-07 — Symbolic links (003, 009, 026):** Partially resolved by Feature 026. Source links remain unsupported payload, and symlink ancestors remain hard blockers. An exact managed destination-leaf symlink may be observed without following it, may not block nonmutating mapping admission, and may be replaced only by an explicit exact-entry source-winning forced push. Broader link-object synchronization remains undecided and outside Feature 026.
 - **Q-08 — Metadata equality (004, 009):** Select the first and final supported metadata fields, modification-time role, identity representation, and behavior when target capabilities differ.
 - **Q-09 — Recursive topology (002):** Enumerate equal, nested, and otherwise recursive source/destination relationships that mapping validation must reject.
 - **Q-10 — Operational failure policy (005):** The historical stop-after-first-failure evidence remains available in Feature 005. Its Grip-managed recovery portion is superseded by Feature 011 and Constitution 2.0.0; failures remain precisely reported without creating a Grip history or recovery interface.
@@ -396,4 +407,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.11.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15
+**Version**: 1.12.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15

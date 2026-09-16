@@ -329,6 +329,7 @@ pub struct PathEvidence {
     pub kind: MappingKind,
     pub source: bool,
     allow_absent: bool,
+    allow_final_link: bool,
     pub exists: bool,
     anchor: PathBuf,
     device: u64,
@@ -458,9 +459,10 @@ fn longest_existing_prefix(
     Ok((existing.to_path_buf(), suffix, metadata))
 }
 
-fn inspect_path(
+fn inspect_path_with_final_link(
     path: &Path,
     allow_absent: bool,
+    allow_final_link: bool,
     operation: &str,
 ) -> Result<ResolvedPath, GripError> {
     validate_input(path, operation)?;
@@ -473,7 +475,7 @@ fn inspect_path(
             "mapping source must exist",
         ));
     }
-    if suffix.is_empty() && metadata.file_type().is_symlink() {
+    if suffix.is_empty() && metadata.file_type().is_symlink() && !allow_final_link {
         return Err(invalid(
             operation,
             "symlink_endpoint",
@@ -520,6 +522,14 @@ fn inspect_path(
         anchor,
         metadata,
     })
+}
+
+fn inspect_path(
+    path: &Path,
+    allow_absent: bool,
+    operation: &str,
+) -> Result<ResolvedPath, GripError> {
+    inspect_path_with_final_link(path, allow_absent, false, operation)
 }
 
 fn validate_endpoint_kind(
@@ -593,6 +603,42 @@ fn inspect_endpoint_with_absence(
         kind,
         source,
         allow_absent,
+        allow_final_link: false,
+        anchor: inspected.anchor,
+        device: inspected.metadata.dev(),
+        inode: inspected.metadata.ino(),
+        node_mode: inspected.metadata.mode(),
+    })
+}
+
+/// Capture destination endpoint evidence while admitting only an exact final symbolic link.
+/// Tree roots remain subject to the normal ancestor-directory policy.
+pub fn inspect_durable_destination_leaf_link(
+    path: &Path,
+    kind: MappingKind,
+    operation: &str,
+) -> Result<PathEvidence, GripError> {
+    let allow_final_link = kind == MappingKind::File;
+    let inspected = inspect_path_with_final_link(path, true, allow_final_link, operation)?;
+    let is_final_link =
+        allow_final_link && inspected.exists && inspected.metadata.file_type().is_symlink();
+    if !is_final_link {
+        validate_endpoint_kind(&inspected, path, kind, operation)?;
+    }
+    Ok(PathEvidence {
+        submitted: path.to_path_buf(),
+        exists: inspected.exists,
+        // `canonicalize` follows a final link; keep its submitted spelling as the managed
+        // destination object instead.
+        canonical: if is_final_link {
+            path.to_path_buf()
+        } else {
+            inspected.canonical
+        },
+        kind,
+        source: false,
+        allow_absent: true,
+        allow_final_link,
         anchor: inspected.anchor,
         device: inspected.metadata.dev(),
         inode: inspected.metadata.ino(),
@@ -602,13 +648,35 @@ fn inspect_endpoint_with_absence(
 
 /// Reinspect an endpoint and reject drift from the captured evidence.
 pub fn revalidate(evidence: &PathEvidence, operation: &str) -> Result<(), GripError> {
-    let current = inspect_endpoint_with_absence(
+    let inspected = inspect_path_with_final_link(
         &evidence.submitted,
-        evidence.kind,
-        evidence.source,
         evidence.allow_absent,
+        evidence.allow_final_link,
         operation,
     )?;
+    let is_final_link = evidence.allow_final_link
+        && inspected.exists
+        && inspected.metadata.file_type().is_symlink();
+    if !is_final_link {
+        validate_endpoint_kind(&inspected, &evidence.submitted, evidence.kind, operation)?;
+    }
+    let current = PathEvidence {
+        submitted: evidence.submitted.clone(),
+        exists: inspected.exists,
+        canonical: if is_final_link {
+            evidence.submitted.clone()
+        } else {
+            inspected.canonical
+        },
+        kind: evidence.kind,
+        source: evidence.source,
+        allow_absent: evidence.allow_absent,
+        allow_final_link: evidence.allow_final_link,
+        anchor: inspected.anchor,
+        device: inspected.metadata.dev(),
+        inode: inspected.metadata.ino(),
+        node_mode: inspected.metadata.mode(),
+    };
     if current != *evidence {
         return Err(GripError::mapping(
             operation,

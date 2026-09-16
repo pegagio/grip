@@ -7,7 +7,7 @@ Sources are immutable inputs — the wiki never edits them.
 |----|--------|------|----------------|---------------|---------------|
 | S001 | `docs/product-definition.md` | file | 2026-09-03 | 2026-09-15 | `baseline-classification-and-status.md`, `mappings-and-managed-membership.md`, `synchronization-and-conflicts.md` |
 | S002 | `.specify/memory/constitution.md` | file | 2026-09-03 | 2026-09-03 | `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md`, `safety-and-recovery-model.md`, `implementation-and-delivery-direction.md` |
-| S003 | `.specify/memory/roadmap.md` | file | 2026-09-03 | 2026-09-15 | `initial-delivery-roadmap-later-features.md`, `initial-delivery-roadmap-recent-features.md`, `initial-delivery-roadmap.md` |
+| S003 | `.specify/memory/roadmap.md` | file | 2026-09-03 | 2026-09-15 | `initial-delivery-roadmap-recent-features.md`, `roadmap-open-questions.md` |
 | S004 | `README.md` | file | 2026-09-03 | 2026-09-15 | `local-development-workflows.md`, `mappings-and-managed-membership.md` |
 | S005 | `specs/002-mapping-registry-ownership` | directory | 2026-09-04 | 2026-09-04 | `mappings-and-managed-membership.md`, `safety-and-recovery-model.md`, `filesystem-support-boundaries.md`, `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md`, `mapping-registry-publication.md`, `configuration-and-state.md` |
 | S006 | `specs/003-source-discovery-gripignore` | directory | 2026-09-05 | 2026-09-05 | `command-line-and-path-selection.md`, `mappings-and-managed-membership.md`, `filesystem-support-boundaries.md`, `implementation-and-delivery-direction.md`, `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md` |
@@ -30,3 +30,4 @@ Sources are immutable inputs — the wiki never edits them.
 | S023 | `specs/023-force-missing-peer-restoration` | directory | 2026-09-14 | 2026-09-14 | `synchronization-and-conflicts.md` |
 | S024 | `specs/024-local-artifact-release-automation` | directory | 2026-09-15 | 2026-09-15 | `local-development-workflows.md`, `local-artifact-release-preparation.md` |
 | S025 | `specs/025-contained-source-tree-mappings` | directory | 2026-09-15 | 2026-09-15 | `contained-source-tree-mappings.md`, `mappings-and-managed-membership.md` |
+| S026 | `specs/026-exact-destination-symlink-replacement` | directory | 2026-09-15 | 2026-09-15 | `exact-destination-symlink-replacement.md`, `mappings-and-managed-membership.md`, `force-mapping-replacement.md`, `filesystem-support-boundaries.md`, `baseline-classification-and-status.md` |

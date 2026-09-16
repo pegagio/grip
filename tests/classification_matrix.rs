@@ -218,6 +218,7 @@ fn entry(
         destination,
         source_complete: None,
         destination_complete: None,
+        destination_link: None,
         metadata_findings: Vec::new(),
         endpoint_capabilities: Vec::new(),
         source_diagnostic: None,

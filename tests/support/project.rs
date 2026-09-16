@@ -3,7 +3,7 @@
 use super::{EntrySnapshot, snapshot};
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -22,6 +22,15 @@ pub struct ProjectFixture {
     pub root: tempfile::TempDir,
     pub project_root: PathBuf,
     pub home_root: PathBuf,
+}
+
+/// A no-follow snapshot of a disposable destination symlink and its referent payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DestinationLinkSnapshot {
+    pub link_target: PathBuf,
+    pub link_device: u64,
+    pub link_inode: u64,
+    pub target_contents: Vec<u8>,
 }
 
 impl ProjectFixture {
@@ -60,6 +69,37 @@ impl ProjectFixture {
     /// Return a destination path rooted in the fixture's configured home.
     pub fn home_destination(&self, name: &str) -> PathBuf {
         self.home_root.join(name)
+    }
+
+    /// Create an exact destination leaf link without resolving or modifying its target.
+    pub fn create_destination_leaf_link(&self, name: &str, target: &Path) -> PathBuf {
+        let destination = self.home_destination(name);
+        symlink(target, &destination).unwrap();
+        destination
+    }
+
+    /// Snapshot the link object and target payload for non-interference assertions.
+    pub fn snapshot_destination_leaf_link(&self, destination: &Path) -> DestinationLinkSnapshot {
+        let metadata = fs::symlink_metadata(destination).unwrap();
+        assert!(metadata.file_type().is_symlink());
+        let target = fs::read_link(destination).unwrap();
+        DestinationLinkSnapshot {
+            link_target: target.clone(),
+            link_device: metadata.dev(),
+            link_inode: metadata.ino(),
+            target_contents: fs::read(target).unwrap(),
+        }
+    }
+
+    /// Replace a disposable link immediately before the selected action publishes payload.
+    pub fn substitute_destination_leaf_link(&self, destination: &Path, target: &Path) {
+        fs::remove_file(destination).unwrap();
+        symlink(target, destination).unwrap();
+    }
+
+    /// Exercise the production private-sibling directory publication path in isolation.
+    pub fn publish_empty_directory_over_destination_link(&self, destination: &Path) {
+        grip::mutation::filesystem::replace_link_with_empty_directory(destination).unwrap();
     }
 
     pub fn state_dir(&self) -> PathBuf {

@@ -1,8 +1,8 @@
 ---
 title: Filesystem support boundaries
 type: reference
-sources: [S001, S004, S005, S006, S008, S009, S012]
-updated: 2026-09-14
+sources: [S001, S004, S005, S006, S008, S009, S012, S026]
+updated: 2026-09-15
 ---
 
 # Filesystem support boundaries
@@ -29,8 +29,11 @@ Pull reverses transfer roles without reversing mapping identity. The destination
 
 Feature 009 finalizes this boundary for current macOS with APFS. Regular files and directories compare complete supported metadata; modification time independently defines equality. Grip preserves exact path bytes, qualifies case and Unicode behavior per endpoint, blocks alias collisions, and treats unavailable, unauthorized, or lossy evidence as a precise blocker rather than coercing it. Other platforms and filesystems remain outside initial acceptance. (S012)
 
+Feature 026 adds one runtime-only exception: an exact managed destination leaf that is a symbolic link can be observed without target access and remain an unresolved obstacle. Only an exact source-winning forced push can atomically replace the revalidated link object with staged supported state; source links and required destination-link ancestors remain blocking. (S026)
+
 ## Related pages
 
 - [Grip product model](./grip-product-model.md)
 - [Deletion, retirement, and recovery](./deletion-retirement-and-recovery.md)
 - [Metadata and filesystem contract](./metadata-and-filesystem-contract.md)
+- [Exact destination symlink replacement](./exact-destination-symlink-replacement.md)

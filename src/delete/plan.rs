@@ -261,6 +261,7 @@ mod tests {
             source_complete: None,
             destination_complete: None,
             baseline_complete: None,
+            destination_link: None,
             compatibility_findings: Vec::new(),
             endpoint_capabilities: Vec::new(),
             prospective_direction: Direction::None,

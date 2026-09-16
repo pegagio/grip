@@ -654,6 +654,7 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
             destination_path: SafePath::from_path(Path::new("/destination")),
             expected_source: None,
             expected_destination: None,
+            expected_destination_link: None,
             metadata: None,
             dependencies: Vec::new(),
             status: ActionStatus::Unattempted,

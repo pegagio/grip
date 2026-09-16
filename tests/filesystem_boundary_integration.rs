@@ -7,6 +7,44 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixListener;
+use support::project::{PortableFixtureMapping, ProjectFixture};
+
+#[test]
+fn add_and_forced_push_reject_source_links_and_destination_link_ancestors() {
+    let fixture = ProjectFixture::initialized();
+    let source_target = fixture.root.path().join("source-target");
+    let source_link = fixture.project_root.join("source-link");
+    fs::write(&source_target, "source target remains unchanged").unwrap();
+    std::os::unix::fs::symlink(&source_target, &source_link).unwrap();
+    assert!(
+        !fixture
+            .command(&["add", "source-link", "~/destination"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        fs::read_to_string(&source_target).unwrap(),
+        "source target remains unchanged"
+    );
+
+    let source = fixture.project_root.join("source");
+    let ancestor_target = fixture.root.path().join("ancestor-target");
+    fs::write(&source, "managed source").unwrap();
+    fs::create_dir(&ancestor_target).unwrap();
+    fixture.create_destination_leaf_link("linked-parent", &ancestor_target);
+    fixture.write_descriptor(&[PortableFixtureMapping {
+        kind: "file",
+        source: "source",
+        destination: "~/linked-parent/destination",
+    }]);
+
+    let status = fixture.command(&["--output=json", "status"]);
+    assert!(status.status.success());
+    assert!(String::from_utf8_lossy(&status.stdout).contains("unsupported_managed"));
+    let forced = fixture.command(&["push", "--force", "source"]);
+    assert!(!forced.status.success());
+    assert!(!ancestor_target.join("destination").exists());
+}
 
 #[test]
 fn non_following_discovery_reports_special_nodes_and_preserves_symlink_referent() {

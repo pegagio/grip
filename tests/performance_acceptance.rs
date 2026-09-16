@@ -354,6 +354,9 @@ fn contained_home_status_is_bounded_by_managed_identity_count() {
     for index in 0..10_000 {
         fs::write(unrelated.join(format!("item-{index:05}")), b"").unwrap();
     }
+    let link_target = root.path().join("unmanaged-link-target");
+    fs::write(&link_target, b"Grip must not inspect this target").unwrap();
+    std::os::unix::fs::symlink(&link_target, home.join("managed-000")).unwrap();
     let add = Command::new(&binary)
         .env_clear()
         .env("HOME", &home)
@@ -365,6 +368,17 @@ fn contained_home_status_is_bounded_by_managed_identity_count() {
         add.status.success(),
         "{}",
         String::from_utf8_lossy(&add.stderr)
+    );
+    assert!(
+        home.join("managed-000")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(&link_target).unwrap(),
+        b"Grip must not inspect this target"
     );
 
     let measured = measure_outputs("contained-home status", STATUS_SAMPLES, || {

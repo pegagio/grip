@@ -97,6 +97,28 @@ pub fn build(
     )
 }
 
+/// Build the sole force shape that may expand below an unresolved destination-link directory.
+///
+/// The selected link is replaced first. Its descendants were observed as absent only because the
+/// selected link was their destination ancestor, so model them as source-authorized missing-peer
+/// restorations for this plan without relaxing generic resolution policy.
+pub fn build_source_winner_destination_link_subtree_resolution(
+    scope: ClassificationScope,
+    mut records: Vec<ClassificationRecord>,
+    selected_link: &crate::observation::model::EntryIdentity,
+) -> Result<MutationPlan, GripError> {
+    for record in &mut records {
+        if record.classification == Classification::SourceAddition
+            && record.identity.mapping == selected_link.mapping
+            && strict_raw_descendant(&record.identity.relative_path, &selected_link.relative_path)
+        {
+            record.classification = Classification::DestinationSideDeletion;
+            record.reasons = vec!["destination_link_replacement_descendant".into()];
+        }
+    }
+    build_resolution(scope, records, ConflictWinner::Source)
+}
+
 /// Build a complete plan for one mutation direction.
 pub fn build_for(
     direction: MutationDirection,
@@ -168,6 +190,7 @@ fn build_with_parents(
             destination_path: crate::discovery::model::SafePath::from_path(&path),
             expected_source: None,
             expected_destination: None,
+            expected_destination_link: None,
             metadata: None,
             dependencies: Vec::new(),
             status: ActionStatus::Unattempted,
@@ -219,6 +242,18 @@ fn build_with_parents(
                                 | Classification::ChangeDeleteConflict
                         );
                     let kind = match (record.classification, complete_kind) {
+                        (Classification::UnresolvedDestinationLink, NodeKind::File)
+                            if operation == MutationOperation::Resolve
+                                && winner == Some(ConflictWinner::Source) =>
+                        {
+                            ActionKind::ReplaceDestinationLinkFile
+                        }
+                        (Classification::UnresolvedDestinationLink, NodeKind::Directory)
+                            if operation == MutationOperation::Resolve
+                                && winner == Some(ConflictWinner::Source) =>
+                        {
+                            ActionKind::ReplaceDestinationLinkDirectory
+                        }
                         (Classification::SourceAddition, NodeKind::Directory) => {
                             ActionKind::CreateDirectory
                         }
@@ -323,7 +358,10 @@ fn build_with_parents(
                 destination_path: record.destination_path.clone(),
                 expected_source: record.source.clone(),
                 expected_destination: record.destination.clone(),
-                metadata: metadata_action_evidence(&record, direction),
+                expected_destination_link: record.destination_link.clone(),
+                metadata: (kind != ActionKind::ReplaceDestinationLinkDirectory)
+                    .then(|| metadata_action_evidence(&record, direction))
+                    .flatten(),
                 dependencies: Vec::new(),
                 status: ActionStatus::Unattempted,
                 milestones: ActionEvidence::default(),
@@ -341,8 +379,10 @@ fn build_with_parents(
                 MutationDirection::Push => record.source_complete.clone(),
                 MutationDirection::Pull => record.destination_complete.clone(),
             };
-            if kind == ActionKind::CreateDirectory
-                && let Some(expected_after) = expected_after
+            if matches!(
+                kind,
+                ActionKind::CreateDirectory | ActionKind::ReplaceDestinationLinkDirectory
+            ) && let Some(expected_after) = expected_after
             {
                 finalizers.push(MutationAction {
                     index: usize::MAX,
@@ -355,6 +395,10 @@ fn build_with_parents(
                     destination_path: record.destination_path.clone(),
                     expected_source: record.source.clone(),
                     expected_destination: record.destination.clone(),
+                    expected_destination_link: (kind
+                        != ActionKind::ReplaceDestinationLinkDirectory)
+                        .then(|| record.destination_link.clone())
+                        .flatten(),
                     metadata: Some(crate::mutation::model::MetadataActionEvidence {
                         expected_before: None,
                         expected_after,
@@ -734,6 +778,9 @@ pub(crate) fn resolution_is_actionable(
             ConflictWinner::Source,
             Classification::DestinationSideDeletion | Classification::ChangeDeleteConflict
         ) | (
+            ConflictWinner::Source,
+            Classification::UnresolvedDestinationLink
+        ) | (
             ConflictWinner::Destination,
             Classification::SourceSideDeletion | Classification::DeleteChangeConflict
         )
@@ -769,7 +816,9 @@ fn attach_directory_dependencies(actions: &mut [MutationAction]) {
         .filter(|action| {
             matches!(
                 action.kind,
-                ActionKind::CreateParentDirectory | ActionKind::CreateDirectory
+                ActionKind::CreateParentDirectory
+                    | ActionKind::CreateDirectory
+                    | ActionKind::ReplaceDestinationLinkDirectory
             )
         })
         .map(|action| (action.destination.clone(), action.index))
@@ -784,6 +833,13 @@ fn attach_directory_dependencies(actions: &mut [MutationAction]) {
             action.dependencies.push(*index);
         }
     }
+}
+
+fn strict_raw_descendant(candidate: &[u8], parent: &[u8]) -> bool {
+    parent.is_empty()
+        || candidate
+            .strip_prefix(parent)
+            .is_some_and(|suffix| suffix.first() == Some(&b'/'))
 }
 
 #[derive(Serialize)]

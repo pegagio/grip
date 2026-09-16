@@ -74,6 +74,31 @@ fn list_is_empty_without_writing_state() {
 }
 
 #[test]
+fn add_records_a_file_mapping_when_the_exact_destination_is_a_symlink() {
+    let fixture = ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let target = fixture.root.path().join("target");
+    fs::write(&source, "source").unwrap();
+    fs::write(&target, "target remains unchanged").unwrap();
+    let destination = fixture.create_destination_leaf_link("destination", &target);
+    let before = fixture.snapshot_destination_leaf_link(&destination);
+
+    let output = fixture.command(&["--output=json", "add", "source", "~/destination"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(fixture.snapshot_destination_leaf_link(&destination), before);
+    assert!(
+        fs::read_to_string(fixture.descriptor_path())
+            .unwrap()
+            .contains("source = \"source\"")
+    );
+    assert!(!fixture.state_dir().join("state.json").exists());
+}
+
+#[test]
 fn list_is_sorted_by_source_and_selects_an_exact_source() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());

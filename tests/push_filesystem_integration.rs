@@ -44,6 +44,109 @@ fn execution_fixture() -> (
 }
 
 #[test]
+fn forced_push_replaces_only_an_exact_destination_symlink_file() {
+    let fixture = support::project::ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let target = fixture.root.path().join("former-target");
+    let destination = fixture.home_destination("destination");
+    fs::write(&source, "managed source").unwrap();
+    fs::write(&target, "target remains unchanged").unwrap();
+    symlink(&target, &destination).unwrap();
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
+
+    let preview = fixture.command(&["--output=json", "push", "--force", "--dry-run", "source"]);
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stdout)
+    );
+    assert!(
+        fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "target remains unchanged"
+    );
+
+    let output = fixture.command(&["--output=json", "push", "--force", "source"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        !fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "managed source");
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "target remains unchanged"
+    );
+    let status = fixture.command(&["--output=json", "status"]);
+    assert!(status.status.success());
+    assert!(String::from_utf8_lossy(&status.stdout).contains("synchronized"));
+}
+
+#[test]
+fn ordinary_operations_and_destination_winner_force_leave_destination_links_unchanged() {
+    let fixture = support::project::ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let target = fixture.root.path().join("target");
+    fs::write(&source, "managed source").unwrap();
+    fs::write(&target, "target remains unchanged").unwrap();
+    let destination = fixture.create_destination_leaf_link("destination", &target);
+    let before = fixture.snapshot_destination_leaf_link(&destination);
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
+
+    for arguments in [
+        &["push"][..],
+        &["pull"][..],
+        &["sync"][..],
+        &["push", "--force", "--destination", "~/destination"][..],
+        &["pull", "--force", "--destination", "~/destination"][..],
+    ] {
+        let output = fixture.command(arguments);
+        assert!(
+            !output.status.success(),
+            "{arguments:?} unexpectedly succeeded"
+        );
+        assert_eq!(fixture.snapshot_destination_leaf_link(&destination), before);
+    }
+}
+
+#[test]
+fn directory_link_publication_replaces_the_link_object() {
+    let fixture = support::project::ProjectFixture::initialized();
+    let target = fixture.root.path().join("target");
+    fs::create_dir(&target).unwrap();
+    let link = fixture.create_destination_leaf_link("link", &target);
+    fixture.publish_empty_directory_over_destination_link(&link);
+    assert!(fs::symlink_metadata(&link).unwrap().is_dir());
+    assert!(
+        !fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[test]
 fn staged_addition_preserves_content_mode_and_unmanaged_neighbor() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let source = root.path().join("source");
