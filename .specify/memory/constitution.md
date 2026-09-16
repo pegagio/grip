@@ -1,15 +1,11 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.0 -> 2.0.0
-Bump rationale: Replace Grip-managed recovery as a governance obligation with a deployment-only safety boundary that leaves history and recovery to Git or another operator-selected system.
+Version change: 2.0.0 -> 3.0.0
+Bump rationale: Replace the exact-entry-only force rule with explicit managed-scope selection and permit accepted baseline publication for individually verified aggregate entries after a later partial failure.
 
 Modified principles:
-  - III. Validate, Revalidate, and Recover -> III. Validate, Revalidate, and Verify
-  - I. Proportional Rigor for a Local Tool
-  - V. Fast, Observable, and Testable
-  - Product Boundaries and Engineering Constraints
-  - Governance
+  - III. Validate, Revalidate, and Verify
 
 Added principles:
   - None
@@ -20,7 +16,7 @@ Added sections:
 Removed sections:
   - None
 
-Follow-up TODOs: Existing specifications that retain a Grip recovery namespace are historical evidence and must be superseded by a new feature before implementation changes their behavior.
+Follow-up TODOs: Re-run the Feature 027 roadmap brief against this amendment before planning or implementation.
 -->
 
 # Grip Constitution
@@ -41,7 +37,7 @@ Grip MUST mutate only entries owned by an explicit mapping and selected operatio
 
 ### III. Validate, Revalidate, and Verify
 
-Every mutating operation MUST derive a deterministic plan from a complete validated inspection of its requested scope. Immediately before applying an action, Grip MUST revalidate the evidence whose change could make that action unsafe; detected drift MUST stop the affected operation before publication. Replacements MUST be staged and published atomically where the supported filesystem permits, results MUST be verified, and a new baseline MUST be published only for a successfully completed accepted operation. Ordinary operations MUST not overwrite divergent state. A forced directional operation MUST require an exact selected entry and explicitly choose the complete winning side, including absence. Partial failure MUST be reported precisely and MUST NOT be represented as successful convergence.
+Every mutating operation MUST derive a deterministic plan from a complete validated inspection of its requested scope. Immediately before applying an action, Grip MUST revalidate the evidence whose change could make that action unsafe; detected drift MUST stop the affected action before publication. Replacements MUST be staged and published atomically where the supported filesystem permits, and results MUST be verified. A successfully verified entry action is an accepted unit whose baseline evidence MAY be published even if a later action in the same aggregate operation fails; the aggregate result MUST remain failed and every uncompleted entry MUST remain unaccepted. Ordinary operations MUST not overwrite divergent state. A forced directional operation MUST explicitly select its managed scope and the complete winning side, including absence. Its scope MAY be one exact managed entry or, only when a feature expressly authorizes it, all managed entries in one selected project. Partial failure MUST be reported precisely and MUST NOT be represented as successful aggregate convergence.
 
 **Rationale:** Grip does not need perfect filesystem snapshot isolation or a second history system. It needs to detect stale evidence, stop safely, and make deliberate destructive deployment actions unmistakable. Git or another operator-selected system owns history and recovery.
 
@@ -88,4 +84,4 @@ Amendments require an explicit user-approved change to this file, a Sync Impact 
 
 Every feature specification and plan MUST identify applicable constitutional principles and explain any justified exception. Reviews MUST verify proportional complexity, managed-path boundaries, mutation safety, concurrency behavior, explicit forced-operation behavior, performance evidence where relevant, isolated filesystem tests, and merge-bounded artifact consistency. Exceptions MUST be explicit, narrowly scoped, and approved before implementation or merge.
 
-**Version**: 2.0.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-09
+**Version**: 3.0.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16
