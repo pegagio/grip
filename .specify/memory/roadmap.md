@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.12.1 -> 1.12.2
-Bump rationale: Record the completed Feature 026 verification evidence and authorized transition from in-progress to verified.
+Version change: 1.13.4 -> 1.13.5
+Bump rationale: Record verified completion of Feature 028 after a trustworthy worktree debrief found no outcome, scope, or constraint findings.
 
 Changes this revision:
-  - Marked Feature 026 verified after a no-finding implementation debrief
+  - Verified Feature 028 Configurable External Diff Program
 
-Specs affected: 026
-Open questions added/resolved: none
+Specs affected: 028
+Open questions added/resolved: resolved Q-23
 
-Notes: Direct active-user authorization on 2026-09-15 to close Feature 026 after a trustworthy HEAD-to-worktree debrief. The feature preserves payload-nonmutating `add`, exact-entry force authority, no-follow filesystem safety, and the hard blocker for symbolic-link ancestors.
+Notes: Debrief `specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md` reviewed HEAD through WORKTREE and recommended verified with no findings.
 -->
 
 # Grip — Spec Roadmap
@@ -41,7 +41,7 @@ These constraints apply across the ledger. Each is grounded in the active user-a
 - **C-04 — Proportional rigor:** Designs must address demonstrated local failure modes with the simplest maintainable mechanism. Long-lived tree locks, watchers, persistent inode identity, kernel integration, and snapshot-isolation machinery require explicit evidence that simpler inspection, revalidation, and atomic publication are insufficient.
 - **C-05 — Validate, revalidate, verify:** Mutations require a complete deterministic plan, relevant pre-action revalidation, staged publication where supported, verification, and baseline publication only after successful acceptance. Git or another operator-selected system owns history and recovery; Grip does not provide a competing recovery interface.
 - **C-06 — Bounded concurrency:** External edits are handled through evidence capture, revalidation, and explicit drift errors. Only short-lived coordination around Grip-owned registry or state publication may be introduced without a separately justified governance exception.
-- **C-07 — Explicit mutation semantics:** `push`, `pull`, and `sync` mutate by default; `-n` and `--dry-run` do not mutate. Ordinary operations block on conflicts or known unsafe conditions before the first mutation. `push --force` and `pull --force` may select the source or destination complete state, respectively, including absence, for one exact managed entry.
+- **C-07 — Explicit mutation semantics:** `push`, `pull`, and `sync` mutate by default; `-n` and `--dry-run` do not mutate. Ordinary operations block on conflicts or known unsafe conditions before the first mutation. `push --force` and `pull --force` may select the source or destination complete state, respectively, including absence, for one exact managed entry. Feature 027 supersedes the exact-entry limit only for a no-selector `push --force`, which selects the complete source state for all managed entries. After each verified completed aggregate entry, Grip publishes its accepted evidence; a later failure leaves the aggregate operation failed and all uncompleted entries unaccepted.
 - **C-08 — Responsive by evidence:** Common inspection and planning workflows must remain responsive. Traversal, hashing, caching, parallelism, and indexing decisions are driven by representative measurements rather than speculative optimization.
 - **C-09 — Allowlisted filesystem contract:** Ordinary regular files and directories form the initial payload boundary. Unsupported nodes or unreproducible metadata transitions are reported precisely and never silently coerced; macOS and Unix contracts may precede broader portability.
 - **C-10 — Merge-bounded persistence:** Before merge, feature artifacts and implementation form one mutable, reviewable unit with accepted discoveries flowed back. Merge into the designated integration branch freezes the feature directory semantically, and later behavioral changes flow forward through new features.
@@ -366,6 +366,30 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-15 after `grip add home/ ~/` rejected exact managed destination symlinks at `.bash_profile` and `.screenrc` with the non-actionable message `selected baseline evidence is not complete and equivalent`.
 - **Notes:** This feature flows forward from verified Features 009, 023, and 025. An exact destination-leaf symlink is an unresolved replaceable obstacle, not supported payload and not baseline evidence. Ordinary `add` records intent without touching it. Replacement requires one exact source-space selector and explicit source-winning force, removes only the verified link object, never follows or mutates its target, and publishes accepted evidence only after the replacement is verified. Any symlink in a required destination ancestor remains a hard blocker requiring explicit operator resolution. The generic add-time baseline error is replaced with actionable path-specific diagnostics. Verification evidence: `specs/026-exact-destination-symlink-replacement/roadmap-reviews/debrief-20260916T030911Z.md` (`PROCEED`, no findings).
 
+### 027 — Aggregate Forced Push  [status: verified]
+
+- **Spec dir:** `specs/027-aggregate-forced-push`
+- **Description:** Allow `grip push --force` without a path selector to force the source-complete state across all managed entries in the selected project.
+- **Outcome:** An operator can explicitly force all managed source changes, including conflicting or missing-peer states, toward their destinations without repeating an exact-entry command for each entry, while Grip preserves its no-follow, revalidation, verification, dry-run, and precise reporting contracts.
+- **Scope (in):** No-selector `grip push --force`; complete project-wide source-winning planning; all managed file and tree-entry states in the selected project; deterministic aggregate reporting; dry-run parity; current-evidence revalidation; no-follow filesystem safety; failure reporting; documentation; and isolated aggregate-force regression coverage.
+- **Scope (out):** Aggregate `pull --force`; implicit force; a force bypass for unsupported nodes, symlink ancestors, ownership, topology, or selected-project validation; a new recovery or history interface; multiple selectors; and changes to `add`, `remove`, `sync`, or ordinary `push` semantics.
+- **Depends on:** 011, 023, 026
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-09, C-10, C-11, C-12
+- **Addresses:** Direct active-user decision on 2026-09-16 that `grip push --force` must force push all changes rather than require a specific path.
+- **Notes:** This is an intentional forward-flowing exception to Feature 011's exact-entry force boundary and Feature 019's exact-entry guidance. A no-selector command means all managed entries in the selected project; a supplied selector retains the existing exact-entry contract. Direct active-user decision resolves Q-22: accepted evidence is published for each verified completed aggregate entry, while a later failure leaves the aggregate failed and uncompleted entries unaccepted. Verified by [Feature 027 debrief](../../specs/027-aggregate-forced-push/roadmap-reviews/debrief-20260916T141420Z.md) with no findings.
+
+### 028 — Configurable External Diff Program  [status: verified]
+
+- **Spec dir:** `specs/028-configurable-external-diff`
+- **Description:** Make `grip diff` open the selected comparison in a configurable external diff program, with `diff` as the default executable.
+- **Outcome:** An operator can inspect a selected managed comparison in their configured diff tool without manually locating endpoint paths, while Grip retains deterministic selection, clear diagnostics, and a safe executable-and-argument invocation boundary.
+- **Scope (in):** A persisted or otherwise documented user configuration for the diff executable and arguments; default `diff` behavior; selected file and directory comparison handoff; endpoint preparation where required by Grip's comparison model; process invocation and exit handling; precise unavailable-tool and launch diagnostics; documentation; and isolated configuration and invocation regression coverage.
+- **Scope (out):** Shell-string evaluation; arbitrary command interpolation; changes to classification, diff selection, JSON output, mutation, mapping ownership, or baseline semantics; a bundled graphical diff application; network access; and automatic tool installation.
+- **Depends on:** 011
+- **Governed by:** C-01, C-04, C-05, C-08, C-10, C-11, C-12
+- **Addresses:** Direct active-user decision on 2026-09-16 that `grip diff` should open a configurable diff program, with `diff` as the reasonable default.
+- **Notes:** The completed specification selects a Git-style named-tool configuration: `~/.grip/config.toml` provides the machine-wide layer and selected-project `.grip/config.toml` overrides matching fields; `GRIP_EXTERNAL_DIFF` is an executable-only per-invocation override; arguments are literal tokens; selected file and directory endpoints are passed directly; normal child exit codes propagate unchanged; signals return `128 + signal`; and no temporary comparison material is created. Verified by [Feature 028 debrief](../../specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md) with no findings.
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -391,6 +415,8 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-19 — Representative large-file workload (021):** Resolved by verified Feature 021. The representative workload is an isolated local macOS ARM64 release build with differing 19 MiB regular source and destination files, exercising `grip add` and JSON `grip status` for 100 warm samples each.
 - **Q-20 — Large-file performance acceptance (021):** Resolved by verified Feature 021. Both representative operations have a one-second p95 release-build acceptance threshold, enforced by the isolated performance gate; final recorded p95 values were 573.669375 ms for `grip add` and 184.788375 ms for `grip status`.
 - **Q-21 — Force-add replacement contract (022):** Resolved for initial delivery by Feature 022. `grip add --force` is explicit confirmation for exactly one equal-destination file mapping; tree, source-overlap, nested, and multi-mapping conflicts remain rejected. The displaced mapping and its current evidence are retired all-or-nothing, and removal of the exact mapping clears ownership-validation inputs before a later ordinary add.
+- **Q-22 — Aggregate forced-push publication (027):** Resolved by direct active-user decision on 2026-09-16. `grip push --force` without a selector publishes accepted baseline evidence for each verified completed entry; a later failure leaves the aggregate operation failed and every uncompleted entry unaccepted.
+- **Q-23 — External diff configuration contract (028):** Resolved by verified Feature 028. The machine-wide `~/.grip/config.toml` and selected-project `.grip/config.toml` layers use Git-style named-tool selection and field replacement; `GRIP_EXTERNAL_DIFF` is an executable-only override; arguments are literal tokens; selected file and directory endpoints are direct; normal child exit codes propagate unchanged; signals return `128 + signal`; and no temporary material is created.
 
 ## Cross-Cutting Notes
 
@@ -407,4 +433,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.12.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15
+**Version**: 1.13.5 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16

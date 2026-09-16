@@ -149,6 +149,24 @@ pub fn build_resolution(
     )
 }
 
+/// Build the explicitly authorized aggregate source-winning force operation.
+///
+/// Unlike exact `Resolve`, this operation selects the complete managed scope already inspected
+/// by the caller. It must remain the only no-selector forced operation and never follows or
+/// replaces destination links.
+pub fn build_aggregate_force_push(
+    scope: ClassificationScope,
+    records: Vec<ClassificationRecord>,
+    requirements: Vec<ParentRequirement>,
+) -> Result<MutationPlan, GripError> {
+    build_with_parent_requirements_for(
+        MutationOperation::AggregateForcePush,
+        scope,
+        records,
+        requirements,
+    )
+}
+
 fn build_with_parents(
     operation: MutationOperation,
     winner: Option<ConflictWinner>,
@@ -202,10 +220,29 @@ fn build_with_parents(
     let mut finalizers = Vec::new();
 
     for mut record in records {
+        if operation == MutationOperation::AggregateForcePush
+            && matches!(
+                record.classification,
+                Classification::SourceSideDeletion
+                    | Classification::DestinationSideDeletion
+                    | Classification::ChangeDeleteConflict
+            )
+        {
+            // The omitted-selector aggregate is the feature-authorized source-complete force
+            // authority. Preserve every other blocker, but discharge the ordinary one-sided
+            // absence policy for its supported source-winning cases.
+            record.blocking = false;
+            record
+                .reasons
+                .retain(|reason| reason != "one_sided_absence_requires_force");
+        }
         let direction = action_direction(operation, winner, record.classification);
         let mut disposition =
             disposition_for_operation(operation, winner, record.classification, record.blocking);
-        if disposition == Disposition::Action {
+        if disposition == Disposition::Action
+            && !(operation == MutationOperation::AggregateForcePush
+                && record.classification == Classification::SourceSideDeletion)
+        {
             let preflight = transition_preflight_blockers(&record, direction);
             if !preflight.is_empty() {
                 record
@@ -217,132 +254,155 @@ fn build_with_parents(
         }
         let mut action_indexes = Vec::new();
         if disposition == Disposition::Action {
-            let (target, kind) = match direction {
-                MutationDirection::Push => {
-                    let source = record.source.clone().ok_or_else(|| {
-                        GripError::Internal("actionable push entry has no source state".into())
-                    })?;
-                    let complete_kind = record
-                        .source_complete
-                        .as_ref()
-                        .map(|state| state.node_kind)
-                        .unwrap_or(source.node_kind);
-                    let metadata_only = record
-                        .source_complete
-                        .as_ref()
-                        .zip(record.destination_complete.as_ref())
-                        .is_some_and(|(origin, target)| {
-                            origin.node_kind == target.node_kind && origin.content == target.content
-                        });
-                    let restoring_missing_destination = operation == MutationOperation::Resolve
-                        && winner == Some(ConflictWinner::Source)
-                        && matches!(
-                            record.classification,
-                            Classification::DestinationSideDeletion
-                                | Classification::ChangeDeleteConflict
-                        );
-                    let kind = match (record.classification, complete_kind) {
-                        (Classification::UnresolvedDestinationLink, NodeKind::File)
-                            if operation == MutationOperation::Resolve
-                                && winner == Some(ConflictWinner::Source) =>
-                        {
-                            ActionKind::ReplaceDestinationLinkFile
-                        }
-                        (Classification::UnresolvedDestinationLink, NodeKind::Directory)
-                            if operation == MutationOperation::Resolve
-                                && winner == Some(ConflictWinner::Source) =>
-                        {
-                            ActionKind::ReplaceDestinationLinkDirectory
-                        }
-                        (Classification::SourceAddition, NodeKind::Directory) => {
-                            ActionKind::CreateDirectory
-                        }
-                        (Classification::SourceAddition, NodeKind::File) => ActionKind::AddFile,
-                        (Classification::SourceOnlyChange, NodeKind::File) if metadata_only => {
-                            ActionKind::ApplyMetadata
-                        }
-                        (Classification::SourceOnlyChange, NodeKind::File) => {
-                            ActionKind::ReplaceFile
-                        }
-                        (Classification::SourceOnlyChange, NodeKind::Directory) => {
-                            ActionKind::FinalizeDirectoryMetadata
-                        }
-                        (
-                            Classification::DestinationSideDeletion
-                            | Classification::ChangeDeleteConflict,
-                            NodeKind::File,
-                        ) if restoring_missing_destination => ActionKind::AddFile,
-                        (
-                            Classification::DestinationSideDeletion
-                            | Classification::ChangeDeleteConflict,
-                            NodeKind::Directory,
-                        ) if restoring_missing_destination => ActionKind::CreateDirectory,
-                        (
-                            Classification::InitialCollision
-                            | Classification::DivergentConflict
-                            | Classification::MetadataMigrationConflict,
-                            NodeKind::File,
-                        ) if operation == MutationOperation::Resolve => {
-                            if metadata_only {
+            let (target, kind) = if operation == MutationOperation::AggregateForcePush
+                && record.classification == Classification::SourceSideDeletion
+            {
+                (
+                    record.identity.destination_path(),
+                    ActionKind::RemoveDestination,
+                )
+            } else {
+                match direction {
+                    MutationDirection::Push => {
+                        let source = record.source.clone().ok_or_else(|| {
+                            GripError::Internal("actionable push entry has no source state".into())
+                        })?;
+                        let complete_kind = record
+                            .source_complete
+                            .as_ref()
+                            .map(|state| state.node_kind)
+                            .unwrap_or(source.node_kind);
+                        let metadata_only = record
+                            .source_complete
+                            .as_ref()
+                            .zip(record.destination_complete.as_ref())
+                            .is_some_and(|(origin, target)| {
+                                origin.node_kind == target.node_kind
+                                    && origin.content == target.content
+                            });
+                        let restoring_missing_destination = (operation
+                            == MutationOperation::Resolve
+                            && winner == Some(ConflictWinner::Source)
+                            || operation == MutationOperation::AggregateForcePush)
+                            && matches!(
+                                record.classification,
+                                Classification::DestinationSideDeletion
+                                    | Classification::ChangeDeleteConflict
+                            );
+                        let kind = match (record.classification, complete_kind) {
+                            (Classification::UnresolvedDestinationLink, NodeKind::File)
+                                if operation == MutationOperation::Resolve
+                                    && winner == Some(ConflictWinner::Source) =>
+                            {
+                                ActionKind::ReplaceDestinationLinkFile
+                            }
+                            (Classification::UnresolvedDestinationLink, NodeKind::Directory)
+                                if operation == MutationOperation::Resolve
+                                    && winner == Some(ConflictWinner::Source) =>
+                            {
+                                ActionKind::ReplaceDestinationLinkDirectory
+                            }
+                            (Classification::SourceAddition, NodeKind::Directory) => {
+                                ActionKind::CreateDirectory
+                            }
+                            (Classification::SourceAddition, NodeKind::File) => ActionKind::AddFile,
+                            (Classification::SourceOnlyChange, NodeKind::File) if metadata_only => {
                                 ActionKind::ApplyMetadata
-                            } else {
+                            }
+                            (Classification::SourceOnlyChange, NodeKind::File) => {
                                 ActionKind::ReplaceFile
                             }
-                        }
-                        (
-                            Classification::InitialCollision
-                            | Classification::DivergentConflict
-                            | Classification::MetadataMigrationConflict,
-                            NodeKind::Directory,
-                        ) if operation == MutationOperation::Resolve => {
-                            ActionKind::FinalizeDirectoryMetadata
-                        }
-                        _ => {
-                            return Err(GripError::Internal(
-                                "actionable classification has unsupported node state".into(),
-                            ));
-                        }
-                    };
-                    (record.identity.destination_path(), kind)
-                }
-                MutationDirection::Pull => {
-                    let destination = record.destination.clone().ok_or_else(|| {
-                        GripError::Internal("actionable pull entry has no destination state".into())
-                    })?;
-                    let complete_kind = record
-                        .destination_complete
-                        .as_ref()
-                        .map(|state| state.node_kind)
-                        .unwrap_or(destination.node_kind);
-                    let metadata_only = record
-                        .source_complete
-                        .as_ref()
-                        .zip(record.destination_complete.as_ref())
-                        .is_some_and(|(target, origin)| {
-                            origin.node_kind == target.node_kind && origin.content == target.content
-                        });
-                    let restoring_missing_source = operation == MutationOperation::Resolve
-                        && winner == Some(ConflictWinner::Destination)
-                        && matches!(
-                            record.classification,
-                            Classification::SourceSideDeletion
-                                | Classification::DeleteChangeConflict
-                        );
-                    let kind = match complete_kind {
-                        NodeKind::File if restoring_missing_source => ActionKind::AddFile,
-                        NodeKind::Directory if restoring_missing_source => {
-                            ActionKind::CreateDirectory
-                        }
-                        NodeKind::File if metadata_only => ActionKind::ApplyMetadata,
-                        NodeKind::File => ActionKind::ReplaceFile,
-                        NodeKind::Directory => ActionKind::FinalizeDirectoryMetadata,
-                        _ => {
-                            return Err(GripError::Internal(
-                                "actionable pull entry has unsupported node state".into(),
-                            ));
-                        }
-                    };
-                    (record.identity.source_path(), kind)
+                            (Classification::SourceOnlyChange, NodeKind::Directory) => {
+                                ActionKind::FinalizeDirectoryMetadata
+                            }
+                            (
+                                Classification::DestinationSideDeletion
+                                | Classification::ChangeDeleteConflict,
+                                NodeKind::File,
+                            ) if restoring_missing_destination => ActionKind::AddFile,
+                            (
+                                Classification::DestinationSideDeletion
+                                | Classification::ChangeDeleteConflict,
+                                NodeKind::Directory,
+                            ) if restoring_missing_destination => ActionKind::CreateDirectory,
+                            (
+                                Classification::InitialCollision
+                                | Classification::DivergentConflict
+                                | Classification::MetadataMigrationConflict,
+                                NodeKind::File,
+                            ) if matches!(
+                                operation,
+                                MutationOperation::Resolve | MutationOperation::AggregateForcePush
+                            ) =>
+                            {
+                                if metadata_only {
+                                    ActionKind::ApplyMetadata
+                                } else {
+                                    ActionKind::ReplaceFile
+                                }
+                            }
+                            (
+                                Classification::InitialCollision
+                                | Classification::DivergentConflict
+                                | Classification::MetadataMigrationConflict,
+                                NodeKind::Directory,
+                            ) if matches!(
+                                operation,
+                                MutationOperation::Resolve | MutationOperation::AggregateForcePush
+                            ) =>
+                            {
+                                ActionKind::FinalizeDirectoryMetadata
+                            }
+                            _ => {
+                                return Err(GripError::Internal(
+                                    "actionable classification has unsupported node state".into(),
+                                ));
+                            }
+                        };
+                        (record.identity.destination_path(), kind)
+                    }
+                    MutationDirection::Pull => {
+                        let destination = record.destination.clone().ok_or_else(|| {
+                            GripError::Internal(
+                                "actionable pull entry has no destination state".into(),
+                            )
+                        })?;
+                        let complete_kind = record
+                            .destination_complete
+                            .as_ref()
+                            .map(|state| state.node_kind)
+                            .unwrap_or(destination.node_kind);
+                        let metadata_only = record
+                            .source_complete
+                            .as_ref()
+                            .zip(record.destination_complete.as_ref())
+                            .is_some_and(|(target, origin)| {
+                                origin.node_kind == target.node_kind
+                                    && origin.content == target.content
+                            });
+                        let restoring_missing_source = operation == MutationOperation::Resolve
+                            && winner == Some(ConflictWinner::Destination)
+                            && matches!(
+                                record.classification,
+                                Classification::SourceSideDeletion
+                                    | Classification::DeleteChangeConflict
+                            );
+                        let kind = match complete_kind {
+                            NodeKind::File if restoring_missing_source => ActionKind::AddFile,
+                            NodeKind::Directory if restoring_missing_source => {
+                                ActionKind::CreateDirectory
+                            }
+                            NodeKind::File if metadata_only => ActionKind::ApplyMetadata,
+                            NodeKind::File => ActionKind::ReplaceFile,
+                            NodeKind::Directory => ActionKind::FinalizeDirectoryMetadata,
+                            _ => {
+                                return Err(GripError::Internal(
+                                    "actionable pull entry has unsupported node state".into(),
+                                ));
+                            }
+                        };
+                        (record.identity.source_path(), kind)
+                    }
                 }
             };
             let index = actions.len();
@@ -359,7 +419,8 @@ fn build_with_parents(
                 expected_source: record.source.clone(),
                 expected_destination: record.destination.clone(),
                 expected_destination_link: record.destination_link.clone(),
-                metadata: (kind != ActionKind::ReplaceDestinationLinkDirectory)
+                metadata: (kind != ActionKind::ReplaceDestinationLinkDirectory
+                    && kind != ActionKind::RemoveDestination)
                     .then(|| metadata_action_evidence(&record, direction))
                     .flatten(),
                 dependencies: Vec::new(),
@@ -460,6 +521,9 @@ fn build_with_parents(
     }
 
     attach_directory_dependencies(&mut actions);
+    if operation == MutationOperation::AggregateForcePush {
+        order_aggregate_removals(&mut actions, &mut entries);
+    }
     let counts = MutationCounts {
         selected: entries.len(),
         actionable: actions.len(),
@@ -481,7 +545,9 @@ fn build_with_parents(
         direction: match operation {
             MutationOperation::Push => Some(MutationDirection::Push),
             MutationOperation::Pull => Some(MutationDirection::Pull),
-            MutationOperation::Sync | MutationOperation::Resolve => None,
+            MutationOperation::Sync
+            | MutationOperation::Resolve
+            | MutationOperation::AggregateForcePush => None,
         },
         winner,
         plan_id: String::new(),
@@ -759,6 +825,18 @@ pub fn disposition_for_operation(
                 Disposition::Blocked
             }
         }
+        MutationOperation::AggregateForcePush => {
+            if blocking {
+                return Disposition::Blocked;
+            }
+            match classification {
+                classification if aggregate_force_is_actionable(classification) => {
+                    Disposition::Action
+                }
+                Classification::UnresolvedDestinationLink => Disposition::Blocked,
+                _ => Disposition::NoAction,
+            }
+        }
     }
 }
 
@@ -787,6 +865,21 @@ pub(crate) fn resolution_is_actionable(
     )
 }
 
+/// Whether the explicit no-selector source-winning aggregate may act on an otherwise safe entry.
+pub(crate) fn aggregate_force_is_actionable(classification: Classification) -> bool {
+    matches!(
+        classification,
+        Classification::SourceAddition
+            | Classification::SourceOnlyChange
+            | Classification::InitialCollision
+            | Classification::DivergentConflict
+            | Classification::MetadataMigrationConflict
+            | Classification::SourceSideDeletion
+            | Classification::DestinationSideDeletion
+            | Classification::ChangeDeleteConflict
+    )
+}
+
 fn action_direction(
     operation: MutationOperation,
     winner: Option<ConflictWinner>,
@@ -807,6 +900,7 @@ fn action_direction(
             Some(ConflictWinner::Destination) => MutationDirection::Pull,
             None => MutationDirection::Push,
         },
+        MutationOperation::AggregateForcePush => MutationDirection::Push,
     }
 }
 
@@ -833,6 +927,52 @@ fn attach_directory_dependencies(actions: &mut [MutationAction]) {
             action.dependencies.push(*index);
         }
     }
+}
+
+/// Directory removals must happen after their managed descendants. Keep the established
+/// creation/finalizer ordering intact, then move aggregate source-absence removals to the end in
+/// child-before-parent order and rebuild action indexes held by entry dispositions.
+fn order_aggregate_removals(actions: &mut Vec<MutationAction>, entries: &mut [EntryDisposition]) {
+    let mut retained = Vec::with_capacity(actions.len());
+    let mut removals = Vec::new();
+    for action in std::mem::take(actions) {
+        if action.kind == ActionKind::RemoveDestination {
+            removals.push(action);
+        } else {
+            retained.push(action);
+        }
+    }
+    removals.sort_by(|first, second| {
+        second
+            .destination
+            .components()
+            .count()
+            .cmp(&first.destination.components().count())
+            .then(first.destination.cmp(&second.destination))
+    });
+    retained.extend(removals);
+    let old_to_new = retained
+        .iter()
+        .enumerate()
+        .map(|(new, action)| (action.index, new))
+        .collect::<BTreeMap<_, _>>();
+    for (new, action) in retained.iter_mut().enumerate() {
+        action.index = new;
+        action.dependencies = action
+            .dependencies
+            .iter()
+            .filter_map(|old| old_to_new.get(old).copied())
+            .collect();
+    }
+    for entry in entries {
+        entry.action_indexes = retained
+            .iter()
+            .filter_map(|action| {
+                (action.identity.as_ref() == Some(&entry.identity)).then_some(action.index)
+            })
+            .collect();
+    }
+    *actions = retained;
 }
 
 fn strict_raw_descendant(candidate: &[u8], parent: &[u8]) -> bool {

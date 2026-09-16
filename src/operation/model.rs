@@ -155,6 +155,20 @@ pub struct OperationSummaryPayloadV2 {
     pub result_delivery: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aggregate_entries: Vec<AggregateEntryOutcomeV2>,
+}
+
+/// Durable terminal outcome for one entry in an aggregate forced push.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AggregateEntryOutcomeV2 {
+    pub identity: crate::state::EntryIdentityV4,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publication_generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 /// Latest bounded evidence for one started action.
@@ -274,6 +288,19 @@ impl ValidatePayload for OperationSummaryPayloadV2 {
         {
             return Err(corrupt("operation summary has an invalid state"));
         }
+        for entry in &self.aggregate_entries {
+            crate::registry::ProjectDescriptorV2::new(vec![entry.identity.mapping.clone()])
+                .map_err(|_| corrupt("aggregate entry identity is invalid"))?;
+            crate::state::decode_v4_identity_path(&entry.identity.relative_path_hex)?;
+            if !matches!(
+                entry.status.as_str(),
+                "completed" | "failed" | "unattempted" | "unchanged"
+            ) || (entry.status == "completed") != entry.publication_generation.is_some()
+                || (entry.status == "failed") != entry.failure.is_some()
+            {
+                return Err(corrupt("aggregate entry outcome is invalid"));
+            }
+        }
         Ok(())
     }
 }
@@ -357,8 +384,12 @@ fn validate_common(
         || !operation_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        || operation
-            .is_some_and(|value| !matches!(value, "push" | "pull" | "sync" | "resolve" | "delete"))
+        || operation.is_some_and(|value| {
+            !matches!(
+                value,
+                "push" | "pull" | "sync" | "resolve" | "delete" | "aggregate_force_push"
+            )
+        })
         || !is_digest(plan_id)
     {
         return Err(corrupt("operation record identity is invalid"));
@@ -418,6 +449,7 @@ mod tests {
             baseline: serde_json::json!({"outcome":"not_attempted"}),
             result_delivery: "not_attempted".into(),
             failure: None,
+            aggregate_entries: Vec::new(),
         }
     }
 

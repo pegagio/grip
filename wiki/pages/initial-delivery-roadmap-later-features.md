@@ -2,12 +2,12 @@
 title: Initial delivery roadmap later features
 type: reference
 sources: [S003]
-updated: 2026-09-15
+updated: 2026-09-16
 ---
 
 # Initial delivery roadmap later features
 
-This continuation records Features 013 through 020 from the current roadmap ledger. Features 021 through 025 continue on [Initial delivery roadmap recent features](./initial-delivery-roadmap-recent-features.md). (S003)
+This continuation records Features 013 through 020 from the current roadmap ledger. Features 021 through 026 continue on [Initial delivery roadmap recent features](./initial-delivery-roadmap-recent-features.md), and planned Features 027 and 028 continue on [Initial delivery roadmap future features](./initial-delivery-roadmap-future-features.md). (S003)
 
 13. **013 — Source Path Input Normalization (`implemented`):** accepts ordinary project-contained relative source spellings while retaining strict canonical source declarations. (S003)
 14. **014 — Relative Destination Paths (`verified`):** extends destination declarations with paths relative to the selected project root while retaining exact declaration text and resolving it separately for operations. (S003)
@@ -23,4 +23,5 @@ Verified Features 014 and 015 extend the destination-declaration and initial sta
 
 - [Initial delivery roadmap](./initial-delivery-roadmap.md)
 - [Initial delivery roadmap recent features](./initial-delivery-roadmap-recent-features.md)
+- [Initial delivery roadmap future features](./initial-delivery-roadmap-future-features.md)
 - [Implementation and delivery direction](./implementation-and-delivery-direction.md)

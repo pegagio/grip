@@ -377,6 +377,33 @@ fn nonfollowing_metadata(path: &Path) -> std::io::Result<fs::Metadata> {
     fs::symlink_metadata(path)
 }
 
+/// Return whether an existing component of an absolute endpoint path is a symbolic link.
+///
+/// Aggregate mutation uses this against the portable destination spelling before normal
+/// endpoint resolution, which intentionally canonicalizes an existing ancestor for ordinary
+/// mapping inspection.
+pub fn has_symbolic_link_component(path: &Path) -> Result<bool, GripError> {
+    validate_input(path, "aggregate_force_push")?;
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match nonfollowing_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Ok(true),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(invalid(
+                    "aggregate_force_push",
+                    "path_unavailable",
+                    path,
+                    &format!("mapping path is unavailable: {error}"),
+                ));
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn invalid(operation: &str, reason: &str, path: &Path, message: &str) -> GripError {
     GripError::mapping(
         operation,

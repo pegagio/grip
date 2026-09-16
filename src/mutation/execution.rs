@@ -10,7 +10,7 @@ use crate::operation::model::ActionCheckpointEvidenceV2;
 use crate::project::ProjectPaths;
 use crate::registry::publication::RegistrySnapshot;
 use crate::state::publication::StateSnapshot;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Successful execution evidence returned to command orchestration.
 #[derive(Debug)]
@@ -84,7 +84,7 @@ where
     fault(crate::mutation::FaultPhase::AfterMutationLock)?;
     let locked_registry = crate::registry::publication::load(home, false)
         .map_err(|error| error.for_mapping_operation(operation_name))?;
-    let locked_state = crate::state::publication::load(home)?;
+    let mut locked_state = crate::state::publication::load(home)?;
     if locked_registry.bytes != expected_registry.bytes
         || locked_registry.registry != expected_registry.registry
         || locked_state.bytes != expected_state.bytes
@@ -116,6 +116,7 @@ where
         .filter(|entry| entry.disposition == Disposition::AcceptOnly)
         .map(|entry| entry.identity.clone())
         .collect::<BTreeSet<_>>();
+    let mut aggregate_publication_generations = BTreeMap::new();
 
     for index in 0..plan.actions.len() {
         let action = &mut plan.actions[index];
@@ -311,6 +312,25 @@ where
                     }
                     action.milestones.verification = "verified".into();
                 }
+                ActionKind::RemoveDestination => {
+                    let expected = action.expected_destination.as_ref().ok_or_else(|| {
+                        GripError::Internal(
+                            "aggregate destination removal has no destination evidence".into(),
+                        )
+                    })?;
+                    failure_reason = "publication_failure";
+                    fault(crate::mutation::FaultPhase::BeforePayloadPublication(index))?;
+                    action.milestones.durability_confirmed =
+                        crate::mutation::filesystem::remove_verified(&destination, expected)?;
+                    action.milestones.publication = "not_visible".into();
+                    failure_reason = "verification_failure";
+                    if std::fs::symlink_metadata(&destination).is_ok() {
+                        return Err(GripError::Internal(
+                            "aggregate destination removal remained visible".into(),
+                        ));
+                    }
+                    action.milestones.verification = "verified".into();
+                }
             }
             action.status = crate::mutation::model::ActionStatus::Completed;
             failure_reason = "journal_failure";
@@ -319,8 +339,24 @@ where
         })();
         match attempted {
             Ok(()) => {
-                if let Some(identity) = &action.identity {
+                let completed_identity = action.identity.clone();
+                if let Some(identity) = completed_identity {
                     actioned.insert(identity.clone());
+                    if operation == MutationOperation::AggregateForcePush
+                        && entry_actions_completed(&plan, &identity)
+                    {
+                        let published = publish_aggregate_entry(
+                            home,
+                            &locked_registry,
+                            &locked_state,
+                            &identity,
+                            state_fault,
+                        )?;
+                        if let Some(generation) = published.accepted.generation {
+                            aggregate_publication_generations.insert(identity, generation);
+                        }
+                        locked_state = published;
+                    }
                 }
             }
             Err(error) => {
@@ -371,20 +407,39 @@ where
                     evidence(&plan.actions[index]),
                     Some(reason.clone()),
                 );
+                let aggregate_publication_visible = operation
+                    == MutationOperation::AggregateForcePush
+                    && locked_state.accepted.generation != expected_state.accepted.generation;
                 let baseline = crate::mutation::model::BaselineOutcome {
-                    outcome: "not_published".into(),
-                    prior_generation: locked_state.accepted.generation,
-                    published_generation: None,
+                    outcome: if aggregate_publication_visible {
+                        "partially_published".into()
+                    } else {
+                        "not_published".into()
+                    },
+                    prior_generation: expected_state.accepted.generation,
+                    published_generation: aggregate_publication_visible
+                        .then_some(locked_state.accepted.generation)
+                        .flatten(),
                     authoritative_generation: locked_state.accepted.generation,
-                    publication_visible: false,
+                    publication_visible: aggregate_publication_visible,
                     durability_confirmed: true,
                 };
-                let _ = receipt.checkpoint_summary(
-                    "failed",
-                    serde_json::to_value(&baseline).expect("baseline outcome serializes"),
-                    "prepared",
-                    Some(reason.clone()),
-                );
+                let _ = if operation == MutationOperation::AggregateForcePush {
+                    receipt.checkpoint_aggregate_summary(
+                        "failed",
+                        serde_json::to_value(&baseline).expect("baseline outcome serializes"),
+                        "prepared",
+                        Some(reason.clone()),
+                        aggregate_entry_outcomes(home, &plan, &aggregate_publication_generations)?,
+                    )
+                } else {
+                    receipt.checkpoint_summary(
+                        "failed",
+                        serde_json::to_value(&baseline).expect("baseline outcome serializes"),
+                        "prepared",
+                        Some(reason.clone()),
+                    )
+                };
                 let paths = [
                     plan.actions[index].source_path.clone(),
                     Some(plan.actions[index].destination_path.clone()),
@@ -427,6 +482,36 @@ where
                 ));
             }
         }
+    }
+
+    if operation == MutationOperation::AggregateForcePush {
+        let generation = locked_state.accepted.generation.ok_or_else(|| {
+            GripError::Internal(
+                "aggregate force completed without accepted state generation".into(),
+            )
+        })?;
+        receipt.checkpoint_aggregate_summary(
+            "completed",
+            serde_json::json!({
+                "outcome":"published_per_entry",
+                "prior_generation":expected_state.accepted.generation,
+                "published_generation":generation,
+                "authoritative_generation":generation,
+                "publication_visible":true,
+                "durability_confirmed":true
+            }),
+            "prepared",
+            None,
+            aggregate_entry_outcomes(home, &plan, &aggregate_publication_generations)?,
+        )?;
+        plan.counts.completed = plan.actions.len();
+        plan.counts.unattempted = 0;
+        return Ok(ExecutionSuccess {
+            plan,
+            operation_id: receipt.operation_id().to_owned(),
+            generation,
+            prior_generation: expected_state.accepted.generation,
+        });
     }
 
     macro_rules! finish_or_fail {
@@ -636,6 +721,123 @@ where
     })
 }
 
+fn aggregate_entry_outcomes(
+    home: &ProjectPaths,
+    plan: &MutationPlan,
+    publication_generations: &BTreeMap<crate::observation::model::EntryIdentity, u64>,
+) -> Result<Vec<crate::operation::model::AggregateEntryOutcomeV2>, GripError> {
+    plan.entries
+        .iter()
+        .map(|entry| {
+            let actions = entry
+                .action_indexes
+                .iter()
+                .filter_map(|index| plan.actions.get(*index))
+                .collect::<Vec<_>>();
+            let failed = actions
+                .iter()
+                .find(|action| action.status == crate::mutation::model::ActionStatus::Failed);
+            let completed = !actions.is_empty()
+                && actions
+                    .iter()
+                    .all(|action| action.status == crate::mutation::model::ActionStatus::Completed);
+            Ok(crate::operation::model::AggregateEntryOutcomeV2 {
+                identity: crate::state::portable_identity_from_runtime(home, &entry.identity)?,
+                status: if completed {
+                    "completed"
+                } else if failed.is_some() {
+                    "failed"
+                } else if actions.is_empty() {
+                    "unchanged"
+                } else {
+                    "unattempted"
+                }
+                .into(),
+                publication_generation: completed
+                    .then(|| publication_generations.get(&entry.identity).copied())
+                    .flatten(),
+                failure: failed.and_then(|action| action.failure.clone()),
+            })
+        })
+        .collect()
+}
+
+fn entry_actions_completed(
+    plan: &MutationPlan,
+    identity: &crate::observation::model::EntryIdentity,
+) -> bool {
+    plan.entries
+        .iter()
+        .find(|entry| &entry.identity == identity)
+        .is_some_and(|entry| {
+            !entry.action_indexes.is_empty()
+                && entry.action_indexes.iter().all(|index| {
+                    plan.actions.get(*index).is_some_and(|action| {
+                        action.status == crate::mutation::model::ActionStatus::Completed
+                    })
+                })
+        })
+}
+
+/// Publish one completely verified aggregate entry, then return a freshly loaded snapshot for
+/// subsequent action revalidation. Source absence intentionally retires the entry's baseline.
+fn publish_aggregate_entry(
+    home: &ProjectPaths,
+    registry: &RegistrySnapshot,
+    state: &StateSnapshot,
+    identity: &crate::observation::model::EntryIdentity,
+    fault: Option<crate::state::publication::PublicationFault>,
+) -> Result<StateSnapshot, GripError> {
+    let current_registry = crate::registry::publication::load(home, false)
+        .map_err(|error| error.for_mapping_operation("aggregate_force_push"))?;
+    if current_registry.bytes != registry.bytes {
+        return Err(stale(
+            MutationOperation::AggregateForcePush,
+            "accepted registry changed during aggregate execution",
+        ));
+    }
+    crate::state::publication::revalidate(home, state)?;
+    let selection = Selection::Entry(identity.clone());
+    let observed =
+        crate::observation::inspect(home, &current_registry, &state.accepted, &selection)
+            .map_err(|error| error.for_operation("aggregate_force_push"))?;
+    let observed_entry = observed.get(identity).ok_or_else(|| {
+        GripError::Internal("completed aggregate entry disappeared before publication".into())
+    })?;
+    let record = classification::classify_accepted(observed_entry, &state.accepted);
+    if record.blocking {
+        return Err(stale(
+            MutationOperation::AggregateForcePush,
+            "completed aggregate entry became blocking before publication",
+        ));
+    }
+    let mut next = state.accepted.clone();
+    match (&record.source_complete, &record.destination_complete) {
+        (Some(source), Some(destination)) if source == destination => {
+            next.complete_baselines
+                .insert(identity.clone(), source.clone());
+        }
+        (None, None) => {
+            next.complete_baselines.remove(identity);
+        }
+        _ => {
+            return Err(GripError::BaselineNotAcceptable {
+                records: vec![record.clone()],
+            });
+        }
+    }
+    let state_lock = crate::state::lock::project_lock_path(home, "state.lock")?;
+    let _state_guard = crate::state::lock::PublicationLock::acquire(&state_lock)?;
+    revalidate_registry_bytes(home, registry, MutationOperation::AggregateForcePush)?;
+    let _generation = crate::state::publication::publish_complete_after_action_locked_with_fault(
+        home,
+        state,
+        &next.complete_baselines,
+        fault,
+    )?;
+    crate::state::publication::load(home)
+}
+
 fn metadata_fault<F>(
     fault: &mut F,
     index: usize,
@@ -729,6 +931,11 @@ fn rebuild_plan(
                 crate::mutation::plan::build_resolution(expected.scope.clone(), records, winner)
             }
         }
+        MutationOperation::AggregateForcePush => crate::mutation::plan::build_aggregate_force_push(
+            expected.scope.clone(),
+            records,
+            registry.missing_destination_parents(),
+        ),
     }
 }
 
@@ -845,18 +1052,26 @@ fn revalidate_action(
             ActionKind::AddFile | ActionKind::CreateDirectory
         )
         && record.classification == classification::model::Classification::SourceAddition;
-    let classification_matches = operation != MutationOperation::Resolve
-        || created_directory_finalizer
+    let classification_matches = !matches!(
+        operation,
+        MutationOperation::Resolve | MutationOperation::AggregateForcePush
+    ) || created_directory_finalizer
         || replacement_descendant_is_still_absent
-        || crate::mutation::plan::resolution_is_actionable(
-            match action.direction {
-                MutationDirection::Push => crate::mutation::model::ConflictWinner::Source,
-                MutationDirection::Pull => crate::mutation::model::ConflictWinner::Destination,
-            },
-            record.classification,
-        );
+        || (operation == MutationOperation::Resolve
+            && crate::mutation::plan::resolution_is_actionable(
+                match action.direction {
+                    MutationDirection::Push => crate::mutation::model::ConflictWinner::Source,
+                    MutationDirection::Pull => crate::mutation::model::ConflictWinner::Destination,
+                },
+                record.classification,
+            ))
+        || (operation == MutationOperation::AggregateForcePush
+            && crate::mutation::plan::aggregate_force_is_actionable(record.classification));
     if record.blocking
-        && operation != MutationOperation::Resolve
+        && !matches!(
+            operation,
+            MutationOperation::Resolve | MutationOperation::AggregateForcePush
+        )
         && !created_directory_finalizer
         && !descendant_directory_finalizer
         || !classification_matches
@@ -889,6 +1104,7 @@ fn stale(operation: MutationOperation, message: &str) -> GripError {
             MutationOperation::Pull => "stale_pull_evidence",
             MutationOperation::Sync => "stale_sync_evidence",
             MutationOperation::Resolve => "stale_resolution_evidence",
+            MutationOperation::AggregateForcePush => "stale_aggregate_force_push_evidence",
         },
         Vec::new(),
         message,
@@ -1041,9 +1257,10 @@ fn mutation_failure(
 ) -> GripError {
     match operation {
         MutationOperation::Push => GripError::PushFailed(Box::new(failure)),
-        MutationOperation::Pull | MutationOperation::Sync | MutationOperation::Resolve => {
-            GripError::MutationFailed(Box::new(failure))
-        }
+        MutationOperation::Pull
+        | MutationOperation::Sync
+        | MutationOperation::Resolve
+        | MutationOperation::AggregateForcePush => GripError::MutationFailed(Box::new(failure)),
     }
 }
 

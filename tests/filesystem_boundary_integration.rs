@@ -41,8 +41,13 @@ fn add_and_forced_push_reject_source_links_and_destination_link_ancestors() {
     let status = fixture.command(&["--output=json", "status"]);
     assert!(status.status.success());
     assert!(String::from_utf8_lossy(&status.stdout).contains("unsupported_managed"));
-    let forced = fixture.command(&["push", "--force", "source"]);
-    assert!(!forced.status.success());
+    let forced = fixture.command(&["--output=json", "push", "--force"]);
+    assert!(
+        !forced.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&forced.stdout),
+        String::from_utf8_lossy(&forced.stderr)
+    );
     assert!(!ancestor_target.join("destination").exists());
 }
 

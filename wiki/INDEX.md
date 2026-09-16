@@ -26,6 +26,7 @@ page files, not here.
 - [Configuration and state](./pages/configuration-and-state.md)
 - [Contained-source tree mappings](./pages/contained-source-tree-mappings.md)
 - [Exact destination symlink replacement](./pages/exact-destination-symlink-replacement.md)
+- [External diff program](./pages/external-diff-program.md)
 - [Force mapping replacement](./pages/force-mapping-replacement.md)
 - [Large-file observation performance](./pages/large-file-observation-performance.md)
 - [Local artifact release preparation](./pages/local-artifact-release-preparation.md)
@@ -38,9 +39,11 @@ page files, not here.
 
 - [Filesystem support boundaries](./pages/filesystem-support-boundaries.md)
 - [Initial delivery roadmap](./pages/initial-delivery-roadmap.md)
+- [Initial delivery roadmap future features](./pages/initial-delivery-roadmap-future-features.md)
 - [Initial delivery roadmap later features](./pages/initial-delivery-roadmap-later-features.md)
 - [Initial delivery roadmap recent features](./pages/initial-delivery-roadmap-recent-features.md)
 - [Roadmap open questions](./pages/roadmap-open-questions.md)
+- [Roadmap open questions recent](./pages/roadmap-open-questions-recent.md)
 
 ## How-tos
 

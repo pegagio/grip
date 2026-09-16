@@ -24,6 +24,15 @@ fn push_parses_default_execute_and_both_dry_run_aliases() {
 }
 
 #[test]
+fn force_push_without_a_selector_is_an_aggregate_request() {
+    let aggregate = Cli::try_parse_from(["grip", "push", "--force"]).unwrap();
+    assert!(matches!(
+        aggregate.command,
+        Command::Push(ref args) if args.force && args.path.is_none() && !args.destination
+    ));
+}
+
+#[test]
 fn output_failure_finalizes_delivery_without_rewriting_published_state() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());

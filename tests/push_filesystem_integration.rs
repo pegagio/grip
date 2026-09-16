@@ -118,6 +118,7 @@ fn ordinary_operations_and_destination_winner_force_leave_destination_links_unch
         &["push"][..],
         &["pull"][..],
         &["sync"][..],
+        &["push", "--force"][..],
         &["push", "--force", "--destination", "~/destination"][..],
         &["pull", "--force", "--destination", "~/destination"][..],
     ] {
@@ -321,6 +322,137 @@ fn cli_push_adds_then_replaces_with_recovery_and_matching_baseline() {
     let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
     assert!(status.status.success());
     assert_eq!(support::json(&status)["details"]["attention_count"], 0);
+}
+
+#[test]
+fn aggregate_force_push_applies_all_safe_source_winning_entries_and_publishes_each_entry() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source_a = root.path().join("source-a");
+    let source_b = root.path().join("source-b");
+    let destination_a = root.path().join("destination-a");
+    let destination_b = root.path().join("destination-b");
+    fs::write(&source_a, "accepted-a").unwrap();
+    fs::write(&source_b, "accepted-b").unwrap();
+    support::write_descriptor(
+        &metadata_dir,
+        &[
+            ("file", &source_a, &destination_a),
+            ("file", &source_b, &destination_b),
+        ],
+    );
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+
+    fs::write(&source_a, "source-wins-a").unwrap();
+    fs::remove_file(&destination_b).unwrap();
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "push", "--force"],
+    );
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = support::json(&output);
+    assert_eq!(value["details"]["operation"], "aggregate_force_push");
+    assert_eq!(value["details"]["result"], "applied");
+    assert_eq!(fs::read_to_string(&destination_a).unwrap(), "source-wins-a");
+    assert_eq!(fs::read_to_string(&destination_b).unwrap(), "accepted-b");
+    assert_eq!(
+        grip::state::publication::load(&support::project_home(&metadata_dir))
+            .unwrap()
+            .accepted
+            .generation,
+        Some(2)
+    );
+}
+
+#[test]
+fn aggregate_force_push_applies_authorized_source_absence_without_enabling_ordinary_push() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "accepted").unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+
+    fs::remove_file(&source).unwrap();
+    assert!(
+        !support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "push", "--force"],
+    );
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!destination.exists());
+    assert_eq!(
+        support::json(&output)["details"]["actions"][0]["kind"],
+        "remove_destination"
+    );
+    assert!(
+        grip::state::publication::load(&support::project_home(&metadata_dir))
+            .unwrap()
+            .accepted
+            .complete_baselines
+            .is_empty()
+    );
+}
+
+#[test]
+fn aggregate_force_push_dry_run_does_not_mutate_or_publish() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "accepted").unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+    fs::write(&source, "source-wins").unwrap();
+    let before = support::snapshot(root.path());
+
+    let preview = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "push", "--force", "--dry-run"],
+    );
+    assert!(preview.status.success());
+    let value = support::json(&preview);
+    assert_eq!(value["details"]["operation"], "aggregate_force_push");
+    assert_eq!(value["details"]["result"], "planned");
+    assert_eq!(support::snapshot(root.path()), before);
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "accepted");
+    assert_eq!(
+        grip::state::publication::load(&support::project_home(&metadata_dir))
+            .unwrap()
+            .accepted
+            .generation,
+        Some(0)
+    );
 }
 
 #[test]

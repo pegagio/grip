@@ -87,7 +87,7 @@ pub struct PushArgs {
     /// Preview the complete plan without locking or mutation.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
-    /// Interpret PATH in destination space without reversing push direction.
+    /// With PATH, force one exact source-winning push; without PATH, force all eligible source-winning entries.
     #[arg(short = 'f', long)]
     pub force: bool,
     #[arg(short = 'd', long)]

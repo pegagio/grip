@@ -45,6 +45,19 @@ impl RegistrySnapshot {
             })
     }
 
+    /// Replace mappings while retaining the selected project's optional profile settings.
+    pub fn descriptor_with_mappings(
+        &self,
+        mappings: Vec<crate::mapping::PortableMapping>,
+    ) -> Result<ProjectDescriptorV2, GripError> {
+        self.portable_descriptor
+            .as_ref()
+            .ok_or_else(|| {
+                GripError::UnsupportedSchema("project descriptors must use schema version 2".into())
+            })?
+            .with_mappings(mappings)
+    }
+
     /// Return the accepted portable declarations paired with their resolved runtime endpoints.
     pub fn mapping_details(&self) -> Result<Vec<crate::result::MappingResultDetails>, GripError> {
         Ok(self.mapping_details.clone())
@@ -360,6 +373,7 @@ fn destination_home(home: &ProjectPaths) -> Result<PathBuf, GripError> {
 fn encode_candidate(
     home: &ProjectPaths,
     candidate: &ResolvedRegistry,
+    prior_descriptor: Option<&ProjectDescriptorV2>,
 ) -> Result<Vec<u8>, GripError> {
     let project_root = project_root(home)?;
     let user_home = destination_home(home)?;
@@ -394,7 +408,11 @@ fn encode_candidate(
             crate::mapping::PortableMapping::parse(mapping.kind, &source, &destination)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    encode_descriptor(&ProjectDescriptorV2::new(portable)?)
+    let descriptor = match prior_descriptor {
+        Some(descriptor) => descriptor.with_mappings(portable)?,
+        None => ProjectDescriptorV2::new(portable)?,
+    };
+    encode_descriptor(&descriptor)
 }
 
 /// Revalidate an accepted snapshot without acquiring a publication lock or writing state.
@@ -869,7 +887,7 @@ fn publish_candidate(
     candidate_evidence: &[PathEvidence],
     fault: Option<PublicationFault>,
 ) -> Result<(), GripError> {
-    let bytes = encode_candidate(home, candidate)?;
+    let bytes = encode_candidate(home, candidate, expected.portable_descriptor.as_ref())?;
     publish_candidate_with_bytes(home, expected, candidate, candidate_evidence, bytes, fault)
 }
 

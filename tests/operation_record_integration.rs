@@ -67,17 +67,17 @@ fn operation_record_v2_rejects_v1_unknown_fields_and_tampering() {
 
 #[test]
 fn operation_record_v2_accepts_all_mutation_operations() {
-    for operation in ["push", "pull"] {
+    for operation in ["push", "pull", "aggregate_force_push"] {
         let mut plan = support::test_push_plan(0);
-        plan.operation = if operation == "push" {
-            grip::mutation::model::MutationOperation::Push
-        } else {
-            grip::mutation::model::MutationOperation::Pull
+        plan.operation = match operation {
+            "push" => grip::mutation::model::MutationOperation::Push,
+            "pull" => grip::mutation::model::MutationOperation::Pull,
+            "aggregate_force_push" => grip::mutation::model::MutationOperation::AggregateForcePush,
+            _ => unreachable!(),
         };
-        plan.direction = Some(if operation == "push" {
-            grip::mutation::model::MutationDirection::Push
-        } else {
-            grip::mutation::model::MutationDirection::Pull
+        plan.direction = Some(match operation {
+            "pull" => grip::mutation::model::MutationDirection::Pull,
+            _ => grip::mutation::model::MutationDirection::Push,
         });
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
         let metadata_dir = support::initialize_project_metadata(root.path());

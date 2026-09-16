@@ -96,11 +96,35 @@ impl OperationReceipt {
         result_delivery: &str,
         failure: Option<String>,
     ) -> Result<(), GripError> {
+        self.checkpoint_summary_with_entries(state, baseline, result_delivery, failure, Vec::new())
+    }
+
+    /// Atomically publish an aggregate terminal outcome together with its entry evidence.
+    pub fn checkpoint_aggregate_summary(
+        &mut self,
+        state: &str,
+        baseline: serde_json::Value,
+        result_delivery: &str,
+        failure: Option<String>,
+        entries: Vec<crate::operation::model::AggregateEntryOutcomeV2>,
+    ) -> Result<(), GripError> {
+        self.checkpoint_summary_with_entries(state, baseline, result_delivery, failure, entries)
+    }
+
+    fn checkpoint_summary_with_entries(
+        &mut self,
+        state: &str,
+        baseline: serde_json::Value,
+        result_delivery: &str,
+        failure: Option<String>,
+        entries: Vec<crate::operation::model::AggregateEntryOutcomeV2>,
+    ) -> Result<(), GripError> {
         let mut next = self.summary.clone();
         next.state = state.into();
         next.baseline = baseline;
         next.result_delivery = result_delivery.into();
         next.failure = failure;
+        next.aggregate_entries = entries;
         crate::operation::model::validate_summary_transition(&self.summary, &next)?;
         self.summary = next;
         let envelope = OperationSummaryEnvelopeV2::new(self.summary.clone())?;
@@ -210,6 +234,7 @@ fn initialize_portable(
         baseline: serde_json::json!({"outcome":"not_attempted"}),
         result_delivery: "not_attempted".into(),
         failure: None,
+        aggregate_entries: Vec::new(),
     };
     let envelope = OperationSummaryEnvelopeV2::new(summary.clone())?;
     publish_new(&directory, "operation.json", &encode(&envelope)?)?;

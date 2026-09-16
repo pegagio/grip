@@ -51,7 +51,15 @@ pub fn run_process() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     };
+    EXTERNAL_DIFF_ENABLED.with(|enabled| {
+        enabled.replace(
+            parsed.output.is_none()
+                && matches!(&parsed.command, cli::Command::Diff(args) if args.path.is_some()),
+        );
+    });
+    EXTERNAL_HANDOFF.with(|handoff| handoff.replace(None));
     let (outcome, render_home) = execute_with_project(&parsed);
+    let handoff = EXTERNAL_HANDOFF.with(|handoff| handoff.replace(None));
     let exit = outcome.category.exit_code();
     let _ = result::emit_diagnostic(
         parsed.verbose,
@@ -69,7 +77,49 @@ pub fn run_process() -> std::process::ExitCode {
         let _ = writeln!(io::stderr().lock(), "grip: could not write command result");
         return std::process::ExitCode::from(20);
     }
-    std::process::ExitCode::from(exit)
+    let Some(handoff) = handoff else {
+        return std::process::ExitCode::from(exit);
+    };
+    if !direct_comparison_endpoint_is_safe(&handoff.source)
+        || !direct_comparison_endpoint_is_safe(&handoff.destination)
+    {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "grip: external comparison endpoints became unavailable or unsafe before launch"
+        );
+        return std::process::ExitCode::from(20);
+    }
+    use std::os::unix::process::ExitStatusExt;
+    match std::process::Command::new(&handoff.program)
+        .args(&handoff.args)
+        .arg(&handoff.source)
+        .arg(&handoff.destination)
+        .status()
+    {
+        Ok(status) if let Some(code) = status.code() => {
+            let _ = writeln!(
+                io::stdout().lock(),
+                "External comparison completed with exit code {code}."
+            );
+            std::process::ExitCode::from(code as u8)
+        }
+        Ok(status) => {
+            let signal = status.signal().unwrap_or(0);
+            let _ = writeln!(
+                io::stderr().lock(),
+                "grip: external comparison terminated by signal {signal}"
+            );
+            std::process::ExitCode::from((128 + signal) as u8)
+        }
+        Err(error) => {
+            let _ = writeln!(
+                io::stderr().lock(),
+                "grip: could not launch external comparison {}: {error}",
+                handoff.program
+            );
+            std::process::ExitCode::from(20)
+        }
+    }
 }
 
 /// Render once and finalize only the associated operation's delivery evidence.
@@ -240,10 +290,23 @@ thread_local! {
     static INVOCATION_DIRECTORY: std::cell::RefCell<Option<std::path::PathBuf>> = const {
         std::cell::RefCell::new(None)
     };
+    static EXTERNAL_DIFF_ENABLED: std::cell::RefCell<bool> = const { std::cell::RefCell::new(false) };
+    static EXTERNAL_HANDOFF: std::cell::RefCell<Option<ExternalHandoff>> = const { std::cell::RefCell::new(None) };
+}
+
+#[derive(Debug, Clone)]
+struct ExternalHandoff {
+    program: String,
+    args: Vec<String>,
+    source: std::path::PathBuf,
+    destination: std::path::PathBuf,
 }
 
 fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     if args.force {
+        if args.path.is_none() {
+            return execute_aggregate_force_push(args.dry_run);
+        }
         return execute_forced_direction(
             args.dry_run,
             args.destination,
@@ -309,6 +372,63 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     state::rebinding::require_mutation(&state.rebinding)?;
     let applied = push::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::push_applied(&applied))
+}
+
+/// Execute the sole aggregate directional force shape: source wins for every managed entry in
+/// the selected project. A supplied selector always remains on the exact-resolution path.
+fn execute_aggregate_force_push(dry_run: bool) -> Result<CommandOutcome, GripError> {
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)?;
+    let state = state::publication::load(&home)?;
+    let project_root = home.project_root()?;
+    let destination_home = home.destination_home().ok_or_else(|| {
+        GripError::InvalidConfiguration("selected project has no destination home".into())
+    })?;
+    for mapping in registry.portable_mappings()? {
+        let destination = mapping.destination.resolve(project_root, destination_home);
+        if path_policy::has_symbolic_link_component(&destination)? {
+            return Err(GripError::mapping(
+                "aggregate_force_push",
+                "destination_symlink_ancestry",
+                vec![destination.to_string_lossy().into_owned()],
+                "aggregate force does not permit destination symbolic links or symbolic-link ancestry",
+            ));
+        }
+    }
+    let path_space = observation::model::PathSpace::Source;
+    let selection = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        None,
+        path_space,
+        "push",
+    )?;
+    reject_fenced_selection(&home, &selection)?;
+    let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
+        .map_err(|error| error.for_operation("aggregate_force_push"))?;
+    state::publication::revalidate(&home, &state)
+        .map_err(|error| error.for_operation("aggregate_force_push"))?;
+    let records = observed
+        .values()
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .collect();
+    let scope = classification_scope(&selection, None, path_space);
+    let plan = mutation::plan::build_aggregate_force_push(
+        scope,
+        records,
+        registry.missing_destination_parents(),
+    )?;
+    if dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
+        return Ok(CommandOutcome::mutation_plan(
+            &plan,
+            if dry_run { "dry_run" } else { "execute" },
+            state.accepted.generation,
+        ));
+    }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
+    let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    Ok(CommandOutcome::mutation_applied(&applied))
 }
 
 fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
@@ -735,6 +855,44 @@ fn execute_inspection(
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
     let result = classification::model::ClassificationResult::new(operation, scope, records);
     let outcome = CommandOutcome::classification(&result);
+    let external_enabled = EXTERNAL_DIFF_ENABLED.with(|enabled| *enabled.borrow());
+    if operation == "diff"
+        && args.path.is_some()
+        && external_enabled
+        && outcome.category == ResultCategory::Success
+        && outcome
+            .details
+            .get("blocking_count")
+            .and_then(serde_json::Value::as_u64)
+            == Some(0)
+    {
+        let (source, destination) = match &selection {
+            observation::model::Selection::Mapping(mapping) => {
+                (mapping.source.clone(), mapping.destination.clone())
+            }
+            observation::model::Selection::Entry(identity)
+            | observation::model::Selection::Subtree(identity) => {
+                (identity.source_path(), identity.destination_path())
+            }
+            observation::model::Selection::All | observation::model::Selection::Unmanaged(_) => {
+                unreachable!("a supplied selector is exact")
+            }
+        };
+        if direct_comparison_endpoint_is_safe(&source)
+            && direct_comparison_endpoint_is_safe(&destination)
+        {
+            let tool =
+                registry::resolve_external_diff(&context.descriptor, context.user_home.path())?;
+            EXTERNAL_HANDOFF.with(|handoff| {
+                handoff.replace(Some(ExternalHandoff {
+                    program: tool.program,
+                    args: tool.args,
+                    source,
+                    destination,
+                }));
+            });
+        }
+    }
     if operation == "status" {
         let invocation_directory = invocation_directory()?;
         let source_paths = result
@@ -754,6 +912,13 @@ fn execute_inspection(
     } else {
         Ok(outcome)
     }
+}
+
+fn direct_comparison_endpoint_is_safe(path: &std::path::Path) -> bool {
+    path_policy::has_symbolic_link_component(path).is_ok_and(|contains_link| !contains_link)
+        && std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+            !metadata.file_type().is_symlink() && (metadata.is_file() || metadata.is_dir())
+        })
 }
 
 /// Render the mapping from a fence even if descriptor publication never completed.
@@ -1145,7 +1310,7 @@ fn execute_add(args: &cli::AddArgs) -> Result<CommandOutcome, GripError> {
         declarations.retain(|mapping| mapping.source.resolve(&context.root) != displaced.source);
     }
     declarations.push(portable.clone());
-    let candidate_descriptor = registry::ProjectDescriptorV2::new(declarations)?;
+    let candidate_descriptor = snapshot.descriptor_with_mappings(declarations)?;
     let candidate = registry::ResolvedRegistry::new(
         candidate_descriptor
             .resolve(&context.root, context.user_home.path(), operation)?
@@ -1621,7 +1786,7 @@ fn execute_remove(args: &cli::RemoveArgs) -> Result<CommandOutcome, GripError> {
         .ok_or_else(|| {
             GripError::CorruptState("removed mapping has no portable declaration".into())
         })?;
-    let portable = registry::ProjectDescriptorV2::new(
+    let portable = snapshot.descriptor_with_mappings(
         declarations
             .into_iter()
             .filter(|mapping| mapping.source.resolve(&context.root) != source)
@@ -1765,4 +1930,22 @@ pub(crate) fn revalidate_project_for_mutation() -> Result<(), GripError> {
         Some(context) => context.revalidate(),
         None => Ok(()),
     })
+}
+
+#[cfg(test)]
+mod external_diff_tests {
+    use super::direct_comparison_endpoint_is_safe;
+
+    #[test]
+    fn direct_comparison_endpoint_rejects_a_symbolic_link_ancestor() {
+        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let target = root.path().join("target");
+        let alias = root.path().join("alias");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("entry"), "payload").unwrap();
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+
+        assert!(!direct_comparison_endpoint_is_safe(&alias.join("entry")));
+        assert!(direct_comparison_endpoint_is_safe(&target.join("entry")));
+    }
 }
