@@ -37,6 +37,20 @@ pub fn assess(
             blockers,
         });
     }
+    // The descriptor digest covers every project setting, including output-only
+    // settings such as diff-tool profiles. Those settings do not alter the
+    // payloads this state authorizes. Rebinding is necessary only when the
+    // bound location or resolved mapping set changes.
+    if current.project_root == state.binding.project_root
+        && current.user_home == state.binding.user_home
+        && current.resolved_mapping_digest == state.binding.resolved_mapping_digest
+    {
+        return Ok(RebindingAssessment {
+            outcome: RebindingOutcome::RebindEligible,
+            prior_root: Some(state.binding.project_root.clone()),
+            blockers: Vec::new(),
+        });
+    }
     for (identity, accepted) in &state.baselines {
         if !descriptor.mappings().contains(&identity.mapping) {
             blockers.push("missing_mapping".into());

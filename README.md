@@ -75,7 +75,19 @@ grip pull [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
 grip sync [-n|--dry-run] [-d|--destination] [PATH]
 ```
 
-For one exact human-readable `grip diff PATH`, Grip can invoke an external comparison program after its normal safety inspection. It uses `GRIP_EXTERNAL_DIFF` first, then a named tool selected in `.grip/config.toml` over `~/.grip/config.toml`, then `diff`. Configure named tools with `[diff] tool = "name"` and `[difftool.name] program = "/path/to/tool"`; `args = ["--literal-option"]` supplies literal arguments before the source and destination paths. Project fields replace matching global fields, including the complete `args` array. `GRIP_EXTERNAL_DIFF` is executable-only and receives exactly the two endpoints, so use a wrapper when it needs options. Grip never uses a shell. JSON output and unselected `grip diff` remain read-only and never launch a tool.
+For one exact human-readable `grip diff PATH`, Grip can invoke an external comparison program after its normal safety inspection. It uses `GRIP_EXTERNAL_DIFF` first, then a named tool selected in `.grip/config.toml` over `~/.grip/config.toml`, then `diff`. For example, configure Visual Studio Code's command-line tool for the project:
+
+```toml
+# .grip/config.toml
+[diff]
+tool = "vscode"
+
+[difftool.vscode]
+program = "/usr/local/bin/code"
+args = ["--diff"]
+```
+
+Grip invokes the program as `code --diff SOURCE DESTINATION` and leaves standard output entirely to that program. Add `-v` or `--verbose` to a selected human diff, for example `grip diff -v git/ignore`, when you want Grip's readable inspection explanation on standard error before the tool runs. `args = ["--literal-option"]` supplies literal arguments before the source and destination paths. Project fields replace matching global fields, including the complete `args` array. `GRIP_EXTERNAL_DIFF` is executable-only and receives exactly the two endpoints, so use a wrapper when it needs options. Grip never uses a shell. JSON output and unselected `grip diff` remain read-only and never launch a tool.
 
 Source selectors for mapping commands, `status`, `diff`, `pull`, and `sync` use project-relative source space. A relative source selector for `push` is resolved from the current working directory so an ordinary source path displayed by `grip status` can be used directly from that same directory. Absolute source selectors remain invalid. `--destination` selects in destination space where supported; `--` terminates option parsing for dash-prefixed paths.
 
@@ -150,7 +162,7 @@ The complete layout is:
     ├── operations/          # portable Operation Record V2 and action evidence
 ```
 
-State V4 stores portable entry identities plus a local binding to the resolved project root, destination home, descriptor digest, and resolved topology. Copying a project retains its state as untrusted evidence. Read-only commands may report `rebind_eligible` without writing; mutation is blocked on missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. A successful state-writing command records the new binding atomically.
+State V4 stores portable entry identities plus a local binding to the resolved project root, destination home, descriptor digest, and resolved topology. Copying a project retains its state as untrusted evidence. Rebinding checks mapping-affecting settings and resolved mapping topology; changing an output-only setting such as a diff-tool profile does not invalidate accepted payload evidence. Read-only commands may report `rebind_eligible` without writing; mutation is blocked on missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. A successful state-writing command records the new binding atomically.
 
 There is no global Grip registry, global mutable state root, generated project identifier, compatibility reader for older schemas, or environment-variable override for command scope.
 

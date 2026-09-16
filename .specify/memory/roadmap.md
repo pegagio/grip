@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.13.4 -> 1.13.5
-Bump rationale: Record verified completion of Feature 028 after a trustworthy worktree debrief found no outcome, scope, or constraint findings.
+Version change: 1.13.5 -> 1.14.0
+Bump rationale: Add Feature 029, a new forward-flowing implemented feature that refines operational output and State V4 rebinding after verified Features 027 and 028.
 
 Changes this revision:
-  - Verified Feature 028 Configurable External Diff Program
+  - Added Feature 029 Operational Output and State Rebinding [implemented]
 
-Specs affected: 028
-Open questions added/resolved: resolved Q-23
+Specs affected: 029
+Open questions added/resolved: none
 
-Notes: Debrief `specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md` reviewed HEAD through WORKTREE and recommended verified with no findings.
+Notes: Feature 029 records the active-user-approved implementation delta. It must be debriefed before being marked verified.
 -->
 
 # Grip — Spec Roadmap
@@ -389,6 +389,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Governed by:** C-01, C-04, C-05, C-08, C-10, C-11, C-12
 - **Addresses:** Direct active-user decision on 2026-09-16 that `grip diff` should open a configurable diff program, with `diff` as the reasonable default.
 - **Notes:** The completed specification selects a Git-style named-tool configuration: `~/.grip/config.toml` provides the machine-wide layer and selected-project `.grip/config.toml` overrides matching fields; `GRIP_EXTERNAL_DIFF` is an executable-only per-invocation override; arguments are literal tokens; selected file and directory endpoints are passed directly; normal child exit codes propagate unchanged; signals return `128 + signal`; and no temporary comparison material is created. Verified by [Feature 028 debrief](../../specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md) with no findings.
+
+### 029 — Operational Output and State Rebinding  [status: implemented]
+
+- **Spec dir:** `specs/029-operational-output-and-state`
+- **Description:** Make selected external-diff output tool-owned and verbose diagnostics readable, make human push and aggregate-force reporting actionable, and avoid rebinding failures caused only by output-oriented project configuration.
+- **Outcome:** An operator sees an unpolluted external comparison, can opt into a property-oriented Grip explanation, understands payload-file counts and aggregate-force blockers, and can change a diff profile without falsely invalidating accepted payload evidence.
+- **Scope (in):** Selected external-diff standard-output ownership; verbose standard-error inspection; property-oriented managed metadata values; omission of unmanaged compatibility noise; endpoint-role capability output; payload-file action counts; no-selector aggregate-force blocker reasons and managed path evidence; State V4 rebind eligibility for non-mapping descriptor changes; documentation; and isolated regression coverage.
+- **Scope (out):** New diff-tool configuration syntax or precedence; JSON schema changes; shell execution; changes to mapping ownership, source-defined membership, external-diff endpoint safety, force authority, baseline publication safety, descriptor schema, or State V4 storage format; aggregate pull force; and a user-facing state history or recovery interface.
+- **Depends on:** 004, 011, 027, 028
+- **Governed by:** C-02, C-04, C-05, C-06, C-07, C-08, C-10, C-11, C-12, C-13
+- **Addresses:** Direct active-user decisions on 2026-09-16: tree push counts must describe payload files; aggregate force blockers must be explained; selected external-diff output must be tool-owned with readable verbose detail; unmanaged metadata notes are not useful; and diff-profile changes must not invalidate payload authorization.
+- **Notes:** This feature flows forward from verified Feature 027's aggregate-force reporting and Feature 028's external-diff configuration contract. The raw descriptor digest remains publication evidence, but rebinding authorization distinguishes unchanged project root, destination home, and resolved mapping identity from output-only descriptor changes. The implementation is present and tested; verification is pending roadmap debrief.
 
 ## Open Questions
 

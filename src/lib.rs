@@ -61,25 +61,34 @@ pub fn run_process() -> std::process::ExitCode {
     let (outcome, render_home) = execute_with_project(&parsed);
     let handoff = EXTERNAL_HANDOFF.with(|handoff| handoff.replace(None));
     let exit = outcome.category.exit_code();
-    let _ = result::emit_diagnostic(
-        parsed.verbose,
-        "command completed",
-        &mut io::stderr().lock(),
-    );
-    if render_command_result(
-        outcome,
-        parsed.output.into(),
-        &mut io::stdout().lock(),
-        render_home.as_ref(),
-    )
-    .is_err()
-    {
-        let _ = writeln!(io::stderr().lock(), "grip: could not write command result");
-        return std::process::ExitCode::from(20);
-    }
     let Some(handoff) = handoff else {
+        let _ = result::emit_diagnostic(
+            parsed.verbose,
+            "command completed",
+            &mut io::stderr().lock(),
+        );
+        if render_command_result(
+            outcome,
+            parsed.output.into(),
+            &mut io::stdout().lock(),
+            render_home.as_ref(),
+        )
+        .is_err()
+        {
+            let _ = writeln!(io::stderr().lock(), "grip: could not write command result");
+            return std::process::ExitCode::from(20);
+        }
         return std::process::ExitCode::from(exit);
     };
+    if parsed.verbose > 0
+        && result::render_verbose_diff(&outcome, &mut io::stderr().lock()).is_err()
+    {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "grip: could not write verbose diff inspection"
+        );
+        return std::process::ExitCode::from(20);
+    }
     if !direct_comparison_endpoint_is_safe(&handoff.source)
         || !direct_comparison_endpoint_is_safe(&handoff.destination)
     {
@@ -96,13 +105,7 @@ pub fn run_process() -> std::process::ExitCode {
         .arg(&handoff.destination)
         .status()
     {
-        Ok(status) if let Some(code) = status.code() => {
-            let _ = writeln!(
-                io::stdout().lock(),
-                "External comparison completed with exit code {code}."
-            );
-            std::process::ExitCode::from(code as u8)
-        }
+        Ok(status) if let Some(code) = status.code() => std::process::ExitCode::from(code as u8),
         Ok(status) => {
             let signal = status.signal().unwrap_or(0);
             let _ = writeln!(

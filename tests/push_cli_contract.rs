@@ -202,6 +202,62 @@ fn initial_source_authoritative_push_uses_the_concise_completed_push_transcript(
 }
 
 #[test]
+fn tree_push_counts_payload_files_not_directory_setup_actions() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(source.join("nested")).unwrap();
+    fs::write(source.join("first.txt"), "first").unwrap();
+    fs::write(source.join("nested/second.txt"), "second").unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let pushed = support::project_command(root.path(), &metadata_dir, &["push"]);
+    assert!(pushed.status.success());
+    assert_eq!(
+        String::from_utf8(pushed.stdout).unwrap(),
+        format!(
+            "Pushed 2 file(s):\n  {} -> {}\n  {} -> {}\nCreated 3 directory(ies).\n",
+            source.join("first.txt").display(),
+            destination.join("first.txt").display(),
+            source.join("nested/second.txt").display(),
+            destination.join("nested/second.txt").display(),
+        )
+    );
+}
+
+#[test]
+fn aggregate_force_lists_the_safety_blockers_that_prevent_execution() {
+    use grip::discovery::model::SafePath;
+    use grip::mutation::model::{MutationOperation, PlanBlocker};
+    use grip::result::OutputMode;
+    use std::path::Path;
+
+    let mut plan = support::test_push_plan(0);
+    plan.operation = MutationOperation::AggregateForcePush;
+    plan.direction = None;
+    plan.counts.selected = 1;
+    plan.counts.blockers = 1;
+    plan.blockers = vec![PlanBlocker {
+        reason: "unsafe_symlink_ancestry".into(),
+        paths: vec![
+            SafePath::from_path(Path::new("/source-link")),
+            SafePath::from_path(Path::new("/destination")),
+        ],
+    }];
+    let outcome = grip::CommandOutcome::mutation_plan(&plan, "execute", None);
+    let mut rendered = Vec::new();
+    grip::render_command_result(outcome, OutputMode::Human, &mut rendered, None).unwrap();
+    let text = String::from_utf8(rendered).unwrap();
+    assert!(text.starts_with(
+        "Error: Aggregate forced push blocked: 1 selected; 0 action(s); 1 blocker(s)\n"
+    ));
+    assert!(text.contains("unsafe_symlink_ancestry: /source-link -> /destination\n"));
+    assert!(text.contains("Resolve the listed safety blockers, then run: grip status\n"));
+}
+
+#[test]
 fn push_noop_uses_a_concise_terminal_transcript() {
     let (root, metadata_dir, _source, _destination) = support::accepted_file_fixture();
     let output = support::project_command(root.path(), &metadata_dir, &["push"]);

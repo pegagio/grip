@@ -1359,6 +1359,287 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
     }
 }
 
+/// Render a readable, diagnostic-only explanation for an exact external diff handoff.
+///
+/// The caller sends this to standard error so the configured comparison program remains the
+/// sole owner of standard output.
+pub fn render_verbose_diff(outcome: &CommandOutcome, writer: &mut dyn Write) -> io::Result<()> {
+    if outcome.details.get("operation").and_then(Value::as_str) != Some("diff") {
+        return Ok(());
+    }
+    let Some(records) = outcome.details.get("records").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    writeln!(writer, "Grip inspection:")?;
+    for record in records {
+        render_verbose_diff_record(record, writer)?;
+    }
+    if let Some(capabilities) = outcome
+        .details
+        .get("endpoint_capabilities")
+        .and_then(Value::as_array)
+    {
+        render_verbose_endpoint_capabilities(capabilities, writer)?;
+    }
+    Ok(())
+}
+
+fn render_verbose_diff_record(record: &Value, writer: &mut dyn Write) -> io::Result<()> {
+    let source = record
+        .get("source_path")
+        .and_then(|path| path.get("display"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let destination = record
+        .get("destination_path")
+        .and_then(|path| path.get("display"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    writeln!(writer, "  Source: {source}")?;
+    writeln!(writer, "  Destination: {destination}")?;
+    writeln!(
+        writer,
+        "  Result: {}",
+        verbose_classification_summary(record)
+    )?;
+    if let Some(dimensions) = record.get("changed_dimensions").and_then(Value::as_object) {
+        render_verbose_property_differences(
+            dimensions,
+            record.get("source_complete"),
+            record.get("baseline_complete"),
+            record.get("destination_complete"),
+            writer,
+        )?;
+    }
+    Ok(())
+}
+
+fn verbose_classification_summary(record: &Value) -> &'static str {
+    match record.get("classification").and_then(Value::as_str) {
+        Some("source_only_change") => {
+            "Source changed; destination matches the accepted baseline. Push copies source to destination."
+        }
+        Some("destination_only_change") => {
+            "Destination changed; source matches the accepted baseline. Pull copies destination to source."
+        }
+        Some("divergent_conflict") => {
+            "Source and destination both changed since the accepted baseline. Choose a winner before synchronizing."
+        }
+        Some("initial_collision") => {
+            "Source and destination differ without an accepted baseline. Choose a winner before synchronizing."
+        }
+        Some("synchronized") => "Source and destination match the accepted baseline.",
+        Some("source_addition") => {
+            "Source exists and destination is missing. Push creates the destination."
+        }
+        Some("destination_side_deletion") => {
+            "Destination is missing. Push restores it from source."
+        }
+        Some("source_side_deletion") => "Source is missing. This is a managed source deletion.",
+        Some("destination_only_unmanaged") => "Destination-only content is unmanaged.",
+        Some("unresolved_destination_link") => {
+            "Destination is a symbolic link and requires explicit safe handling."
+        }
+        Some("unsupported_managed") => "A managed endpoint has an unsupported filesystem state.",
+        Some("unsafe_collision") => "A filesystem safety condition blocks synchronization.",
+        _ => "See the structured JSON output for this classification.",
+    }
+}
+
+fn render_verbose_property_differences(
+    dimensions: &Map<String, Value>,
+    source: Option<&Value>,
+    baseline: Option<&Value>,
+    destination: Option<&Value>,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    const DIMENSIONS: [&str; 9] = [
+        "node_kind",
+        "content",
+        "permission_mode",
+        "owner",
+        "group",
+        "modification_time",
+        "extended_attribute",
+        "access_control_list",
+        "bsd_flags",
+    ];
+    let changed = DIMENSIONS
+        .into_iter()
+        .filter(|dimension| verbose_dimension_is_changed(dimensions, dimension))
+        .collect::<Vec<_>>();
+    if changed.is_empty() {
+        return writeln!(writer, "  Differences: none");
+    }
+    writeln!(writer, "  Differences:")?;
+    for dimension in changed {
+        writeln!(writer, "    - {}:", verbose_dimension_name(dimension))?;
+        writeln!(
+            writer,
+            "      source     : {}",
+            verbose_dimension_value(source, dimension),
+        )?;
+        writeln!(
+            writer,
+            "      baseline   : {}",
+            verbose_dimension_value(baseline, dimension),
+        )?;
+        writeln!(
+            writer,
+            "      destination: {}",
+            verbose_dimension_value(destination, dimension),
+        )?;
+    }
+    Ok(())
+}
+
+fn verbose_dimension_is_changed(dimensions: &Map<String, Value>, dimension: &str) -> bool {
+    [
+        "source_to_baseline",
+        "destination_to_baseline",
+        "source_to_destination",
+    ]
+    .into_iter()
+    .filter_map(|label| dimensions.get(label).and_then(Value::as_array))
+    .any(|values| values.iter().any(|value| value.as_str() == Some(dimension)))
+}
+
+fn verbose_dimension_name(value: &str) -> String {
+    value.replace('_', " ").to_ascii_lowercase()
+}
+
+fn verbose_dimension_value(state: Option<&Value>, dimension: &str) -> String {
+    let Some(state) = state else {
+        return "missing".into();
+    };
+    let metadata = state.get("metadata").unwrap_or(&Value::Null);
+    match dimension {
+        "node_kind" => state
+            .get("node_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .into(),
+        "content" => verbose_content_fingerprint(state.get("content")),
+        "permission_mode" => {
+            verbose_permission_mode(metadata.get("permission_mode").and_then(Value::as_str))
+        }
+        "owner" => metadata
+            .get("uid")
+            .map_or_else(|| "unavailable".into(), Value::to_string),
+        "group" => metadata
+            .get("gid")
+            .map_or_else(|| "unavailable".into(), Value::to_string),
+        "modification_time" => verbose_modification_time(metadata.get("modified_time")),
+        "extended_attribute" => verbose_attribute_count(metadata.get("extended_attributes")),
+        "access_control_list" => metadata
+            .get("acl")
+            .map_or_else(|| "unavailable".into(), Value::to_string),
+        "bsd_flags" => metadata
+            .get("bsd_flags")
+            .map_or_else(|| "unavailable".into(), Value::to_string),
+        _ => "unavailable".into(),
+    }
+}
+
+fn verbose_content_fingerprint(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return "none".into();
+    };
+    let algorithm = value
+        .get("algorithm")
+        .and_then(Value::as_str)
+        .unwrap_or("digest");
+    let digest = value
+        .get("digest")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let prefix = digest.get(..12).unwrap_or(digest);
+    let length = value
+        .get("length")
+        .map_or_else(|| "unknown size".into(), Value::to_string);
+    format!("{algorithm}:{prefix}… ({length} bytes)")
+}
+
+fn verbose_permission_mode(mode: Option<&str>) -> String {
+    let Some(mode) = mode else {
+        return "unavailable".into();
+    };
+    format!("{mode:0>4}")
+}
+
+fn verbose_modification_time(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return "unavailable".into();
+    };
+    let Some(seconds) = value.get("seconds").and_then(Value::as_i64) else {
+        return "unavailable".into();
+    };
+    let nanoseconds = value
+        .get("nanoseconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut local_time = unsafe { std::mem::zeroed::<libc::tm>() };
+    let native_seconds = seconds as libc::time_t;
+    let rendered = unsafe {
+        if libc::localtime_r(&native_seconds, &mut local_time).is_null() {
+            None
+        } else {
+            let mut buffer = [0_i8; 32];
+            let length = libc::strftime(
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                c"%Y-%m-%d %H:%M:%S".as_ptr(),
+                &local_time,
+            );
+            (length > 0).then(|| {
+                std::ffi::CStr::from_ptr(buffer.as_ptr())
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        }
+    };
+    rendered.map_or_else(
+        || format!("{seconds}.{nanoseconds:09}"),
+        |value| format!("{value}.{nanoseconds:09}"),
+    )
+}
+
+fn verbose_attribute_count(value: Option<&Value>) -> String {
+    let count = value.and_then(Value::as_array).map_or(0, Vec::len);
+    format!("{count} managed attribute(s)")
+}
+
+fn render_verbose_endpoint_capabilities(
+    capabilities: &[Value],
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    if capabilities.is_empty() {
+        return Ok(());
+    }
+    writeln!(writer, "  Filesystem capabilities:")?;
+    for mapping in capabilities {
+        for profile in mapping
+            .get("profiles")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let endpoint = profile
+                .get("endpoint")
+                .and_then(Value::as_str)
+                .unwrap_or("endpoint");
+            writeln!(
+                writer,
+                "    - {endpoint}: filesystem {}, case-sensitive {}, mtime precision {} ns",
+                evidence_display(profile.get("filesystem_type")),
+                evidence_display(profile.get("case_sensitive")),
+                evidence_display(profile.get("mtime_precision_nanoseconds")),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn render_human_mutation(outcome: &CommandOutcome, writer: &mut dyn Write) -> io::Result<bool> {
     let operation = outcome.details.get("operation").and_then(Value::as_str);
     let Some(result) = outcome.details.get("result").and_then(Value::as_str) else {
@@ -1397,7 +1678,7 @@ fn human_mutation_direction(
     details: &Map<String, Value>,
 ) -> Option<&'static str> {
     match operation {
-        Some("push") => Some("push"),
+        Some("push") | Some("aggregate_force_push") => Some("push"),
         Some("pull") => Some("pull"),
         Some("sync") => Some("synchronize"),
         Some("resolve") => match details.get("winner").and_then(Value::as_str) {
@@ -1424,14 +1705,25 @@ fn render_human_blocked_mutation(
     writer: &mut dyn Write,
 ) -> io::Result<bool> {
     let counts = outcome.details.get("counts").unwrap_or(&Value::Null);
+    let title = if outcome.details.get("operation").and_then(Value::as_str)
+        == Some("aggregate_force_push")
+    {
+        "Aggregate forced push"
+    } else {
+        human_mutation_title(direction)
+    };
     writeln!(
         writer,
         "Error: {} blocked: {} selected; {} action(s); {} blocker(s)",
-        human_mutation_title(direction),
+        title,
         counts.get("selected").and_then(Value::as_u64).unwrap_or(0),
         counts.get("actions").and_then(Value::as_u64).unwrap_or(0),
         counts.get("blockers").and_then(Value::as_u64).unwrap_or(0),
     )?;
+    if title == "Aggregate forced push" {
+        render_human_aggregate_force_blockers(outcome, writer)?;
+        return Ok(true);
+    }
     if outcome.human_blocker_guidance.is_empty() {
         writeln!(writer, "  Grip cannot safely continue. Run: grip status")?;
         return Ok(true);
@@ -1460,6 +1752,42 @@ fn render_human_blocked_mutation(
         writeln!(writer, "  Grip cannot safely continue. Run: grip status")?;
     }
     Ok(true)
+}
+
+/// Render the entry-level safety evidence that prevented an aggregate forced push.
+fn render_human_aggregate_force_blockers(
+    outcome: &CommandOutcome,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    let Some(blockers) = outcome.details.get("blockers").and_then(Value::as_array) else {
+        writeln!(writer, "  Grip cannot safely continue. Run: grip status")?;
+        return Ok(());
+    };
+    for blocker in blockers {
+        let reason = blocker
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("blocking evidence");
+        let paths = blocker
+            .get("paths")
+            .and_then(Value::as_array)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(|path| path.get("display").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if paths.is_empty() {
+            writeln!(writer, "  {reason}")?;
+        } else {
+            writeln!(writer, "  {reason}: {}", paths.join(" -> "))?;
+        }
+    }
+    writeln!(
+        writer,
+        "  Resolve the listed safety blockers, then run: grip status"
+    )
 }
 
 fn render_human_successful_mutation(
@@ -1514,8 +1842,16 @@ fn render_human_successful_mutation(
         }
         _ => return Ok(false),
     };
-    writeln!(writer, "{verb} {} file(s):", actions.len())?;
-    for action in actions {
+    let file_actions = actions
+        .iter()
+        .filter(|action| human_file_action(action))
+        .collect::<Vec<_>>();
+    let directory_actions = actions
+        .iter()
+        .filter(|action| human_directory_action(action))
+        .count();
+    writeln!(writer, "{verb} {} file(s):", file_actions.len())?;
+    for action in file_actions {
         let source = action
             .get("source_path")
             .and_then(|path| path.get("display"))
@@ -1533,7 +1869,26 @@ fn render_human_successful_mutation(
         };
         writeln!(writer, "  {source} {symbol} {destination}")?;
     }
+    if directory_actions > 0 {
+        writeln!(writer, "Created {directory_actions} directory(ies).")?;
+    }
     Ok(true)
+}
+
+/// Whether a public mutation action represents a file-level payload change.
+fn human_file_action(action: &Value) -> bool {
+    !matches!(
+        action.get("kind").and_then(Value::as_str),
+        Some("create_parent_directory" | "create_directory" | "finalize_directory_metadata")
+    )
+}
+
+/// Whether a public mutation action creates or finalizes a directory.
+fn human_directory_action(action: &Value) -> bool {
+    matches!(
+        action.get("kind").and_then(Value::as_str),
+        Some("create_parent_directory" | "create_directory" | "finalize_directory_metadata")
+    )
 }
 
 fn render_human_concise_mapping(

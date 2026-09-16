@@ -51,11 +51,59 @@ fn selected_human_diff_invokes_named_tool_with_literal_arguments_and_child_exit_
             destination.to_str().unwrap(),
         ]
     );
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("External comparison completed with exit code 7.")
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn verbose_selected_diff_explains_grip_inspection_on_stderr_without_polluting_tool_output() {
+    let fixture = ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let destination = fixture.home_destination("destination");
+    fs::write(&source, "accepted").unwrap();
+    fs::write(&destination, "accepted").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
     );
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
+    fs::write(&source, "changed").unwrap();
+    support::set_fixture_mode(&source, 0o740);
+    support::set_fixture_modified_time(&source, 1_700_000_000, 123_456_789);
+    let tool = fixture.write_executable("print-diff.sh", "#!/bin/sh\nprintf 'tool output\\n'\n");
+    let mut descriptor = fs::read_to_string(fixture.descriptor_path()).unwrap();
+    descriptor.push_str(&format!(
+        "\n[diff]\ntool = \"print\"\n[difftool.print]\nprogram = \"{}\"\n",
+        tool.display()
+    ));
+    fs::write(fixture.descriptor_path(), descriptor).unwrap();
+
+    let output = fixture
+        .command_builder(&fixture.project_root)
+        .args(["diff", "-v", "source"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "tool output\n");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Grip inspection:\n"), "{stderr}");
+    assert!(
+        stderr.contains("Result: Source changed; destination matches the accepted baseline."),
+        "{stderr}"
+    );
+    assert!(stderr.contains("- permission mode:\n"), "{stderr}");
+    assert!(stderr.contains("source     : 0740"), "{stderr}");
+    assert!(stderr.contains("baseline   : 0644"), "{stderr}");
+    assert!(stderr.contains("destination: 0644"), "{stderr}");
+    assert!(stderr.contains("- modification time:\n"), "{stderr}");
+    assert!(!stderr.contains("Metadata notes:"), "{stderr}");
+    assert!(stderr.contains("- source: filesystem"), "{stderr}");
+    assert!(!stderr.contains("for /"), "{stderr}");
 }
 
 #[test]
