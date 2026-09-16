@@ -7,10 +7,10 @@ updated: 2026-09-16
 
 # Roadmap open questions recent
 
-This continuation records the current unresolved questions added by the roadmap's planned Features 027 and 028. (S003)
+This continuation retains recent roadmap-question provenance for Features 027 and 028. (S003)
 
-- **027 — Aggregate forced-push publication:** decide whether no-selector `grip push --force` publishes accepted baseline evidence atomically for the full operation, publishes only verified completed entries after a later failure, or follows another explicit failure model. This remains intentionally unresolved. (S003)
-- **028 — External diff configuration contract:** select the configuration location and schema, executable and tokenized-argument representation, supported file and directory invocation forms, comparison-exit interpretation, and temporary-material lifecycle. (S003)
+- **027 — Aggregate forced-push publication (`resolved`):** no-selector `grip push --force` publishes accepted baseline evidence for each verified completed entry; a later failure leaves the aggregate failed and all uncompleted entries unaccepted. (S003)
+- **028 — External diff configuration contract (`resolved`):** machine-wide and selected-project TOML layers use named-tool selection with project field replacement; `GRIP_EXTERNAL_DIFF` is an executable-only override; arguments are literal tokens; selected endpoints are direct; normal child exit codes propagate unchanged; signals map to `128 + signal`; and no temporary material is created. (S003)
 
 ## Related pages
 

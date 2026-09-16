@@ -75,6 +75,61 @@ fn init_rejects_partial_unsupported_and_noncanonical_metadata_without_repair() {
 }
 
 #[test]
+fn external_diff_rejects_symlinked_or_unsafe_global_profile_without_launching() {
+    let fixture = ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let destination = fixture.home_destination("destination");
+    fs::write(&source, "source").unwrap();
+    fs::write(&destination, "destination").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
+    let recorder =
+        fixture.write_executable("record-diff.sh", "#!/bin/sh\ntouch \"$GRIP_RECORD\"\n");
+    let record = fixture.root.path().join("external-diff-ran");
+    let actual_global = fixture.root.path().join("actual-global");
+    fs::create_dir(&actual_global).unwrap();
+    fs::write(
+        actual_global.join("config.toml"),
+        format!(
+            "[diff]\ntool = \"record\"\n[difftool.record]\nprogram = \"{}\"\n",
+            recorder.display()
+        ),
+    )
+    .unwrap();
+    symlink(&actual_global, fixture.home_root.join(".grip")).unwrap();
+    let symlinked = fixture
+        .command_builder(&fixture.project_root)
+        .env("GRIP_RECORD", &record)
+        .args(["diff", "source"])
+        .output()
+        .unwrap();
+    assert_eq!(symlinked.status.code(), Some(10), "{symlinked:?}");
+    assert!(!record.exists());
+
+    fs::remove_file(fixture.home_root.join(".grip")).unwrap();
+    let global = fixture.home_root.join(".grip");
+    fs::create_dir(&global).unwrap();
+    fs::set_permissions(&global, fs::Permissions::from_mode(0o777)).unwrap();
+    let unsafe_mode = fixture
+        .command_builder(&fixture.project_root)
+        .env("GRIP_RECORD", &record)
+        .args(["diff", "source"])
+        .output()
+        .unwrap();
+    assert_eq!(unsafe_mode.status.code(), Some(10), "{unsafe_mode:?}");
+    assert!(!record.exists());
+}
+
+#[test]
 fn injected_failure_cleans_only_its_staging_and_publishes_nothing() {
     let fixture = ProjectFixture::new();
     assert!(

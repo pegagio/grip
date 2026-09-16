@@ -36,6 +36,8 @@ grip pull [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
 grip sync [-n|--dry-run] [-d|--destination] [PATH]
 ```
 
+For a human-readable exact `grip diff PATH`, Grip may hand the validated source and destination directly to an external comparison program. `GRIP_EXTERNAL_DIFF` has highest precedence and is executable-only; otherwise Grip merges optional named-tool profile fields from `~/.grip/config.toml` and selected-project `.grip/config.toml`, with project values replacing matching global values, before falling back to `diff`. A profile uses `[diff] tool = "name"` and `[difftool.name]` with `program` plus a literal `args` array. No shell command string, interpolation, temporary comparison copy, or automated tool installation is supported. JSON and unselected detailed inspection do not launch a program; normal child exit codes propagate unchanged and signal termination returns `128 + signal`.
+
 Human-readable output is the default. `-o json` provides structured output and leaves room for future formats. `-p` is invalid with `init` and `version`; those commands do not operate on an existing project.
 
 There are no public command families or aliases for `mapping`, `validate`, `check`, `fsck`, `show`, `resolve`, `delete`, `retire`, `accept`, or recovery operations. `.gripignore` is edited directly, just as `.gitignore` is.

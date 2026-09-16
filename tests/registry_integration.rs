@@ -70,6 +70,23 @@ fn descriptor_v2_is_strict_and_rejects_v1() {
 }
 
 #[test]
+fn descriptor_v2_preserves_deferred_diff_profiles_while_retaining_strict_root_keys() {
+    let descriptor = registry::decode_descriptor(
+        "schema_version = 2\nmappings = []\ndiff = \"deferred until selected human diff\"\ndifftool = [\"also deferred\"]\n",
+    )
+    .unwrap();
+    let replacement =
+        PortableMapping::parse(MappingKind::File, OsStr::new("a"), OsStr::new("~/a")).unwrap();
+    let updated = descriptor.with_mappings(vec![replacement]).unwrap();
+    let text = String::from_utf8(registry::encode_descriptor(&updated).unwrap()).unwrap();
+    assert!(text.contains("diff = \"deferred until selected human diff\""));
+    assert!(text.contains("difftool = [\"also deferred\"]"));
+    assert!(
+        registry::decode_descriptor("schema_version = 2\nmappings = []\nextra = true\n").is_err()
+    );
+}
+
+#[test]
 fn descriptor_v2_rejects_resolved_ownership_conflicts() {
     let root = tempfile::tempdir().unwrap();
     let project = root.path().join("project");

@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.13.2 -> 1.13.3
-Bump rationale: Record verified completion of Feature 027 after a trustworthy worktree debrief found no outcome, scope, or constraint findings.
+Version change: 1.13.4 -> 1.13.5
+Bump rationale: Record verified completion of Feature 028 after a trustworthy worktree debrief found no outcome, scope, or constraint findings.
 
 Changes this revision:
-  - Verified Feature 027 Aggregate Forced Push
+  - Verified Feature 028 Configurable External Diff Program
 
-Specs affected: 027
-Open questions added/resolved: resolved Q-22
+Specs affected: 028
+Open questions added/resolved: resolved Q-23
 
-Notes: Debrief `specs/027-aggregate-forced-push/roadmap-reviews/debrief-20260916T141420Z.md` reviewed HEAD through WORKTREE and recommended verified with no findings.
+Notes: Debrief `specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md` reviewed HEAD through WORKTREE and recommended verified with no findings.
 -->
 
 # Grip — Spec Roadmap
@@ -378,7 +378,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-16 that `grip push --force` must force push all changes rather than require a specific path.
 - **Notes:** This is an intentional forward-flowing exception to Feature 011's exact-entry force boundary and Feature 019's exact-entry guidance. A no-selector command means all managed entries in the selected project; a supplied selector retains the existing exact-entry contract. Direct active-user decision resolves Q-22: accepted evidence is published for each verified completed aggregate entry, while a later failure leaves the aggregate failed and uncompleted entries unaccepted. Verified by [Feature 027 debrief](../../specs/027-aggregate-forced-push/roadmap-reviews/debrief-20260916T141420Z.md) with no findings.
 
-### 028 — Configurable External Diff Program  [status: planned]
+### 028 — Configurable External Diff Program  [status: verified]
 
 - **Spec dir:** `specs/028-configurable-external-diff`
 - **Description:** Make `grip diff` open the selected comparison in a configurable external diff program, with `diff` as the default executable.
@@ -388,7 +388,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 011
 - **Governed by:** C-01, C-04, C-05, C-08, C-10, C-11, C-12
 - **Addresses:** Direct active-user decision on 2026-09-16 that `grip diff` should open a configurable diff program, with `diff` as the reasonable default.
-- **Notes:** The specification must decide the configuration location and schema, tokenized argument contract, directory and missing-endpoint behavior, whether nonzero comparison exits are presented as successful differences, and how temporary comparison material is cleaned up. It must invoke an executable directly rather than through a shell.
+- **Notes:** The completed specification selects a Git-style named-tool configuration: `~/.grip/config.toml` provides the machine-wide layer and selected-project `.grip/config.toml` overrides matching fields; `GRIP_EXTERNAL_DIFF` is an executable-only per-invocation override; arguments are literal tokens; selected file and directory endpoints are passed directly; normal child exit codes propagate unchanged; signals return `128 + signal`; and no temporary comparison material is created. Verified by [Feature 028 debrief](../../specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md) with no findings.
 
 ## Open Questions
 
@@ -416,7 +416,7 @@ These questions are intentionally deferred to the specification that owns the de
 - **Q-20 — Large-file performance acceptance (021):** Resolved by verified Feature 021. Both representative operations have a one-second p95 release-build acceptance threshold, enforced by the isolated performance gate; final recorded p95 values were 573.669375 ms for `grip add` and 184.788375 ms for `grip status`.
 - **Q-21 — Force-add replacement contract (022):** Resolved for initial delivery by Feature 022. `grip add --force` is explicit confirmation for exactly one equal-destination file mapping; tree, source-overlap, nested, and multi-mapping conflicts remain rejected. The displaced mapping and its current evidence are retired all-or-nothing, and removal of the exact mapping clears ownership-validation inputs before a later ordinary add.
 - **Q-22 — Aggregate forced-push publication (027):** Resolved by direct active-user decision on 2026-09-16. `grip push --force` without a selector publishes accepted baseline evidence for each verified completed entry; a later failure leaves the aggregate operation failed and every uncompleted entry unaccepted.
-- **Q-23 — External diff configuration contract (028):** Select the configuration location and schema, executable and tokenized-argument representation, supported file and directory invocation forms, comparison-exit interpretation, and temporary-material lifecycle.
+- **Q-23 — External diff configuration contract (028):** Resolved by verified Feature 028. The machine-wide `~/.grip/config.toml` and selected-project `.grip/config.toml` layers use Git-style named-tool selection and field replacement; `GRIP_EXTERNAL_DIFF` is an executable-only override; arguments are literal tokens; selected file and directory endpoints are direct; normal child exit codes propagate unchanged; signals return `128 + signal`; and no temporary material is created.
 
 ## Cross-Cutting Notes
 
@@ -433,4 +433,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.13.3 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16
+**Version**: 1.13.5 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16

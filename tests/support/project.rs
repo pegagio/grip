@@ -71,6 +71,14 @@ impl ProjectFixture {
         self.home_root.join(name)
     }
 
+    /// Write an executable test helper in the fixture root.
+    pub fn write_executable(&self, name: &str, contents: &str) -> PathBuf {
+        let path = self.root.path().join(name);
+        fs::write(&path, contents).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+
     /// Create an exact destination leaf link without resolving or modifying its target.
     pub fn create_destination_leaf_link(&self, name: &str, target: &Path) -> PathBuf {
         let destination = self.home_destination(name);
