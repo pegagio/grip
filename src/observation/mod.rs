@@ -87,11 +87,26 @@ fn inspect_once(
             let identity = EntryIdentity::new(ResolvedMapping::from(mapping), Vec::new())
                 .expect("file mapping identity is valid");
             let source_complete = inspect_complete_supported(&mapping.source)?;
-            let destination_complete = inspect_complete_supported(&mapping.destination)?;
+            let destination_outcome = inspect_destination_leaf(&mapping.destination)?;
+            let (destination_complete, destination_link, destination_blocking) =
+                match destination_outcome {
+                    fingerprint::RelativeCompleteObservation::Missing => (None, None, None),
+                    fingerprint::RelativeCompleteObservation::Supported(complete) => {
+                        (Some(*complete), None, None)
+                    }
+                    fingerprint::RelativeCompleteObservation::DestinationLeafLink(link) => {
+                        (None, Some(link), None)
+                    }
+                    fingerprint::RelativeCompleteObservation::Blocking { reason } => {
+                        (None, None, Some(reason))
+                    }
+                };
             let source = source_complete.as_ref().map(legacy_from_complete);
             let destination = destination_complete.as_ref().map(legacy_from_complete);
             if source.is_some()
                 || destination.is_some()
+                || destination_link.is_some()
+                || destination_blocking.is_some()
                 || accepted.complete_baselines.contains_key(&identity)
             {
                 observed.insert(
@@ -107,12 +122,16 @@ fn inspect_once(
                         destination: destination.as_ref().map(|value| value.0.clone()),
                         source_complete,
                         destination_complete,
+                        destination_link,
                         metadata_findings: Vec::new(),
                         endpoint_capabilities: Vec::new(),
                         source_diagnostic: source.map(|value| value.1),
                         destination_diagnostic: destination.map(|value| value.1),
-                        unsupported: Vec::new(),
-                        blocking: false,
+                        unsupported: destination_blocking
+                            .into_iter()
+                            .map(|reason| format!("destination:{reason}"))
+                            .collect(),
+                        blocking: destination_blocking.is_some(),
                     },
                 );
             }
@@ -142,6 +161,7 @@ fn inspect_once(
                 destination: None,
                 source_complete: None,
                 destination_complete: None,
+                destination_link: None,
                 metadata_findings: Vec::new(),
                 endpoint_capabilities: Vec::new(),
                 source_diagnostic: None,
@@ -223,6 +243,7 @@ fn inspect_once(
                 destination: None,
                 source_complete: None,
                 destination_complete: None,
+                destination_link: None,
                 metadata_findings: Vec::new(),
                 endpoint_capabilities: Vec::new(),
                 source_diagnostic: None,
@@ -368,6 +389,17 @@ fn endpoint_profiles(
         ),
     ] {
         let mut capability_path = root.as_path();
+        // A final destination link has no supported endpoint capability of its own. Use its
+        // already-required parent directory without opening or resolving the link target.
+        if role == crate::metadata::model::EndpointRole::Destination
+            && crate::discovery::filesystem::metadata_at_path(capability_path).is_ok_and(
+                |metadata| metadata.classify(metadata.stat.st_dev as u64) == NodeKind::Symlink,
+            )
+        {
+            capability_path = capability_path.parent().ok_or_else(|| {
+                GripError::InvalidConfiguration("destination link has no parent directory".into())
+            })?;
+        }
         let metadata = loop {
             match crate::discovery::filesystem::metadata_at_path(capability_path) {
                 Ok(value) => break value,
@@ -596,6 +628,33 @@ fn inspect_complete_supported(
     fingerprint::inspect_complete(path, kind).map(Some)
 }
 
+fn inspect_destination_leaf(
+    path: &std::path::Path,
+) -> Result<fingerprint::RelativeCompleteObservation, GripError> {
+    let metadata = match crate::discovery::filesystem::metadata_at_path(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(fingerprint::RelativeCompleteObservation::Missing);
+        }
+        Err(error) => return Err(GripError::from_io("could not inspect observed path", error)),
+    };
+    if metadata.classify(metadata.stat.st_dev as u64) == NodeKind::Symlink {
+        return Ok(
+            fingerprint::RelativeCompleteObservation::DestinationLeafLink(
+                fingerprint::destination_leaf_link(metadata),
+            ),
+        );
+    }
+    match inspect_complete_supported(path)? {
+        Some(complete) => Ok(fingerprint::RelativeCompleteObservation::Supported(
+            Box::new(complete),
+        )),
+        None => Ok(fingerprint::RelativeCompleteObservation::Blocking {
+            reason: "wrong_node_kind",
+        }),
+    }
+}
+
 fn observe_complete_identity(
     entry: &mut ObservedEntry,
     source: bool,
@@ -637,11 +696,15 @@ fn observe_complete_identity(
         } else {
             identity.destination_path()
         };
-        match inspect_complete_supported(&path)? {
-            Some(complete) => {
-                fingerprint::RelativeCompleteObservation::Supported(Box::new(complete))
+        if source {
+            match inspect_complete_supported(&path)? {
+                Some(complete) => {
+                    fingerprint::RelativeCompleteObservation::Supported(Box::new(complete))
+                }
+                None => fingerprint::RelativeCompleteObservation::Missing,
             }
-            None => fingerprint::RelativeCompleteObservation::Missing,
+        } else {
+            inspect_destination_leaf(&path)?
         }
     };
     match outcome {
@@ -656,6 +719,14 @@ fn observe_complete_identity(
                 entry.destination = Some(state);
                 entry.destination_diagnostic = Some(diagnostic);
                 entry.destination_complete = Some(*complete);
+            }
+        }
+        fingerprint::RelativeCompleteObservation::DestinationLeafLink(evidence) => {
+            if source {
+                entry.blocking = true;
+                entry.unsupported.push("symlink".into());
+            } else {
+                entry.destination_link = Some(evidence);
             }
         }
         fingerprint::RelativeCompleteObservation::Blocking { reason } => {

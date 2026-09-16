@@ -1,19 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.11.1 -> 1.12.0
-Bump rationale: Add the approved exact destination-symlink admission and replacement capability as Feature 026.
+Version change: 1.12.1 -> 1.12.2
+Bump rationale: Record the completed Feature 026 verification evidence and authorized transition from in-progress to verified.
 
 Changes this revision:
-  - Added Feature 026 for nonmutating mapping admission when exact managed destination leaves are symbolic links
-  - Reserved link replacement for explicit exact-entry `push --force` without following the link target
-  - Kept symbolic-link ancestors, source links, aggregate replacement, and mutation during `add` outside scope
-  - Partially resolved Q-07 for exact destination-leaf links while retaining the unsupported source-link boundary
+  - Marked Feature 026 verified after a no-finding implementation debrief
 
 Specs affected: 026
-Open questions added/resolved: Q-07 partially resolved
+Open questions added/resolved: none
 
-Notes: Direct active-user authorization on 2026-09-15 after `grip add home/ ~/` was blocked by exact destination symlinks at `.bash_profile` and `.screenrc`. The amendment preserves payload-nonmutating `add`, exact-entry force authority, no-follow filesystem safety, and the hard blocker for symbolic-link ancestors.
+Notes: Direct active-user authorization on 2026-09-15 to close Feature 026 after a trustworthy HEAD-to-worktree debrief. The feature preserves payload-nonmutating `add`, exact-entry force authority, no-follow filesystem safety, and the hard blocker for symbolic-link ancestors.
 -->
 
 # Grip — Spec Roadmap
@@ -357,7 +354,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-15 after `grip add home/ ~/` was correctly identified as transitively recursive but blocked a core dotfiles-management use case.
 - **Notes:** This feature flows forward from Features 002 and 003. It replaces their conservative same-mapping prospective-tree rejection only for a tree source that is a strict descendant of its destination, and replaces arbitrary destination-only enumeration with inspection bounded to current source membership and retained accepted identities. Existing cross-mapping ownership rejection remains authoritative. A newly discovered unsafe member blocks before mutation and may be excluded only through ordinary explicit source policy. Verified on 2026-09-15 by the no-finding debrief at `specs/025-contained-source-tree-mappings/roadmap-reviews/debrief-20260915T232753Z.md` (`PROCEED`; all verification gates passed).
 
-### 026 — Exact Destination Symlink Replacement  [status: planned]
+### 026 — Exact Destination Symlink Replacement  [status: verified]
 
 - **Spec dir:** `specs/026-exact-destination-symlink-replacement`
 - **Description:** Allow mapping intent to be recorded when an exact managed destination leaf is a symbolic link, report the link precisely, and permit explicit exact-entry forced push to replace the link object with the mapped source state without following its target.
@@ -367,7 +364,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 009, 011, 019, 023, 025
 - **Governed by:** C-02, C-03, C-04, C-05, C-06, C-07, C-09, C-10, C-11, C-12, C-13, C-14
 - **Addresses:** Direct active-user decision on 2026-09-15 after `grip add home/ ~/` rejected exact managed destination symlinks at `.bash_profile` and `.screenrc` with the non-actionable message `selected baseline evidence is not complete and equivalent`.
-- **Notes:** This feature flows forward from verified Features 009, 023, and 025. An exact destination-leaf symlink is an unresolved replaceable obstacle, not supported payload and not baseline evidence. Ordinary `add` records intent without touching it. Replacement requires one exact source-space selector and explicit source-winning force, removes only the verified link object, never follows or mutates its target, and publishes accepted evidence only after the replacement is verified. Any symlink in a required destination ancestor remains a hard blocker requiring explicit operator resolution. The generic add-time baseline error must be replaced with actionable path-specific diagnostics.
+- **Notes:** This feature flows forward from verified Features 009, 023, and 025. An exact destination-leaf symlink is an unresolved replaceable obstacle, not supported payload and not baseline evidence. Ordinary `add` records intent without touching it. Replacement requires one exact source-space selector and explicit source-winning force, removes only the verified link object, never follows or mutates its target, and publishes accepted evidence only after the replacement is verified. Any symlink in a required destination ancestor remains a hard blocker requiring explicit operator resolution. The generic add-time baseline error is replaced with actionable path-specific diagnostics. Verification evidence: `specs/026-exact-destination-symlink-replacement/roadmap-reviews/debrief-20260916T030911Z.md` (`PROCEED`, no findings).
 
 ## Open Questions
 
@@ -410,4 +407,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.12.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15
+**Version**: 1.12.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-15

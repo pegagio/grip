@@ -30,3 +30,4 @@ Sources are immutable inputs — the wiki never edits them.
 | S023 | `specs/023-force-missing-peer-restoration` | directory | 2026-09-14 | 2026-09-14 | `synchronization-and-conflicts.md` |
 | S024 | `specs/024-local-artifact-release-automation` | directory | 2026-09-15 | 2026-09-15 | `local-development-workflows.md`, `local-artifact-release-preparation.md` |
 | S025 | `specs/025-contained-source-tree-mappings` | directory | 2026-09-15 | 2026-09-15 | `contained-source-tree-mappings.md`, `mappings-and-managed-membership.md` |
+| S026 | `specs/026-exact-destination-symlink-replacement` | directory | 2026-09-15 | 2026-09-15 | `exact-destination-symlink-replacement.md`, `mappings-and-managed-membership.md`, `force-mapping-replacement.md`, `filesystem-support-boundaries.md`, `baseline-classification-and-status.md` |

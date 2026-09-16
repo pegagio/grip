@@ -81,8 +81,11 @@ impl PortableMapping {
         let destination_path = self.destination.resolve(project_root, home_root);
         let source_evidence =
             crate::path_policy::inspect_durable_endpoint(&source_path, self.kind, true, operation)?;
-        let destination_evidence =
-            crate::path_policy::inspect_endpoint(&destination_path, self.kind, false, operation)?;
+        let destination_evidence = crate::path_policy::inspect_durable_destination_leaf_link(
+            &destination_path,
+            self.kind,
+            operation,
+        )?;
         Ok(ResolvedMapping {
             declaration: self.clone(),
             source: source_evidence.canonical.clone(),

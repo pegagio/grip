@@ -85,6 +85,47 @@ fn metadata_only_fixture() -> (
     (root, home, registry, state, selection, plan)
 }
 
+fn unresolved_destination_link_resolution_plan(
+    fixture: &support::project::ProjectFixture,
+) -> (
+    grip::project::ProjectPaths,
+    grip::registry::publication::RegistrySnapshot,
+    grip::state::publication::StateSnapshot,
+    Selection,
+    grip::mutation::model::MutationPlan,
+) {
+    let home = grip::project::ProjectPaths::project_metadata(
+        fixture.metadata_dir(),
+        fixture.home_root.clone(),
+    );
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let mapping = registry.registry.mappings().first().unwrap();
+    let identity = grip::observation::model::EntryIdentity::new(
+        grip::observation::model::ResolvedMapping::from(mapping),
+        Vec::new(),
+    )
+    .unwrap();
+    let selection = Selection::Entry(identity);
+    let records = grip::observation::inspect(&home, &registry, &state.accepted, &selection)
+        .unwrap()
+        .values()
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .collect();
+    let plan = grip::mutation::plan::build_resolution(
+        ClassificationScope {
+            kind: "entry".into(),
+            path_space: PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+        grip::mutation::model::ConflictWinner::Source,
+    )
+    .unwrap();
+    (home, registry, state, selection, plan)
+}
+
 #[test]
 fn staging_failure_is_terminal_and_leaves_later_actions_unattempted() {
     let (root, home, registry, state, selection, plan) = fixture();
@@ -305,4 +346,199 @@ fn post_action_faults_are_structured_and_preserve_the_last_authoritative_baselin
             published
         );
     }
+}
+
+#[test]
+fn destination_link_substitution_before_publication_preserves_unpublished_state() {
+    let fixture = support::project::ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let original_target = fixture.root.path().join("original-target");
+    let replacement_target = fixture.root.path().join("replacement-target");
+    fs::write(&source, "managed payload").unwrap();
+    fs::write(&original_target, "original target").unwrap();
+    fs::write(&replacement_target, "replacement target").unwrap();
+    let destination = fixture.create_destination_leaf_link("destination", &original_target);
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
+
+    let home = grip::project::ProjectPaths::project_metadata(
+        fixture.metadata_dir(),
+        fixture.home_root.clone(),
+    );
+    let registry = grip::registry::publication::load(&home, false).unwrap();
+    let state = grip::state::publication::load(&home).unwrap();
+    let mapping = registry.registry.mappings().first().unwrap();
+    let identity = grip::observation::model::EntryIdentity::new(
+        grip::observation::model::ResolvedMapping::from(mapping),
+        Vec::new(),
+    )
+    .unwrap();
+    let selection = Selection::Entry(identity);
+    let records = grip::observation::inspect(&home, &registry, &state.accepted, &selection)
+        .unwrap()
+        .values()
+        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .collect();
+    let plan = grip::mutation::plan::build_resolution(
+        ClassificationScope {
+            kind: "entry".into(),
+            path_space: PathSpace::Source,
+            selector: None,
+            mapping_source: None,
+        },
+        records,
+        grip::mutation::model::ConflictWinner::Source,
+    )
+    .unwrap();
+
+    let error = grip::mutation::execution::execute_with_fault_hook(
+        &home,
+        &registry,
+        &state,
+        &selection,
+        &plan,
+        |phase| {
+            if phase == grip::mutation::FaultPhase::BeforePayloadPublication(0) {
+                fixture.substitute_destination_leaf_link(&destination, &replacement_target);
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    let grip::GripError::MutationFailed(failure) = error else {
+        panic!("expected structured stale-link failure");
+    };
+    assert_eq!(failure.baseline.outcome, "not_published");
+    assert!(
+        fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(&original_target).unwrap(),
+        "original target"
+    );
+    assert_eq!(
+        fs::read_to_string(&replacement_target).unwrap(),
+        "replacement target"
+    );
+    assert!(
+        grip::state::publication::load(&home)
+            .unwrap()
+            .accepted
+            .generation
+            .is_none()
+    );
+}
+
+#[test]
+fn removed_destination_link_before_publication_preserves_unpublished_state() {
+    let fixture = support::project::ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let destination = fixture.home_destination("destination");
+    let former_target = fixture.root.path().join("former-target");
+    fs::write(&source, "managed payload").unwrap();
+    fs::write(&former_target, "former target").unwrap();
+    fixture.create_destination_leaf_link("destination", &former_target);
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
+    let (home, registry, state, selection, plan) =
+        unresolved_destination_link_resolution_plan(&fixture);
+
+    let error = grip::mutation::execution::execute_with_fault_hook(
+        &home,
+        &registry,
+        &state,
+        &selection,
+        &plan,
+        |phase| {
+            if phase == grip::mutation::FaultPhase::BeforePayloadPublication(0) {
+                fs::remove_file(&destination).unwrap();
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    let grip::GripError::MutationFailed(failure) = error else {
+        panic!("expected structured stale-link failure");
+    };
+    assert_eq!(failure.baseline.outcome, "not_published");
+    assert!(!destination.exists());
+    assert_eq!(fs::read_to_string(&former_target).unwrap(), "former target");
+    assert!(
+        grip::state::publication::load(&home)
+            .unwrap()
+            .accepted
+            .generation
+            .is_none()
+    );
+}
+
+#[test]
+fn destination_ancestor_link_drift_before_publication_preserves_unpublished_state() {
+    let fixture = support::project::ProjectFixture::initialized();
+    let source = fixture.project_root.join("source");
+    let destination = fixture.home_destination("destination");
+    let former_target = fixture.root.path().join("former-target");
+    let replacement_home = fixture.root.path().join("replacement-home");
+    fs::write(&source, "managed payload").unwrap();
+    fs::write(&former_target, "former target").unwrap();
+    fs::create_dir(&replacement_home).unwrap();
+    fixture.create_destination_leaf_link("destination", &former_target);
+    assert!(
+        fixture
+            .command(&["add", "source", "~/destination"])
+            .status
+            .success()
+    );
+    let (home, registry, state, selection, plan) =
+        unresolved_destination_link_resolution_plan(&fixture);
+
+    let error = grip::mutation::execution::execute_with_fault_hook(
+        &home,
+        &registry,
+        &state,
+        &selection,
+        &plan,
+        |phase| {
+            if phase == grip::mutation::FaultPhase::BeforePayloadPublication(0) {
+                fs::remove_file(&destination).unwrap();
+                for entry in fs::read_dir(&fixture.home_root).unwrap() {
+                    fs::remove_file(entry.unwrap().path()).unwrap();
+                }
+                fs::remove_dir(&fixture.home_root).unwrap();
+                std::os::unix::fs::symlink(&replacement_home, &fixture.home_root).unwrap();
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    let grip::GripError::MutationFailed(failure) = error else {
+        panic!("expected structured stale-ancestor failure");
+    };
+    assert_eq!(failure.baseline.outcome, "not_published");
+    assert!(
+        fs::symlink_metadata(&fixture.home_root)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(!replacement_home.join("destination").exists());
+    assert_eq!(fs::read_to_string(&former_target).unwrap(), "former target");
+    assert!(
+        grip::state::publication::load(&home)
+            .unwrap()
+            .accepted
+            .generation
+            .is_none()
+    );
 }

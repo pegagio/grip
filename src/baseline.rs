@@ -108,7 +108,13 @@ pub fn build_for_add(
         // existing `InitialCollision` classification. It is safe for this add-only builder:
         // recording the destination converts it to the normal source-only change. All other
         // blocking records retain the ordinary conservative behavior.
-        if record.blocking && record.classification != Classification::InitialCollision {
+        if record.blocking
+            && !blocked_only_by_admitted_destination_link_ancestor(record, records)
+            && !matches!(
+                record.classification,
+                Classification::InitialCollision | Classification::UnresolvedDestinationLink
+            )
+        {
             return Err(GripError::BaselineNotAcceptable {
                 records: vec![record.clone()],
             });
@@ -135,6 +141,33 @@ pub fn build_for_add(
         selected_count: records.len(),
         changed_count,
     })
+}
+
+fn blocked_only_by_admitted_destination_link_ancestor(
+    record: &ClassificationRecord,
+    records: &[ClassificationRecord],
+) -> bool {
+    record.blocking
+        && !record.reasons.is_empty()
+        && record
+            .reasons
+            .iter()
+            .all(|reason| reason == "destination:symlink" || reason == "unsafe_collision")
+        && records.iter().any(|ancestor| {
+            ancestor.classification == Classification::UnresolvedDestinationLink
+                && ancestor.identity.mapping == record.identity.mapping
+                && strict_raw_descendant(
+                    &record.identity.relative_path,
+                    &ancestor.identity.relative_path,
+                )
+        })
+}
+
+fn strict_raw_descendant(candidate: &[u8], parent: &[u8]) -> bool {
+    parent.is_empty()
+        || candidate
+            .strip_prefix(parent)
+            .is_some_and(|suffix| suffix.first() == Some(&b'/'))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

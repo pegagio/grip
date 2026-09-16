@@ -444,10 +444,9 @@ fn inspect_mappings(
             true,
             operation,
         )?);
-        evidence.push(path_policy::inspect_durable_endpoint(
+        evidence.push(path_policy::inspect_durable_destination_leaf_link(
             &mapping.destination,
             mapping.kind,
-            false,
             operation,
         )?);
     }

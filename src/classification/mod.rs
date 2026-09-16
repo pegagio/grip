@@ -45,6 +45,8 @@ pub fn classify(entry: &ObservedEntry, baseline: Option<&SupportedState>) -> Cla
         Membership::Untracked | Membership::Ignored
     ) {
         Classification::DestinationOnlyUnmanaged
+    } else if entry.destination_link.is_some() && source.is_some() {
+        Classification::UnresolvedDestinationLink
     } else if entry.blocking && unsafe_destination {
         Classification::UnsafeCollision
     } else if entry.blocking {
@@ -84,6 +86,7 @@ pub fn classify(entry: &ObservedEntry, baseline: Option<&SupportedState>) -> Cla
             .as_ref()
             .map(|value| value.state.clone()),
         baseline_complete: None,
+        destination_link: entry.destination_link.clone(),
         compatibility_findings: entry.metadata_findings.clone(),
         endpoint_capabilities: entry.endpoint_capabilities.clone(),
         prospective_direction: direction,
@@ -124,6 +127,8 @@ pub fn classify_accepted(
         // Ignore rules and removed declarations end active membership. Any retained stale
         // state is never a synchronization authority and will be pruned by the next writer.
         Classification::DestinationOnlyUnmanaged
+    } else if entry.destination_link.is_some() && source.is_some() {
+        Classification::UnresolvedDestinationLink
     } else if entry.blocking && unsafe_destination {
         Classification::UnsafeCollision
     } else if entry.blocking {
@@ -146,6 +151,7 @@ pub fn classify_accepted(
     record.source_complete = source.cloned();
     record.destination_complete = destination.cloned();
     record.baseline_complete = complete.cloned();
+    record.destination_link = entry.destination_link.clone();
     record.changed_dimensions = ChangedDimensions {
         source_to_baseline: changed_dimensions_complete(source, complete),
         destination_to_baseline: changed_dimensions_complete(destination, complete),
@@ -323,5 +329,8 @@ fn properties(classification: Classification) -> (Direction, bool, bool, &'stati
         Classification::ConvergedDeletion => (Direction::None, true, false, "converged_deletion"),
         Classification::UnsupportedManaged => (Direction::None, true, true, "unsupported_managed"),
         Classification::UnsafeCollision => (Direction::None, true, true, "unsafe_collision"),
+        Classification::UnresolvedDestinationLink => {
+            (Direction::None, true, true, "destination_leaf_symlink")
+        }
     }
 }

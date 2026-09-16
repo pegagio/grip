@@ -25,6 +25,7 @@ page files, not here.
 - [Command-line and path selection](./pages/command-line-and-path-selection.md)
 - [Configuration and state](./pages/configuration-and-state.md)
 - [Contained-source tree mappings](./pages/contained-source-tree-mappings.md)
+- [Exact destination symlink replacement](./pages/exact-destination-symlink-replacement.md)
 - [Force mapping replacement](./pages/force-mapping-replacement.md)
 - [Large-file observation performance](./pages/large-file-observation-performance.md)
 - [Local artifact release preparation](./pages/local-artifact-release-preparation.md)

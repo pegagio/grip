@@ -102,6 +102,7 @@ pub enum OutputMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HumanConflictGuidance {
     ForcePair { source: String, destination: String },
+    ForceSource { source: String },
     InspectDiff { source: String, destination: String },
 }
 
@@ -1390,7 +1391,7 @@ fn render_human_blocked_mutation(
             needs_status = true;
             continue;
         };
-        let (source, destination) = match guidance {
+        let (source, destination): (&str, &str) = match guidance {
             HumanConflictGuidance::ForcePair {
                 source,
                 destination,
@@ -1398,7 +1399,8 @@ fn render_human_blocked_mutation(
             | HumanConflictGuidance::InspectDiff {
                 source,
                 destination,
-            } => (source, destination),
+            } => (source.as_str(), destination.as_str()),
+            HumanConflictGuidance::ForceSource { source } => (source, "destination link"),
         };
         writeln!(writer, "  {source} <-> {destination}")?;
         render_human_conflict_guidance(guidance, "    ", writer)?;
@@ -1761,6 +1763,12 @@ fn render_human_conflict_guidance(
             source,
             destination,
         } => render_human_force_resolution(source, destination, indent, writer),
+        HumanConflictGuidance::ForceSource { source } => {
+            writeln!(
+                writer,
+                "{indent}Replace destination link: grip push --force {source}"
+            )
+        }
         HumanConflictGuidance::InspectDiff { source, .. } => {
             writeln!(writer, "{indent}Run: grip diff {source}")
         }

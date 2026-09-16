@@ -325,6 +325,77 @@ pub fn publish_replacement(staged: &mut StagedFile, destination: &Path) -> Resul
     })
 }
 
+/// Replace a checked link entry with a newly created private sibling directory in one rename.
+///
+/// The destination is never opened, removed, or traversed. If staging fails, the link remains
+/// present; if rename succeeds, the new directory is the only object Grip created.
+pub fn replace_link_with_empty_directory(destination: &Path) -> Result<(), GripError> {
+    let (parent, destination_name) = open_parent(destination)?;
+    let name = format!(
+        ".grip-stage-directory-{}-{}",
+        std::process::id(),
+        STAGE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+    .into_bytes();
+    mkdirat(
+        parent.as_fd(),
+        OsStr::from_bytes(&name),
+        Mode::from_raw_mode(0o700),
+    )
+    .map_err(|error| GripError::from_io("could not stage target directory", error.into()))?;
+    let staged = parent.open_child_directory(&name).map_err(|error| {
+        GripError::mutation_side_effect(
+            "verification_failure",
+            false,
+            "not_attempted",
+            false,
+            format!("could not verify staged target directory: {error}"),
+        )
+    })?;
+    if staged.root_metadata().st_mode & 0o777 != 0o700 {
+        let _ = unlinkat(parent.as_fd(), OsStr::from_bytes(&name), AtFlags::REMOVEDIR);
+        return Err(GripError::Internal(
+            "staged target directory is not private".into(),
+        ));
+    }
+    if let Err(error) = renameat_with(
+        parent.as_fd(),
+        OsStr::from_bytes(&name),
+        parent.as_fd(),
+        OsStr::from_bytes(&destination_name),
+        // macOS rejects a direct directory-over-symlink rename (ENOTDIR). Exchange swaps the
+        // entries atomically, leaving the former link at our private staging name for cleanup.
+        RenameFlags::EXCHANGE,
+    ) {
+        let _ = unlinkat(parent.as_fd(), OsStr::from_bytes(&name), AtFlags::REMOVEDIR);
+        return Err(GripError::mutation_side_effect(
+            "publication_failure",
+            false,
+            "not_attempted",
+            false,
+            format!("could not publish target directory replacement: {error}"),
+        ));
+    }
+    unlinkat(parent.as_fd(), OsStr::from_bytes(&name), AtFlags::empty()).map_err(|error| {
+        GripError::mutation_side_effect(
+            "cleanup_failure",
+            true,
+            "not_attempted",
+            false,
+            format!("could not remove exchanged former link: {error}"),
+        )
+    })?;
+    sync_open_directory(&parent).map_err(|error| {
+        GripError::mutation_side_effect(
+            "publication_failure",
+            true,
+            "not_attempted",
+            false,
+            error.to_string(),
+        )
+    })
+}
+
 /// Verify the final supported mutation target state.
 pub fn verify_target(target: &Path, expected: &SupportedState) -> Result<(), GripError> {
     let (parent, name) = open_parent(target)?;

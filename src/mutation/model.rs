@@ -115,6 +115,8 @@ pub enum ActionKind {
     CreateDirectory,
     AddFile,
     ReplaceFile,
+    ReplaceDestinationLinkFile,
+    ReplaceDestinationLinkDirectory,
     ApplyMetadata,
     FinalizeDirectoryMetadata,
 }
@@ -186,6 +188,8 @@ pub struct MutationAction {
     pub expected_source: Option<SupportedState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_destination: Option<SupportedState>,
+    #[serde(skip)]
+    pub expected_destination_link: Option<crate::observation::model::DestinationLeafLinkEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<MetadataActionEvidence>,
     pub dependencies: Vec<usize>,
