@@ -65,18 +65,18 @@ A tree source may be strictly beneath its own destination root, which supports a
 
 For a contained-source tree, each managed relative path must be disjoint from the destination-relative path that locates the source tree. If a managed member equals, contains, or falls beneath that path, Grip blocks with `recursive_member_topology` and reports the relation. This blocker cannot be forced or bypassed with an exact selector. If the subtree is intentionally unmanaged, exclude it explicitly in the source tree's `.gripignore`.
 
-Grip synchronizes only its allowlisted metadata. Directory modification times are observational and are neither compared nor transferred; regular-file modification times remain managed. Ambient macOS `com.apple.metadata:kMDLabel_<opaque-id>` attributes are excluded from comparison and transfer. Other unknown extended attributes remain blockers; a failed human `add` identifies the affected path, endpoint, and attribute name without displaying its value.
+Grip synchronizes only its allowlisted metadata. Modification times are observational by default and are neither compared nor transferred. Use `-m` or `--use-modification-time` with `status`, `diff`, `push`, `pull`, or `sync` to detect and apply them for that one operation. Ambient macOS `com.apple.metadata:kMDLabel_<opaque-id>` attributes are excluded from comparison and transfer. Other unknown extended attributes remain blockers; a failed human `add` identifies the affected path, endpoint, and attribute name without displaying its value.
 
 Human `grip status` names every current managed entry in a `Current:` section using `=` between the source and destination paths. This section appears alongside action sections and for an otherwise fully current nonempty scope; JSON status remains the machine-readable interface.
 
 ## Inspect and synchronize
 
 ```sh
-grip status [-e|--exit-code] [-d|--destination] [PATH]
-grip diff [-d|--destination] [PATH]
-grip push [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
-grip pull [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
-grip sync [-n|--dry-run] [-d|--destination] [PATH]
+grip status [-e|--exit-code] [-m|--use-modification-time] [-d|--destination] [PATH]
+grip diff [-m|--use-modification-time] [-d|--destination] [PATH]
+grip push [-n|--dry-run] [-m|--use-modification-time] [-f|--force] [-d|--destination] [PATH]
+grip pull [-n|--dry-run] [-m|--use-modification-time] [-f|--force] [-d|--destination] [PATH]
+grip sync [-n|--dry-run] [-m|--use-modification-time] [-d|--destination] [PATH]
 ```
 
 For one exact human-readable `grip diff PATH`, Grip can invoke an external comparison program after its normal safety inspection. It uses `GRIP_EXTERNAL_DIFF` first, then a named tool selected in `.grip/config.toml` over `~/.grip/config.toml`, then `diff`. For example, configure Visual Studio Code's command-line tool for the project:

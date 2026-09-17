@@ -180,6 +180,9 @@ fn every_complete_metadata_dimension_uses_the_same_three_way_semantics() {
         accepted_bytes: None,
     };
     for (dimension, changed) in variants {
+        let options = classification::ComparisonOptions {
+            use_modification_time: dimension == ChangedDimension::ModificationTime,
+        };
         for (source, destination, expected) in [
             (
                 changed.clone(),
@@ -197,18 +200,23 @@ fn every_complete_metadata_dimension_uses_the_same_three_way_semantics() {
                 Classification::ConvergedTwoSidedChange,
             ),
         ] {
-            let record =
-                classification::classify_accepted(&complete_entry(source, destination), &accepted);
+            let record = classification::classify_accepted_with_options(
+                &complete_entry(source, destination),
+                &accepted,
+                options,
+            );
             assert_eq!(record.classification, expected, "{dimension:?}");
         }
-        let record = classification::classify_accepted(
+        let record = classification::classify_accepted_with_options(
             &complete_entry(changed.clone(), complete('b', "0600")),
             &accepted,
+            options,
         );
         assert_eq!(record.classification, Classification::DivergentConflict);
-        let record = classification::classify_accepted(
+        let record = classification::classify_accepted_with_options(
             &complete_entry(changed, baseline.clone()),
             &accepted,
+            options,
         );
         assert_eq!(
             record.changed_dimensions.source_to_baseline,

@@ -231,6 +231,8 @@ pub struct MutationPlan {
     pub direction: Option<MutationDirection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub winner: Option<ConflictWinner>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub use_modification_time: bool,
     pub plan_id: String,
     pub scope: ClassificationScope,
     pub entries: Vec<EntryDisposition>,

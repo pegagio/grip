@@ -551,6 +551,7 @@ fn build_with_parents(
             | MutationOperation::AggregateForcePush => None,
         },
         winner,
+        use_modification_time: true,
         plan_id: String::new(),
         scope,
         acceptance_identities: entries
@@ -570,6 +571,36 @@ fn build_with_parents(
     };
     plan.plan_id = plan_digest(&plan)?;
     Ok(plan)
+}
+
+/// Apply the operation's timestamp policy after deterministic plan construction.
+pub fn configure_modification_time(
+    plan: &mut MutationPlan,
+    use_modification_time: bool,
+) -> Result<(), GripError> {
+    plan.use_modification_time = use_modification_time;
+    if !use_modification_time {
+        for action in &mut plan.actions {
+            if let Some(metadata) = &mut action.metadata {
+                metadata
+                    .changed_dimensions
+                    .remove(&crate::metadata::model::MetadataDimension::ModificationTime);
+                normalize_modification_time(&mut metadata.expected_after);
+                if let Some(expected_before) = &mut metadata.expected_before {
+                    normalize_modification_time(expected_before);
+                }
+            }
+        }
+    }
+    plan.plan_id = plan_digest(plan)?;
+    Ok(())
+}
+
+fn normalize_modification_time(state: &mut crate::metadata::model::SupportedEntryStateV3) {
+    state.metadata.modified_time = crate::metadata::model::ModificationTime {
+        seconds: 0,
+        nanoseconds: 0,
+    };
 }
 
 fn all_metadata_dimensions(
@@ -722,8 +753,11 @@ fn metadata_action_evidence(
     };
     let changed_dimensions = before.map_or_else(
         || all_metadata_dimensions(after.node_kind),
-        |before| {
-            crate::classification::changed_dimensions_complete(Some(before), Some(after))
+        |_| {
+            record
+                .changed_dimensions
+                .source_to_destination
+                .clone()
                 .unwrap_or_default()
                 .into_iter()
                 .map(|dimension| match dimension {
@@ -1006,6 +1040,7 @@ struct PlanIdentity<'a> {
     operation: MutationOperation,
     direction: Option<MutationDirection>,
     winner: Option<ConflictWinner>,
+    use_modification_time: bool,
     scope: &'a ClassificationScope,
     entries: &'a [EntryDisposition],
     acceptance_identities: &'a [crate::discovery::model::SafePath],
@@ -1019,6 +1054,7 @@ fn plan_digest(plan: &MutationPlan) -> Result<String, GripError> {
         operation: plan.operation,
         direction: plan.direction,
         winner: plan.winner,
+        use_modification_time: plan.use_modification_time,
         scope: &plan.scope,
         entries: &plan.entries,
         acceptance_identities: &plan.acceptance_identities,

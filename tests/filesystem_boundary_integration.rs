@@ -159,6 +159,7 @@ fn post_plan_link_count_drift_stops_before_payload_mutation() {
     let (root, home, registry, state, selection, plan) = support::pull_execution_fixture();
     let source = root.path().join("source");
     let destination = root.path().join("destination");
+    fs::write(&destination, b"destination change").unwrap();
     let source_before = fs::read(&source).unwrap();
     let alias = root.path().join("destination-alias");
     let result = grip::mutation::execution::execute_with_fault_hook(
@@ -204,6 +205,7 @@ fn post_plan_filesystem_binding_drift_stops_before_payload_mutation() {
     let (root, home, registry, state, selection, plan) = support::pull_execution_fixture();
     let source = root.path().join("source");
     let destination = root.path().join("destination");
+    fs::write(&destination, b"destination change").unwrap();
     let destination_before = fs::read(&destination).unwrap();
     let result = grip::mutation::execution::execute_with_fault_hook(
         &home,

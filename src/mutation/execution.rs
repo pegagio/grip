@@ -126,7 +126,14 @@ where
             receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
             failure_reason = "revalidation_failure";
             fault(crate::mutation::FaultPhase::BeforeActionRevalidation(index))?;
-            revalidate_action(home, &locked_registry, &locked_state, action, operation)?;
+            revalidate_action(
+                home,
+                &locked_registry,
+                &locked_state,
+                action,
+                operation,
+                plan.use_modification_time,
+            )?;
             action.milestones.revalidation = "passed".into();
             failure_reason = "journal_failure";
             receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
@@ -185,6 +192,7 @@ where
                             &locked_state,
                             action,
                             operation,
+                            plan.use_modification_time,
                         )?;
                         crate::mutation::filesystem::publish_replacement(
                             &mut staged,
@@ -194,11 +202,14 @@ where
                     action.milestones.publication = "visible".into();
                     action.milestones.durability_confirmed = true;
                     if let Some(metadata) = action.metadata.as_ref() {
-                        crate::metadata::macos::apply_metadata_paths_with_hook(
+                        crate::metadata::macos::apply_metadata_paths_with_options_and_hook(
                             &origin,
                             &destination,
                             metadata.expected_after.node_kind,
                             &metadata.expected_after.metadata,
+                            metadata.changed_dimensions.contains(
+                                &crate::metadata::model::MetadataDimension::ModificationTime,
+                            ),
                             |phase| metadata_fault(&mut fault, index, phase),
                         )
                         .map_err(|error| {
@@ -220,9 +231,14 @@ where
                             &destination,
                             metadata.expected_after.node_kind,
                         )?;
-                        if !crate::classification::complete_equivalent(
+                        if !crate::classification::complete_equivalent_with_options(
                             &complete.state,
                             &metadata.expected_after,
+                            crate::classification::ComparisonOptions {
+                                use_modification_time: metadata.changed_dimensions.contains(
+                                    &crate::metadata::model::MetadataDimension::ModificationTime,
+                                ),
+                            },
                         ) {
                             return Err(GripError::Internal(
                                 "complete file verification failed".into(),
@@ -252,16 +268,24 @@ where
                     }
                     failure_reason = "publication_failure";
                     fault(crate::mutation::FaultPhase::BeforePayloadPublication(index))?;
-                    revalidate_action(home, &locked_registry, &locked_state, action, operation)?;
+                    revalidate_action(
+                        home,
+                        &locked_registry,
+                        &locked_state,
+                        action,
+                        operation,
+                        plan.use_modification_time,
+                    )?;
                     crate::mutation::filesystem::replace_link_with_empty_directory(&destination)?;
                     action.milestones.publication = "visible".into();
                     action.milestones.durability_confirmed = true;
                     if let Some(metadata) = action.metadata.as_ref() {
-                        crate::metadata::macos::apply_metadata_paths_with_hook(
+                        crate::metadata::macos::apply_metadata_paths_with_options_and_hook(
                             &identity.source_path(),
                             &destination,
                             crate::discovery::model::NodeKind::Directory,
                             &metadata.expected_after.metadata,
+                            false,
                             |phase| metadata_fault(&mut fault, index, phase),
                         )
                         .map_err(|error| {
@@ -291,11 +315,14 @@ where
                     };
                     failure_reason = "publication_failure";
                     action.milestones.publication = "visible".into();
-                    crate::metadata::macos::apply_metadata_paths_with_hook(
+                    crate::metadata::macos::apply_metadata_paths_with_options_and_hook(
                         &origin,
                         &destination,
                         metadata.expected_after.node_kind,
                         &metadata.expected_after.metadata,
+                        metadata
+                            .changed_dimensions
+                            .contains(&crate::metadata::model::MetadataDimension::ModificationTime),
                         |phase| metadata_fault(&mut fault, index, phase),
                     )
                     .map_err(|error| {
@@ -308,9 +335,14 @@ where
                         &destination,
                         metadata.expected_after.node_kind,
                     )?;
-                    if !crate::classification::complete_equivalent(
+                    if !crate::classification::complete_equivalent_with_options(
                         &verified.state,
                         &metadata.expected_after,
+                        crate::classification::ComparisonOptions {
+                            use_modification_time: metadata.changed_dimensions.contains(
+                                &crate::metadata::model::MetadataDimension::ModificationTime,
+                            ),
+                        },
                     ) {
                         return Err(GripError::Internal(
                             "complete metadata verification failed".into(),
@@ -902,9 +934,17 @@ fn rebuild_plan(
     }
     let records = observed
         .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                classification::ComparisonOptions {
+                    use_modification_time: expected.use_modification_time,
+                },
+            )
+        })
         .collect();
-    match operation {
+    let mut plan = match operation {
         MutationOperation::Push => crate::mutation::plan::build_with_parent_requirements(
             expected.scope.clone(),
             records,
@@ -944,7 +984,9 @@ fn rebuild_plan(
             records,
             registry.missing_destination_parents(),
         ),
-    }
+    }?;
+    crate::mutation::plan::configure_modification_time(&mut plan, expected.use_modification_time)?;
+    Ok(plan)
 }
 
 fn revalidate_action(
@@ -953,6 +995,7 @@ fn revalidate_action(
     state: &StateSnapshot,
     action: &crate::mutation::model::MutationAction,
     operation: MutationOperation,
+    use_modification_time: bool,
 ) -> Result<(), GripError> {
     let operation_name = operation.as_str();
     let current_registry = crate::registry::publication::load(home, false)
@@ -987,7 +1030,13 @@ fn revalidate_action(
             "managed entry disappeared during action revalidation",
         )
     })?;
-    let record = classification::classify_accepted(entry, &state.accepted);
+    let record = classification::classify_accepted_with_options(
+        entry,
+        &state.accepted,
+        classification::ComparisonOptions {
+            use_modification_time,
+        },
+    );
     if action.expected_destination_link != record.destination_link {
         return Err(stale(
             operation,

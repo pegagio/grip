@@ -269,6 +269,7 @@ fn execute_selected(cli: &cli::Cli) -> CommandOutcome {
 
 fn status_outcome(args: &cli::StatusArgs) -> CommandOutcome {
     let inspection = cli::InspectionArgs {
+        use_modification_time: args.use_modification_time,
         destination: args.destination,
         path: args.path.clone(),
     };
@@ -305,13 +306,20 @@ struct ExternalHandoff {
     destination: std::path::PathBuf,
 }
 
+fn comparison_options(use_modification_time: bool) -> classification::ComparisonOptions {
+    classification::ComparisonOptions {
+        use_modification_time,
+    }
+}
+
 fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     if args.force {
         if args.path.is_none() {
-            return execute_aggregate_force_push(args.dry_run);
+            return execute_aggregate_force_push(args.dry_run, args.use_modification_time);
         }
         return execute_forced_direction(
             args.dry_run,
+            args.use_modification_time,
             args.destination,
             args.path.as_deref(),
             mutation::model::ConflictWinner::Source,
@@ -349,14 +357,21 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("push"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                comparison_options(args.use_modification_time),
+            )
+        })
         .collect();
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
-    let plan = push::plan::build_with_parent_requirements(
+    let mut plan = push::plan::build_with_parent_requirements(
         scope,
         records,
         registry.missing_destination_parents(),
     )?;
+    mutation::plan::configure_modification_time(&mut plan, args.use_modification_time)?;
     if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
         let outcome = CommandOutcome::push_plan(
             &plan,
@@ -379,7 +394,10 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
 
 /// Execute the sole aggregate directional force shape: source wins for every managed entry in
 /// the selected project. A supplied selector always remains on the exact-resolution path.
-fn execute_aggregate_force_push(dry_run: bool) -> Result<CommandOutcome, GripError> {
+fn execute_aggregate_force_push(
+    dry_run: bool,
+    use_modification_time: bool,
+) -> Result<CommandOutcome, GripError> {
     let home = selected_home()?;
     let registry = registry::publication::load(&home, false)?;
     let state = state::publication::load(&home)?;
@@ -413,14 +431,21 @@ fn execute_aggregate_force_push(dry_run: bool) -> Result<CommandOutcome, GripErr
         .map_err(|error| error.for_operation("aggregate_force_push"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                comparison_options(use_modification_time),
+            )
+        })
         .collect();
     let scope = classification_scope(&selection, None, path_space);
-    let plan = mutation::plan::build_aggregate_force_push(
+    let mut plan = mutation::plan::build_aggregate_force_push(
         scope,
         records,
         registry.missing_destination_parents(),
     )?;
+    mutation::plan::configure_modification_time(&mut plan, use_modification_time)?;
     if dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
         return Ok(CommandOutcome::mutation_plan(
             &plan,
@@ -438,6 +463,7 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     if args.force {
         return execute_forced_direction(
             args.dry_run,
+            args.use_modification_time,
             args.destination,
             args.path.as_deref(),
             mutation::model::ConflictWinner::Destination,
@@ -472,10 +498,18 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("pull"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                comparison_options(args.use_modification_time),
+            )
+        })
         .collect();
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
-    let plan = mutation::plan::build_for(mutation::model::MutationDirection::Pull, scope, records)?;
+    let mut plan =
+        mutation::plan::build_for(mutation::model::MutationDirection::Pull, scope, records)?;
+    mutation::plan::configure_modification_time(&mut plan, args.use_modification_time)?;
     if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
         let outcome = CommandOutcome::mutation_plan(
             &plan,
@@ -498,6 +532,7 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
 
 fn execute_forced_direction(
     dry_run: bool,
+    use_modification_time: bool,
     destination: bool,
     path: Option<&std::ffi::OsStr>,
     winner: mutation::model::ConflictWinner,
@@ -556,7 +591,13 @@ fn execute_forced_direction(
     state::publication::revalidate(&home, &state)?;
     let records = observed
         .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                comparison_options(use_modification_time),
+            )
+        })
         .collect::<Vec<_>>();
     if let Some(identity) = unbaselined_link_candidate.as_ref()
         && !records.iter().any(|record| {
@@ -613,7 +654,7 @@ fn execute_forced_direction(
             applied.baseline,
         ));
     }
-    let plan = if let Some(identity) = unbaselined_link_candidate.as_ref() {
+    let mut plan = if let Some(identity) = unbaselined_link_candidate.as_ref() {
         if winner != mutation::model::ConflictWinner::Source {
             return Err(resolution_selector_error(&selector));
         }
@@ -623,6 +664,7 @@ fn execute_forced_direction(
     } else {
         mutation::plan::build_resolution(scope, records, winner)?
     };
+    mutation::plan::configure_modification_time(&mut plan, use_modification_time)?;
     if dry_run || !plan.blockers.is_empty() {
         let outcome = CommandOutcome::mutation_plan(
             &plan,
@@ -673,14 +715,21 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("sync"))?;
     let records = observed
         .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                comparison_options(args.use_modification_time),
+            )
+        })
         .collect();
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
-    let plan = mutation::plan::build_sync_with_parent_requirements(
+    let mut plan = mutation::plan::build_sync_with_parent_requirements(
         scope,
         records,
         registry.missing_destination_parents(),
     )?;
+    mutation::plan::configure_modification_time(&mut plan, args.use_modification_time)?;
     if args.dry_run
         || !plan.blockers.is_empty()
         || plan.actions.is_empty() && plan.acceptance_identities.is_empty()
@@ -835,7 +884,13 @@ fn execute_inspection(
         .map_err(|error| error.for_operation(operation))?;
     let mut records = observed
         .values()
-        .map(|entry| classification::classify_accepted(entry, &state.accepted))
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                comparison_options(args.use_modification_time),
+            )
+        })
         .collect::<Vec<_>>();
     if operation == "status"
         && let Some(fence) = fence.as_ref()

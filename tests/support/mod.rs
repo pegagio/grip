@@ -666,6 +666,7 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
         operation: grip::mutation::model::MutationOperation::Push,
         direction: Some(grip::mutation::model::MutationDirection::Push),
         winner: None,
+        use_modification_time: true,
         plan_id: "a".repeat(64),
         scope: ClassificationScope {
             kind: "all".into(),
@@ -726,7 +727,7 @@ pub fn pull_execution_fixture() -> (
         .values()
         .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let plan = grip::mutation::plan::build_for(
+    let mut plan = grip::mutation::plan::build_for(
         grip::mutation::model::MutationDirection::Pull,
         grip::classification::model::ClassificationScope {
             kind: "all".into(),
@@ -737,6 +738,7 @@ pub fn pull_execution_fixture() -> (
         records,
     )
     .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();
     (root, home, registry, state, selection, plan)
 }
 

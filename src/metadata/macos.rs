@@ -610,6 +610,21 @@ pub fn apply_metadata_from_with_hook<F>(
     target: &File,
     node_kind: crate::discovery::model::NodeKind,
     expected: &MetadataState,
+    hook: F,
+) -> io::Result<()>
+where
+    F: FnMut(MetadataApplyPhase) -> io::Result<()>,
+{
+    apply_metadata_from_with_options_and_hook(origin, target, node_kind, expected, true, hook)
+}
+
+/// Apply metadata while optionally preserving the target modification time.
+pub fn apply_metadata_from_with_options_and_hook<F>(
+    origin: &File,
+    target: &File,
+    node_kind: crate::discovery::model::NodeKind,
+    expected: &MetadataState,
+    use_modification_time: bool,
     mut hook: F,
 ) -> io::Result<()>
 where
@@ -686,7 +701,7 @@ where
         )
         .map_err(io::Error::from)?;
         hook(MetadataApplyPhase::AfterPermissionMode)?;
-        if node_kind != crate::discovery::model::NodeKind::Directory {
+        if use_modification_time && node_kind != crate::discovery::model::NodeKind::Directory {
             rustix::fs::futimens(
                 target,
                 &rustix::fs::Timestamps {
@@ -723,7 +738,13 @@ where
             content: None,
             metadata: observed,
         };
-        if !crate::classification::complete_equivalent(&observed_state, &expected_state) {
+        if !crate::classification::complete_equivalent_with_options(
+            &observed_state,
+            &expected_state,
+            crate::classification::ComparisonOptions {
+                use_modification_time,
+            },
+        ) {
             return Err(io::Error::other("complete metadata verification failed"));
         }
         hook(MetadataApplyPhase::AfterVerification)?;
@@ -761,6 +782,21 @@ pub fn apply_metadata_paths_with_hook<F>(
 where
     F: FnMut(MetadataApplyPhase) -> io::Result<()>,
 {
+    apply_metadata_paths_with_options_and_hook(origin, target, node_kind, expected, true, hook)
+}
+
+/// Apply metadata while optionally preserving the target modification time.
+pub fn apply_metadata_paths_with_options_and_hook<F>(
+    origin: &std::path::Path,
+    target: &std::path::Path,
+    node_kind: crate::discovery::model::NodeKind,
+    expected: &MetadataState,
+    use_modification_time: bool,
+    hook: F,
+) -> io::Result<()>
+where
+    F: FnMut(MetadataApplyPhase) -> io::Result<()>,
+{
     let mut flags = rustix::fs::OFlags::RDONLY
         | rustix::fs::OFlags::CLOEXEC
         | rustix::fs::OFlags::NOFOLLOW
@@ -774,7 +810,14 @@ where
     let target = File::from(
         rustix::fs::open(target, flags, rustix::fs::Mode::empty()).map_err(io::Error::from)?,
     );
-    apply_metadata_from_with_hook(&origin, &target, node_kind, expected, hook)
+    apply_metadata_from_with_options_and_hook(
+        &origin,
+        &target,
+        node_kind,
+        expected,
+        use_modification_time,
+        hook,
+    )
 }
 
 /// Copy only allowlisted xattrs between private, already-open objects and verify fingerprints.
