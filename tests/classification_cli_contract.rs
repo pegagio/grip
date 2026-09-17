@@ -8,7 +8,7 @@ use std::sync::{
 };
 use support::project::ProjectFixture;
 
-const LARGE_FILE_BYTES: usize = 19 * 1024 * 1024;
+const LARGE_FILE_BYTES: usize = 64 * 1024 * 1024;
 
 fn write_large_file(path: &std::path::Path, byte: u8) {
     let chunk = vec![byte; 64 * 1024];
