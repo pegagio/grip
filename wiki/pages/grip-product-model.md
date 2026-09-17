@@ -2,7 +2,7 @@
 title: Grip product model
 type: concept
 sources: [S001]
-updated: 2026-09-11
+updated: 2026-09-17
 ---
 
 # Grip product model
@@ -11,4 +11,4 @@ Grip is a local, selective, bidirectional deployment synchronizer. Explicit file
 
 Mapping sources are normalized project-relative declarations. Destinations may be absolute, `~`, or `~/`-prefixed; Grip retains the accepted spelling, including lexical dot components or repeated separators, and resolves it only for operations. (S001)
 
-The public CLI is flat: `init`, `version`, `add`, `list`, `remove`, `status`, `diff`, `push`, `pull`, and `sync`. Normal operations are conservative. `push -f` and `pull -f` make an explicit directional choice for one managed entry, including intentional absence propagation. Git remains responsible for history and recovery. (S001)
+The public CLI is flat: `init`, `version`, `add`, `list`, `remove`, `status`, `diff`, `push`, `pull`, and `sync`. Normal operations are conservative. Pull selectors use destination space by default, with `pull -s` for source-space selection; `pull -a` is the narrow explicit destination-only-file adoption flow beneath a tree mapping. `push -f` and `pull -f` make an explicit directional choice for one managed entry, including intentional absence propagation. Git remains responsible for history and recovery. (S001)

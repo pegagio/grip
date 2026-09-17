@@ -28,12 +28,14 @@ page files, not here.
 - [Destination adoption](./pages/destination-adoption.md)
 - [Exact destination symlink replacement](./pages/exact-destination-symlink-replacement.md)
 - [External diff program](./pages/external-diff-program.md)
+- [Filesystem publication safety](./pages/filesystem-publication-safety.md)
 - [Force mapping replacement](./pages/force-mapping-replacement.md)
 - [Large-file observation performance](./pages/large-file-observation-performance.md)
 - [Local artifact release preparation](./pages/local-artifact-release-preparation.md)
 - [Mapping addition and initial baselines](./pages/mapping-addition-and-initial-baselines.md)
 - [Mapping registry publication](./pages/mapping-registry-publication.md)
 - [Metadata and filesystem contract](./pages/metadata-and-filesystem-contract.md)
+- [Performance qualification](./pages/performance-qualification.md)
 - [Synchronization and conflicts](./pages/synchronization-and-conflicts.md)
 
 ## References

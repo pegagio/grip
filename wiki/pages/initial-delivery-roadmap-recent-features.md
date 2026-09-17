@@ -2,7 +2,7 @@
 title: Initial delivery roadmap recent features
 type: reference
 sources: [S003]
-updated: 2026-09-15
+updated: 2026-09-17
 ---
 
 # Initial delivery roadmap recent features

@@ -2,7 +2,7 @@
 title: Synchronization and conflicts
 type: component
 sources: [S001, S004, S023, S027]
-updated: 2026-09-16
+updated: 2026-09-17
 ---
 
 # Synchronization and conflicts

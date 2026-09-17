@@ -2,7 +2,7 @@
 title: Absence, removal, and recovery boundaries
 type: component
 sources: [S001]
-updated: 2026-09-11
+updated: 2026-09-17
 ---
 
 # Absence, removal, and recovery boundaries
