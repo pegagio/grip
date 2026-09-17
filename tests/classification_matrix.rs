@@ -98,6 +98,38 @@ fn complete_state_three_way_classifies_metadata_and_content_changes_indivisibly(
 }
 
 #[test]
+fn directory_modification_time_is_not_a_managed_difference() {
+    let mut baseline = complete('a', "0755");
+    baseline.node_kind = NodeKind::Directory;
+    baseline.content = None;
+    let mut source = baseline.clone();
+    source.metadata.modified_time.nanoseconds += 1;
+    let mut destination = baseline.clone();
+    destination.metadata.modified_time.nanoseconds += 2;
+    let identity = complete_entry(source.clone(), destination.clone()).identity;
+    let accepted = grip::state::AcceptedState {
+        generation: Some(1),
+        complete_baselines: std::collections::BTreeMap::from([(identity, baseline)]),
+        accepted_bytes: None,
+    };
+
+    let record = classification::classify_accepted(&complete_entry(source, destination), &accepted);
+    assert_eq!(record.classification, Classification::Synchronized);
+    assert_eq!(
+        record.changed_dimensions.source_to_baseline,
+        Some(Vec::new())
+    );
+    assert_eq!(
+        record.changed_dimensions.destination_to_baseline,
+        Some(Vec::new())
+    );
+    assert_eq!(
+        record.changed_dimensions.source_to_destination,
+        Some(Vec::new())
+    );
+}
+
+#[test]
 fn every_complete_metadata_dimension_uses_the_same_three_way_semantics() {
     use grip::classification::model::ChangedDimension;
     use grip::metadata::model::{
@@ -148,6 +180,9 @@ fn every_complete_metadata_dimension_uses_the_same_three_way_semantics() {
         accepted_bytes: None,
     };
     for (dimension, changed) in variants {
+        let options = classification::ComparisonOptions {
+            use_modification_time: dimension == ChangedDimension::ModificationTime,
+        };
         for (source, destination, expected) in [
             (
                 changed.clone(),
@@ -165,18 +200,23 @@ fn every_complete_metadata_dimension_uses_the_same_three_way_semantics() {
                 Classification::ConvergedTwoSidedChange,
             ),
         ] {
-            let record =
-                classification::classify_accepted(&complete_entry(source, destination), &accepted);
+            let record = classification::classify_accepted_with_options(
+                &complete_entry(source, destination),
+                &accepted,
+                options,
+            );
             assert_eq!(record.classification, expected, "{dimension:?}");
         }
-        let record = classification::classify_accepted(
+        let record = classification::classify_accepted_with_options(
             &complete_entry(changed.clone(), complete('b', "0600")),
             &accepted,
+            options,
         );
         assert_eq!(record.classification, Classification::DivergentConflict);
-        let record = classification::classify_accepted(
+        let record = classification::classify_accepted_with_options(
             &complete_entry(changed, baseline.clone()),
             &accepted,
+            options,
         );
         assert_eq!(
             record.changed_dimensions.source_to_baseline,

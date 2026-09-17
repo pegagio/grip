@@ -84,6 +84,9 @@ pub struct InitArgs {
 /// Arguments shared by push preview and execution.
 #[derive(Debug, clap::Args)]
 pub struct PushArgs {
+    /// Treat modification time as managed metadata for this operation.
+    #[arg(short = 'm', long)]
+    pub use_modification_time: bool,
     /// Preview the complete plan without locking or mutation.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
@@ -100,14 +103,20 @@ pub struct PushArgs {
 /// Arguments shared by pull preview and execution.
 #[derive(Debug, clap::Args)]
 pub struct PullArgs {
+    /// Treat modification time as managed metadata for this operation.
+    #[arg(short = 'm', long)]
+    pub use_modification_time: bool,
     /// Preview the complete plan without locking or mutation.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
-    /// Interpret PATH in destination space without changing pull direction.
     #[arg(short = 'f', long)]
     pub force: bool,
-    #[arg(short = 'd', long)]
-    pub destination: bool,
+    /// Adopt one destination-only regular file beneath an existing tree mapping.
+    #[arg(short = 'a', long, conflicts_with = "source")]
+    pub adopt: bool,
+    /// Interpret PATH in source space instead of the default destination space.
+    #[arg(short = 's', long)]
+    pub source: bool,
     /// Select one mapping, entry, or component-boundary subtree.
     #[arg(value_name = "PATH")]
     pub path: Option<OsString>,
@@ -116,6 +125,9 @@ pub struct PullArgs {
 /// Arguments shared by bidirectional sync preview and execution.
 #[derive(Debug, clap::Args)]
 pub struct SyncArgs {
+    /// Treat modification time as managed metadata for this operation.
+    #[arg(short = 'm', long)]
+    pub use_modification_time: bool,
     /// Preview the complete mixed-direction plan without locking or mutation.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
@@ -129,6 +141,9 @@ pub struct SyncArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct InspectionArgs {
+    /// Treat modification time as managed metadata for this operation.
+    #[arg(short = 'm', long)]
+    pub use_modification_time: bool,
     #[arg(short = 'd', long)]
     pub destination: bool,
     #[arg(value_name = "PATH")]
@@ -137,6 +152,9 @@ pub struct InspectionArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct StatusArgs {
+    /// Treat modification time as managed metadata for this operation.
+    #[arg(short = 'm', long)]
+    pub use_modification_time: bool,
     #[arg(short = 'e', long)]
     pub exit_code: bool,
     #[arg(short = 'd', long)]

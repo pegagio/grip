@@ -8,7 +8,7 @@ use std::sync::{
 };
 use support::project::ProjectFixture;
 
-const LARGE_FILE_BYTES: usize = 19 * 1024 * 1024;
+const LARGE_FILE_BYTES: usize = 64 * 1024 * 1024;
 
 fn write_large_file(path: &std::path::Path, byte: u8) {
     let chunk = vec![byte; 64 * 1024];
@@ -121,9 +121,14 @@ fn status_rejects_a_large_file_changed_during_observation() {
     writer.join().unwrap();
 
     assert!(!status.status.success(), "{status:?}");
-    let output = String::from_utf8_lossy(&status.stdout);
+    let output: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert!(
-        output.contains("entry changed while complete metadata was observed"),
+        output["status"] == "error"
+            && output["code"] == "operational_failure"
+            && matches!(
+                output["details"]["reason"].as_str(),
+                Some("stale_discovery_evidence" | "stale_metadata_evidence")
+            ),
         "unexpected status failure: {output}"
     );
 }
@@ -143,6 +148,40 @@ fn human_status_renders_a_compact_push_section() {
                 .unwrap()
                 .display(),
         )
+    );
+}
+
+#[test]
+fn human_status_lists_current_entries_before_action_sections() {
+    let (root, metadata_dir, _) = fixture();
+    let source = root.path().join("pending-source");
+    let destination = root.path().join("pending-destination");
+    fs::write(&source, "source").unwrap();
+    fs::write(&destination, "destination").unwrap();
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "pending-source", "~/pending-destination"],
+        )
+        .status
+        .success()
+    );
+
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert!(status.status.success());
+    let human = String::from_utf8(status.stdout).unwrap();
+    let current = format!(
+        "Current:\n  source = {}",
+        fs::canonicalize(root.path().join("destination"))
+            .unwrap()
+            .display()
+    );
+    assert!(human.contains(&current), "{human}");
+    assert!(human.contains("Changes to push:"), "{human}");
+    assert!(
+        human.find("Current:") < human.find("Changes to push:"),
+        "{human}"
     );
 }
 
@@ -183,7 +222,7 @@ fn human_status_shows_force_choices_for_an_ordinary_divergent_conflict() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             fs::canonicalize(&destination).unwrap().display(),
             fs::canonicalize(&destination).unwrap().display(),
         )
@@ -202,7 +241,6 @@ fn human_status_shows_force_choices_for_an_ordinary_divergent_conflict() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination.to_str().unwrap(),
         ],
     );
@@ -221,7 +259,7 @@ fn human_status_explains_exact_force_choices_for_a_missing_peer() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             destination_display.display(),
             destination_display.display(),
         )
@@ -251,7 +289,7 @@ fn human_status_uses_diff_for_an_aggregate_tree_conflict() {
         "unexpected status output: {text}"
     );
     assert!(!text.contains("grip push --force source/nested/file"));
-    assert!(!text.contains("grip pull --force --destination"));
+    assert!(!text.contains("grip pull --force "));
 
     let force_push = support::project_command(
         root.path(),
@@ -286,7 +324,7 @@ fn human_status_shows_force_choices_for_an_initial_collision() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             fs::canonicalize(&destination).unwrap().display(),
             fs::canonicalize(&destination).unwrap().display(),
         )
@@ -305,7 +343,6 @@ fn human_status_shows_force_choices_for_an_initial_collision() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination.to_str().unwrap(),
         ],
     );
@@ -388,7 +425,12 @@ fn human_status_distinguishes_clean_and_empty_scopes() {
     let clean = support::project_command(root.path(), &metadata_dir, &["status"]);
     assert_eq!(
         String::from_utf8(clean.stdout).unwrap(),
-        "Status: 1 entry checked; 1 current; no action needed.\n"
+        format!(
+            "Status: 1 entry checked; 1 current; no action needed.\n\nCurrent:\n  source = {}\n",
+            fs::canonicalize(root.path().join("destination"))
+                .unwrap()
+                .display(),
+        )
     );
 
     let empty_root = tempfile::tempdir().unwrap();

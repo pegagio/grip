@@ -62,6 +62,22 @@ fn descriptor_observation_captures_complete_file_metadata_and_xattr_policy() {
 }
 
 #[test]
+fn opaque_ambient_label_xattrs_are_excluded_but_empty_and_unrelated_names_are_unknown() {
+    assert_eq!(
+        grip::metadata::xattr_policy(b"com.apple.metadata:kMDLabel_opaque"),
+        grip::metadata::XattrPolicy::Excluded
+    );
+    assert_eq!(
+        grip::metadata::xattr_policy(b"com.apple.metadata:kMDLabel_"),
+        grip::metadata::XattrPolicy::Unknown
+    );
+    assert_eq!(
+        grip::metadata::xattr_policy(b"com.apple.metadata:kMDItemUserTags"),
+        grip::metadata::XattrPolicy::Unknown
+    );
+}
+
+#[test]
 fn descriptor_observation_captures_directory_metadata_independently_of_children() {
     let fixture = support::MetadataFixture::tree();
     support::set_fixture_mode(&fixture.source, 0o750);
@@ -249,7 +265,12 @@ fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() 
     let preview = support::project_command(
         fixture.root.path(),
         &fixture.metadata_dir,
-        &["--output=json", "pull", "--dry-run"],
+        &[
+            "--output=json",
+            "pull",
+            "--use-modification-time",
+            "--dry-run",
+        ],
     );
     assert!(preview.status.success());
     assert_eq!(
@@ -259,7 +280,7 @@ fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() 
     let pull = support::project_command(
         fixture.root.path(),
         &fixture.metadata_dir,
-        &["--output=json", "pull"],
+        &["--output=json", "pull", "--use-modification-time"],
     );
     assert!(
         pull.status.success(),
@@ -310,20 +331,20 @@ fn directory_metadata_pull_runs_after_child_transfer_and_preserves_neighbors() {
         std::fs::read(fixture.source.join("nested/file")).unwrap(),
         b"destination child"
     );
-    assert_eq!(
-        grip::observation::fingerprint::inspect_complete(
+    assert!(grip::classification::complete_equivalent(
+        &grip::observation::fingerprint::inspect_complete(
             &fixture.source.join("nested"),
             NodeKind::Directory,
         )
         .unwrap()
         .state,
-        grip::observation::fingerprint::inspect_complete(
+        &grip::observation::fingerprint::inspect_complete(
             &fixture.destination.join("nested"),
             NodeKind::Directory,
         )
         .unwrap()
         .state
-    );
+    ));
     assert_eq!(support::snapshot(&neighbor), neighbor_before);
 }
 
@@ -360,6 +381,10 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v4()
         support::json(&preview)["details"]["actions"][0]["kind"],
         "finalize_directory_metadata"
     );
+    assert_eq!(
+        support::json(&preview)["details"]["actions"][0]["metadata"]["changed_dimensions"],
+        serde_json::json!(["permission_mode"])
+    );
     let push = support::project_command(fixture.root.path(), &fixture.metadata_dir, &["push"]);
     assert!(
         push.status.success(),
@@ -376,7 +401,10 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v4()
         NodeKind::Directory,
     )
     .unwrap();
-    assert_eq!(source.state, destination.state);
+    assert!(grip::classification::complete_equivalent(
+        &source.state,
+        &destination.state
+    ));
     let state = grip::state::decode_v4(
         &std::fs::read(fixture.metadata_dir.join("state/state.json")).unwrap(),
     )
@@ -402,7 +430,11 @@ fn file_addition_applies_complete_metadata_before_state_v4_publication() {
     support::set_fixture_modified_time(&source, 1_600_000_001, 456);
     support::set_fixture_xattr(&source, "com.apple.TextEncoding", b"utf-8");
     support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
-    let push = support::project_command(root.path(), &metadata_dir, &["push"]);
+    let push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--use-modification-time"],
+    );
     assert!(
         push.status.success(),
         "{}",
@@ -435,9 +467,13 @@ fn full_replacement_transfers_content_and_metadata_as_one_complete_entry() {
     std::fs::write(&source, b"accepted").unwrap();
     support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::project_command(root.path(), &metadata_dir, &["push"])
-            .status
-            .success()
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["push", "--use-modification-time"],
+        )
+        .status
+        .success()
     );
 
     std::fs::write(&source, b"replacement").unwrap();
@@ -447,7 +483,11 @@ fn full_replacement_transfers_content_and_metadata_as_one_complete_entry() {
     let expected = grip::observation::fingerprint::inspect_complete(&source, NodeKind::File)
         .unwrap()
         .state;
-    let push = support::project_command(root.path(), &metadata_dir, &["push"]);
+    let push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--use-modification-time"],
+    );
     assert!(
         push.status.success(),
         "{}",
@@ -510,13 +550,13 @@ fn tree_addition_finalizes_directories_deepest_first_after_child_creation() {
         } else {
             NodeKind::File
         };
-        assert_eq!(
-            grip::observation::fingerprint::inspect_complete(&source_path, kind)
+        assert!(grip::classification::complete_equivalent(
+            &grip::observation::fingerprint::inspect_complete(&source_path, kind)
                 .unwrap()
                 .state,
-            grip::observation::fingerprint::inspect_complete(&destination_path, kind)
+            &grip::observation::fingerprint::inspect_complete(&destination_path, kind)
                 .unwrap()
                 .state,
-        );
+        ));
     }
 }

@@ -176,3 +176,81 @@ fn source_beneath_destination_is_admitted_only_for_tree_mappings() {
         .unwrap();
     assert!(!output.status.success());
 }
+
+#[test]
+fn contained_tree_allows_a_disjoint_exact_destination_reservation() {
+    let fixture = ContainedHomeFixture::initialized();
+    fs::create_dir_all(fixture.project_root.join("git")).unwrap();
+    fs::write(fixture.project_root.join("git/ignore"), "exact\n").unwrap();
+
+    assert!(
+        fixture
+            .command(&["add", "git/ignore", "~/.gitignore"])
+            .status
+            .success()
+    );
+    let added = fixture.command(&["add", "home/", "~/"]);
+    assert!(
+        added.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let listed = fixture.command(&["--output=json", "list"]);
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(value["details"]["mappings"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn contained_tree_rejects_a_current_exact_destination_reservation_collision() {
+    let fixture = ContainedHomeFixture::initialized();
+    fs::create_dir_all(fixture.project_root.join("git")).unwrap();
+    fs::write(fixture.project_root.join("git/ignore"), "exact\n").unwrap();
+    fs::write(fixture.source_root.join(".gitignore"), "tree\n").unwrap();
+    assert!(
+        fixture
+            .command(&["add", "git/ignore", "~/.gitignore"])
+            .status
+            .success()
+    );
+    let before = fs::read(fixture.descriptor_path()).unwrap();
+
+    let rejected = fixture.command(&["--output=json", "add", "home/", "~/"]);
+    assert!(!rejected.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert_eq!(value["details"]["reason"], "ownership_conflicts");
+    assert!(
+        value["details"]["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|conflict| conflict["reason"] == "reserved_destination_member")
+    );
+    assert_eq!(fs::read(fixture.descriptor_path()).unwrap(), before);
+    assert!(
+        !fixture
+            .project_root
+            .join(".grip/state/add-fence.json")
+            .exists()
+    );
+}
+
+#[test]
+fn contained_tree_blocks_later_exact_destination_reservation_collision() {
+    let fixture = ContainedHomeFixture::initialized();
+    fs::create_dir_all(fixture.project_root.join("git")).unwrap();
+    fs::write(fixture.project_root.join("git/ignore"), "exact\n").unwrap();
+    assert!(
+        fixture
+            .command(&["add", "git/ignore", "~/.gitignore"])
+            .status
+            .success()
+    );
+    assert!(fixture.command(&["add", "home/", "~/"]).status.success());
+    fs::write(fixture.source_root.join(".gitignore"), "tree\n").unwrap();
+
+    let rejected = fixture.command(&["--output=json", "status"]);
+    assert!(!rejected.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert_eq!(value["code"], "invalid_configuration");
+}

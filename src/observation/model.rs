@@ -191,6 +191,7 @@ pub enum Selection {
     All,
     Mapping(ResolvedMapping),
     Entry(EntryIdentity),
+    Entries(Vec<EntryIdentity>),
     Subtree(EntryIdentity),
     Unmanaged(SafePath),
 }
@@ -200,6 +201,7 @@ impl Selection {
         match self {
             Self::Mapping(mapping) => Some(mapping),
             Self::Entry(identity) | Self::Subtree(identity) => Some(&identity.mapping),
+            Self::Entries(identities) => identities.first().map(|identity| &identity.mapping),
             Self::All | Self::Unmanaged(_) => None,
         }
     }
@@ -209,6 +211,7 @@ impl Selection {
             Self::All => true,
             Self::Mapping(mapping) => &identity.mapping == mapping,
             Self::Entry(selected) => identity == selected,
+            Self::Entries(selected) => selected.iter().any(|candidate| candidate == identity),
             Self::Subtree(selected) => {
                 identity.mapping == selected.mapping
                     && (identity.relative_path == selected.relative_path

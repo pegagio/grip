@@ -2,7 +2,8 @@
 
 use crate::error::GripError;
 use crate::mapping::{
-    Mapping, MappingKind, OwnershipConflict, PortableMapping, validate_ownership,
+    Mapping, MappingKind, OwnershipConflict, PortableMapping, validate_contained_tree_reservations,
+    validate_ownership,
 };
 use rustix::fs::{Mode, OFlags, open};
 use serde::{Deserialize, Serialize};
@@ -94,7 +95,10 @@ impl ProjectDescriptorV2 {
             .iter()
             .map(crate::mapping::ResolvedMapping::ownership_mapping)
             .collect::<Vec<_>>();
-        let conflicts = validate_ownership(&ownership);
+        let mut conflicts = validate_ownership(&ownership);
+        conflicts.extend(validate_contained_tree_reservations(&ownership));
+        conflicts.sort();
+        conflicts.dedup();
         if conflicts.is_empty() {
             Ok(resolved)
         } else {

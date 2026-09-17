@@ -48,7 +48,7 @@ Mapping replaced:
 
 After `grip remove` succeeds for the exact source that owns a destination, a normal add may use that destination again without `--force`. Removing a different mapping does not release the active owner.
 
-Grip stores only the declarations. Home-relative and project-relative forms are portable; an absolute destination intentionally binds a declaration to a specific filesystem location. A project-relative destination is resolved from the selected project root, never the command's current directory, and may explicitly use `..` to address an adjacent location. Default human mapping output shows concise declared rows; JSON retains both declared and safely rendered resolved endpoints. Source links, destination-link ancestors, empty destination forms, environment expansion, other-user home syntax, unsafe ancestry, and overlapping ownership are rejected. An exact paired destination leaf link is the narrow exception: `add` records it as unresolved without reading or modifying its target.
+Grip stores only the declarations. Home-relative and project-relative forms are portable; an absolute destination intentionally binds a declaration to a specific filesystem location. A project-relative destination is resolved from the selected project root, never the command's current directory, and may explicitly use `..` to address an adjacent location. Default human mapping output shows concise declared rows; JSON retains both declared and safely rendered resolved endpoints. Source links, destination-link ancestors, empty destination forms, environment expansion, other-user home syntax, unsafe ancestry, and overlapping ownership are rejected except for an exact leaf reserved beneath a contained-source tree as described below. An exact paired destination leaf link is a separate narrow exception: `add` records it as unresolved without reading or modifying its target.
 
 ```text
 Mapped:
@@ -59,25 +59,44 @@ Mapped:
  editor -> ~/.config/editor
 ```
 
-For a tree mapping, Grip discovers ordinary non-ignored source entries on every inspection. Source-side `.gripignore` files use Gitignore-compatible rules. The project metadata directory `.grip` is structurally reserved and is never mapping payload, even if ignore rules attempt to re-include it.
+For a tree mapping, Grip discovers ordinary non-ignored source entries on every inspection. The project-root `.gripignore` is a global Gitignore-compatible policy for every tree mapping; a source-root or nested `.gripignore` can override it at its narrower scope. Policy files are not mapping payload. The project metadata directory `.grip` is structurally reserved and is never mapping payload, even if ignore rules attempt to re-include it.
 
-A tree source may be strictly beneath its own destination root, which supports a dotfiles repository layout such as `grip add home/ ~/`. Grip inspects only current non-ignored source members and retained accepted identities at their exact paired destination paths; it does not enumerate unrelated home content. Equal roots, destinations beneath their source, contained file mappings, and ownership overlap between mappings remain invalid.
+A tree source may be strictly beneath its own destination root, which supports a dotfiles repository layout such as `grip add home/ ~/`. Grip inspects only current non-ignored source members and retained accepted identities at their exact paired destination paths; it does not enumerate unrelated home content. An existing disjoint exact file mapping may reserve one destination leaf beneath such a tree—for example, `git/ignore -> ~/.gitignore` may coexist with `home/ -> ~/` while `home/.gitignore` is absent. If that tree source member exists, Grip rejects the mapping set rather than assigning the destination leaf to both mappings. Equal roots, destinations beneath their source, contained file mappings, and all other ownership overlap remain invalid.
 
 For a contained-source tree, each managed relative path must be disjoint from the destination-relative path that locates the source tree. If a managed member equals, contains, or falls beneath that path, Grip blocks with `recursive_member_topology` and reports the relation. This blocker cannot be forced or bypassed with an exact selector. If the subtree is intentionally unmanaged, exclude it explicitly in the source tree's `.gripignore`.
+
+Grip synchronizes only its allowlisted metadata. Modification times are observational by default and are neither compared nor transferred. Use `-m` or `--use-modification-time` with `status`, `diff`, `push`, `pull`, or `sync` to detect and apply them for that one operation. Ambient macOS `com.apple.metadata:kMDLabel_<opaque-id>` attributes are excluded from comparison and transfer. Other unknown extended attributes remain blockers; a failed human `add` identifies the affected path, endpoint, and attribute name without displaying its value.
+
+Human `grip status` names every current managed entry in a `Current:` section using `=` between the source and destination paths. This section appears alongside action sections and for an otherwise fully current nonempty scope; JSON status remains the machine-readable interface.
 
 ## Inspect and synchronize
 
 ```sh
-grip status [-e|--exit-code] [-d|--destination] [PATH]
-grip diff [-d|--destination] [PATH]
-grip push [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
-grip pull [-n|--dry-run] [-f|--force] [-d|--destination] [PATH]
-grip sync [-n|--dry-run] [-d|--destination] [PATH]
+grip status [-e|--exit-code] [-m|--use-modification-time] [-d|--destination] [PATH]
+grip diff [-m|--use-modification-time] [-d|--destination] [PATH]
+grip push [-n|--dry-run] [-m|--use-modification-time] [-f|--force] [-d|--destination] [PATH]
+grip pull [-n|--dry-run] [-m|--use-modification-time] [-f|--force] [-s|--source] [PATH]
+grip pull [-n|--dry-run] [-m|--use-modification-time] [-f|--force] -a|--adopt DESTINATION
+grip sync [-n|--dry-run] [-m|--use-modification-time] [-d|--destination] [PATH]
 ```
 
-For one exact human-readable `grip diff PATH`, Grip can invoke an external comparison program after its normal safety inspection. It uses `GRIP_EXTERNAL_DIFF` first, then a named tool selected in `.grip/config.toml` over `~/.grip/config.toml`, then `diff`. Configure named tools with `[diff] tool = "name"` and `[difftool.name] program = "/path/to/tool"`; `args = ["--literal-option"]` supplies literal arguments before the source and destination paths. Project fields replace matching global fields, including the complete `args` array. `GRIP_EXTERNAL_DIFF` is executable-only and receives exactly the two endpoints, so use a wrapper when it needs options. Grip never uses a shell. JSON output and unselected `grip diff` remain read-only and never launch a tool.
+For one exact human-readable `grip diff PATH`, Grip can invoke an external comparison program after its normal safety inspection. It uses `GRIP_EXTERNAL_DIFF` first, then a named tool selected in `.grip/config.toml` over `~/.grip/config.toml`, then `diff`. For example, configure Visual Studio Code's command-line tool for the project:
 
-Source selectors for mapping commands, `status`, `diff`, `pull`, and `sync` use project-relative source space. A relative source selector for `push` is resolved from the current working directory so an ordinary source path displayed by `grip status` can be used directly from that same directory. Absolute source selectors remain invalid. `--destination` selects in destination space where supported; `--` terminates option parsing for dash-prefixed paths.
+```toml
+# .grip/config.toml
+[diff]
+tool = "vscode"
+
+[difftool.vscode]
+program = "/usr/local/bin/code"
+args = ["--diff"]
+```
+
+Grip invokes the program as `code --diff SOURCE DESTINATION` and leaves standard output entirely to that program. Add `-v` or `--verbose` to a selected human diff, for example `grip diff -v git/ignore`, when you want Grip's readable inspection explanation on standard error before the tool runs. `args = ["--literal-option"]` supplies literal arguments before the source and destination paths. Project fields replace matching global fields, including the complete `args` array. `GRIP_EXTERNAL_DIFF` is executable-only and receives exactly the two endpoints, so use a wrapper when it needs options. Grip never uses a shell. JSON output and unselected `grip diff` remain read-only and never launch a tool.
+
+Source selectors for mapping commands, `status`, `diff`, and `sync` use project-relative source space. `pull PATH` selects in destination space by default; use `-s` or `--source` to select the corresponding source path instead. A relative source selector for `push` is resolved from the current working directory so an ordinary source path displayed by `grip status` can be used directly from that same directory. Absolute source selectors remain invalid. `--destination` selects in destination space where supported by the other commands; `--` terminates option parsing for dash-prefixed paths.
+
+Ordinary tree membership remains source-defined, so it never imports destination-only files. To intentionally bring one existing destination regular file under an existing tree mapping into the source, use `grip pull --adopt DESTINATION` (or `-a`). Grip copies only that file and any missing source ancestors, then verifies and baselines that exact set; it never creates a separate mapping or imports siblings. Adoption requires a destination path strictly below a tree mapping and cannot be combined with `--source`. If the corresponding source path is ignored, the ordinary command refuses it. `grip pull --adopt --force DESTINATION` overrides only that ignore eligibility for this adoption, changes no `.gripignore` file, and reports the exact rules to add if ordinary discovery should retain the member later. It does not override ownership, topology, metadata, source-existence, or stale-evidence blockers.
 
 Grip compares the current source, current destination, and last accepted baseline. Adding unequal existing endpoints records the destination as that mapping's initial comparison reference without copying either side, so the source is immediately offered as an ordinary push. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until force chooses a source or destination winner. `grip push --force PATH` and `grip pull --force PATH` remain exact-entry operations; `grip push --force` without `PATH` is the explicit aggregate source-winning operation for all eligible managed entries in the selected project. Destination-only content outside source-defined managed membership remains unmanaged.
 
@@ -109,7 +128,7 @@ Changes to push:
 Conflicts:
   README.md <-> ~/workspace/README.md
     Keep source: grip push --force README.md
-    Keep destination: grip pull --force --destination ~/workspace/README.md
+    Keep destination: grip pull --force ~/workspace/README.md
 
 Needs baseline:
   CHANGELOG.md >-< ~/workspace/CHANGELOG.md
@@ -150,7 +169,7 @@ The complete layout is:
     ├── operations/          # portable Operation Record V2 and action evidence
 ```
 
-State V4 stores portable entry identities plus a local binding to the resolved project root, destination home, descriptor digest, and resolved topology. Copying a project retains its state as untrusted evidence. Read-only commands may report `rebind_eligible` without writing; mutation is blocked on missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. A successful state-writing command records the new binding atomically.
+State V4 stores portable entry identities plus a local binding to the resolved project root, destination home, descriptor digest, and resolved topology. Copying a project retains its state as untrusted evidence. Rebinding checks mapping-affecting settings and resolved mapping topology; changing an output-only setting such as a diff-tool profile does not invalidate accepted payload evidence. Read-only commands may report `rebind_eligible` without writing; mutation is blocked on missing, ambiguous, stale, incomplete, unsafe, or contradictory evidence. A successful state-writing command records the new binding atomically.
 
 There is no global Grip registry, global mutable state root, generated project identifier, compatibility reader for older schemas, or environment-variable override for command scope.
 

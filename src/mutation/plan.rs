@@ -134,6 +134,20 @@ pub fn build_for(
     )
 }
 
+/// Build the exact destination-to-source plan used by explicit destination adoption.
+pub fn build_adopt(
+    scope: ClassificationScope,
+    records: Vec<ClassificationRecord>,
+) -> Result<MutationPlan, GripError> {
+    build_with_parents(
+        MutationOperation::Adopt,
+        None,
+        scope,
+        records,
+        BTreeMap::new(),
+    )
+}
+
 /// Build one exact-entry conflict resolution plan for an explicit winner.
 pub fn build_resolution(
     scope: ClassificationScope,
@@ -380,13 +394,17 @@ fn build_with_parents(
                                 origin.node_kind == target.node_kind
                                     && origin.content == target.content
                             });
-                        let restoring_missing_source = operation == MutationOperation::Resolve
+                        let restoring_missing_source = (operation == MutationOperation::Resolve
                             && winner == Some(ConflictWinner::Destination)
                             && matches!(
                                 record.classification,
                                 Classification::SourceSideDeletion
                                     | Classification::DeleteChangeConflict
-                            );
+                            ))
+                            || (operation == MutationOperation::Adopt
+                                && record.source.is_none()
+                                && record.classification
+                                    == Classification::DestinationOnlyUnmanaged);
                         let kind = match complete_kind {
                             NodeKind::File if restoring_missing_source => ActionKind::AddFile,
                             NodeKind::Directory if restoring_missing_source => {
@@ -445,6 +463,7 @@ fn build_with_parents(
                 ActionKind::CreateDirectory | ActionKind::ReplaceDestinationLinkDirectory
             ) && let Some(expected_after) = expected_after
             {
+                let changed_dimensions = all_metadata_dimensions(expected_after.node_kind);
                 finalizers.push(MutationAction {
                     index: usize::MAX,
                     direction,
@@ -463,7 +482,7 @@ fn build_with_parents(
                     metadata: Some(crate::mutation::model::MetadataActionEvidence {
                         expected_before: None,
                         expected_after,
-                        changed_dimensions: all_metadata_dimensions(),
+                        changed_dimensions,
                         flags_to_clear: BTreeSet::new(),
                         capability_proofs: Vec::new(),
                     }),
@@ -544,12 +563,14 @@ fn build_with_parents(
         operation,
         direction: match operation {
             MutationOperation::Push => Some(MutationDirection::Push),
-            MutationOperation::Pull => Some(MutationDirection::Pull),
+            MutationOperation::Pull | MutationOperation::Adopt => Some(MutationDirection::Pull),
             MutationOperation::Sync
             | MutationOperation::Resolve
             | MutationOperation::AggregateForcePush => None,
         },
         winner,
+        use_modification_time: true,
+        adoption_policy_digest: None,
         plan_id: String::new(),
         scope,
         acceptance_identities: entries
@@ -571,16 +592,51 @@ fn build_with_parents(
     Ok(plan)
 }
 
-fn all_metadata_dimensions() -> BTreeSet<crate::metadata::model::MetadataDimension> {
-    BTreeSet::from([
+/// Apply the operation's timestamp policy after deterministic plan construction.
+pub fn configure_modification_time(
+    plan: &mut MutationPlan,
+    use_modification_time: bool,
+) -> Result<(), GripError> {
+    plan.use_modification_time = use_modification_time;
+    if !use_modification_time {
+        for action in &mut plan.actions {
+            if let Some(metadata) = &mut action.metadata {
+                metadata
+                    .changed_dimensions
+                    .remove(&crate::metadata::model::MetadataDimension::ModificationTime);
+                normalize_modification_time(&mut metadata.expected_after);
+                if let Some(expected_before) = &mut metadata.expected_before {
+                    normalize_modification_time(expected_before);
+                }
+            }
+        }
+    }
+    plan.plan_id = plan_digest(plan)?;
+    Ok(())
+}
+
+fn normalize_modification_time(state: &mut crate::metadata::model::SupportedEntryStateV3) {
+    state.metadata.modified_time = crate::metadata::model::ModificationTime {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+}
+
+fn all_metadata_dimensions(
+    node_kind: NodeKind,
+) -> BTreeSet<crate::metadata::model::MetadataDimension> {
+    let mut dimensions = BTreeSet::from([
         crate::metadata::model::MetadataDimension::PermissionMode,
         crate::metadata::model::MetadataDimension::Owner,
         crate::metadata::model::MetadataDimension::Group,
-        crate::metadata::model::MetadataDimension::ModificationTime,
         crate::metadata::model::MetadataDimension::ExtendedAttribute,
         crate::metadata::model::MetadataDimension::AccessControlList,
         crate::metadata::model::MetadataDimension::BsdFlags,
-    ])
+    ]);
+    if node_kind != NodeKind::Directory {
+        dimensions.insert(crate::metadata::model::MetadataDimension::ModificationTime);
+    }
+    dimensions
 }
 
 fn transition_preflight_blockers(
@@ -615,6 +671,11 @@ fn transition_preflight_blockers(
             paths: paths.clone(),
         });
     }
+    let node_kind = record
+        .source_complete
+        .as_ref()
+        .or(record.destination_complete.as_ref())
+        .map(|state| state.node_kind);
     for dimension in [
         MetadataDimension::PermissionMode,
         MetadataDimension::Owner,
@@ -624,6 +685,11 @@ fn transition_preflight_blockers(
         MetadataDimension::AccessControlList,
         MetadataDimension::BsdFlags,
     ] {
+        if node_kind == Some(NodeKind::Directory)
+            && dimension == MetadataDimension::ModificationTime
+        {
+            continue;
+        }
         let capable = profile.capabilities.iter().any(|capability| {
             capability.dimension == dimension
                 && matches!(capability.apply, Evidence::Observed { value: true })
@@ -704,41 +770,47 @@ fn metadata_action_evidence(
             record.destination_complete.as_ref()?,
         ),
     };
-    let changed_dimensions = before.map_or_else(all_metadata_dimensions, |before| {
-        crate::classification::changed_dimensions_complete(Some(before), Some(after))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|dimension| match dimension {
-                crate::classification::model::ChangedDimension::NodeKind => {
-                    crate::metadata::model::MetadataDimension::Node
-                }
-                crate::classification::model::ChangedDimension::Content => {
-                    crate::metadata::model::MetadataDimension::Content
-                }
-                crate::classification::model::ChangedDimension::PermissionMode => {
-                    crate::metadata::model::MetadataDimension::PermissionMode
-                }
-                crate::classification::model::ChangedDimension::Owner => {
-                    crate::metadata::model::MetadataDimension::Owner
-                }
-                crate::classification::model::ChangedDimension::Group => {
-                    crate::metadata::model::MetadataDimension::Group
-                }
-                crate::classification::model::ChangedDimension::ModificationTime => {
-                    crate::metadata::model::MetadataDimension::ModificationTime
-                }
-                crate::classification::model::ChangedDimension::ExtendedAttribute => {
-                    crate::metadata::model::MetadataDimension::ExtendedAttribute
-                }
-                crate::classification::model::ChangedDimension::AccessControlList => {
-                    crate::metadata::model::MetadataDimension::AccessControlList
-                }
-                crate::classification::model::ChangedDimension::BsdFlags => {
-                    crate::metadata::model::MetadataDimension::BsdFlags
-                }
-            })
-            .collect()
-    });
+    let changed_dimensions = before.map_or_else(
+        || all_metadata_dimensions(after.node_kind),
+        |_| {
+            record
+                .changed_dimensions
+                .source_to_destination
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|dimension| match dimension {
+                    crate::classification::model::ChangedDimension::NodeKind => {
+                        crate::metadata::model::MetadataDimension::Node
+                    }
+                    crate::classification::model::ChangedDimension::Content => {
+                        crate::metadata::model::MetadataDimension::Content
+                    }
+                    crate::classification::model::ChangedDimension::PermissionMode => {
+                        crate::metadata::model::MetadataDimension::PermissionMode
+                    }
+                    crate::classification::model::ChangedDimension::Owner => {
+                        crate::metadata::model::MetadataDimension::Owner
+                    }
+                    crate::classification::model::ChangedDimension::Group => {
+                        crate::metadata::model::MetadataDimension::Group
+                    }
+                    crate::classification::model::ChangedDimension::ModificationTime => {
+                        crate::metadata::model::MetadataDimension::ModificationTime
+                    }
+                    crate::classification::model::ChangedDimension::ExtendedAttribute => {
+                        crate::metadata::model::MetadataDimension::ExtendedAttribute
+                    }
+                    crate::classification::model::ChangedDimension::AccessControlList => {
+                        crate::metadata::model::MetadataDimension::AccessControlList
+                    }
+                    crate::classification::model::ChangedDimension::BsdFlags => {
+                        crate::metadata::model::MetadataDimension::BsdFlags
+                    }
+                })
+                .collect()
+        },
+    );
     let flags_to_clear = before.map_or_else(BTreeSet::new, |before| {
         before
             .metadata
@@ -805,6 +877,15 @@ pub fn disposition_for_operation(
         MutationOperation::Pull => {
             disposition_for_direction(MutationDirection::Pull, classification, blocking)
         }
+        MutationOperation::Adopt => {
+            if blocking {
+                Disposition::Blocked
+            } else if classification == Classification::DestinationOnlyUnmanaged {
+                Disposition::Action
+            } else {
+                Disposition::NoAction
+            }
+        }
         MutationOperation::Sync => {
             if blocking {
                 return Disposition::Blocked;
@@ -853,6 +934,9 @@ pub(crate) fn resolution_is_actionable(
     ) || matches!(
         (winner, classification),
         (
+            ConflictWinner::Destination,
+            Classification::SourceOnlyChange
+        ) | (
             ConflictWinner::Source,
             Classification::DestinationSideDeletion | Classification::ChangeDeleteConflict
         ) | (
@@ -887,7 +971,7 @@ fn action_direction(
 ) -> MutationDirection {
     match operation {
         MutationOperation::Push => MutationDirection::Push,
-        MutationOperation::Pull => MutationDirection::Pull,
+        MutationOperation::Pull | MutationOperation::Adopt => MutationDirection::Pull,
         MutationOperation::Sync => {
             if classification == Classification::DestinationOnlyChange {
                 MutationDirection::Pull
@@ -987,6 +1071,7 @@ struct PlanIdentity<'a> {
     operation: MutationOperation,
     direction: Option<MutationDirection>,
     winner: Option<ConflictWinner>,
+    use_modification_time: bool,
     scope: &'a ClassificationScope,
     entries: &'a [EntryDisposition],
     acceptance_identities: &'a [crate::discovery::model::SafePath],
@@ -1000,6 +1085,7 @@ fn plan_digest(plan: &MutationPlan) -> Result<String, GripError> {
         operation: plan.operation,
         direction: plan.direction,
         winner: plan.winner,
+        use_modification_time: plan.use_modification_time,
         scope: &plan.scope,
         entries: &plan.entries,
         acceptance_identities: &plan.acceptance_identities,

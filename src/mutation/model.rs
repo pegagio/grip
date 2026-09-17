@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub enum MutationOperation {
     Push,
     Pull,
+    Adopt,
     Sync,
     Resolve,
     AggregateForcePush,
@@ -21,6 +22,7 @@ impl MutationOperation {
         match self {
             Self::Push => "push",
             Self::Pull => "pull",
+            Self::Adopt => "adopt",
             Self::Sync => "sync",
             Self::Resolve => "resolve",
             Self::AggregateForcePush => "aggregate_force_push",
@@ -231,6 +233,11 @@ pub struct MutationPlan {
     pub direction: Option<MutationDirection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub winner: Option<ConflictWinner>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub use_modification_time: bool,
+    /// Non-serialized effective ignore-policy evidence for an explicit adoption request.
+    #[serde(skip)]
+    pub adoption_policy_digest: Option<String>,
     pub plan_id: String,
     pub scope: ClassificationScope,
     pub entries: Vec<EntryDisposition>,

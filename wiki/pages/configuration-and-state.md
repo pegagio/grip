@@ -2,7 +2,7 @@
 title: Configuration and state
 type: component
 sources: [S001, S004, S015, S017, S028]
-updated: 2026-09-16
+updated: 2026-09-17
 ---
 
 # Configuration and state

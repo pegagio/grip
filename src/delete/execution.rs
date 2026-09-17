@@ -83,9 +83,18 @@ pub fn execute_with_hook(
         crate::observation::inspect(home, &registry, &expected_state.accepted, selection)?;
     let records = observed
         .values()
-        .map(|entry| crate::classification::classify_accepted(entry, &expected_state.accepted))
+        .map(|entry| {
+            crate::classification::classify_accepted_with_options(
+                entry,
+                &expected_state.accepted,
+                crate::classification::ComparisonOptions {
+                    use_modification_time: plan.use_modification_time,
+                },
+            )
+        })
         .collect();
-    let rebuilt = crate::delete::plan::build(plan.authority, plan.scope.clone(), records)?;
+    let mut rebuilt = crate::delete::plan::build(plan.authority, plan.scope.clone(), records)?;
+    crate::delete::plan::configure_modification_time(&mut rebuilt, plan.use_modification_time)?;
     if rebuilt.plan_id != plan.plan_id {
         return Err(crate::error::GripError::discovery_operational(
             "delete",
@@ -443,7 +452,15 @@ fn revalidate_action(
                 .accepted
                 .complete_baselines
                 .get(&action.identity)
-                == Some(expected)
+                .is_some_and(|baseline| {
+                    crate::classification::complete_equivalent_with_options(
+                        baseline,
+                        expected,
+                        crate::classification::ComparisonOptions {
+                            use_modification_time: applied.use_modification_time,
+                        },
+                    )
+                })
         });
     if !accepted_matches {
         return Err(GripError::CorruptState(
@@ -493,7 +510,13 @@ fn revalidate_action(
         {
             current.metadata.modified_time = expected_complete.metadata.modified_time;
         }
-        if current != *expected_complete {
+        if !crate::classification::complete_equivalent_with_options(
+            &current,
+            expected_complete,
+            crate::classification::ComparisonOptions {
+                use_modification_time: applied.use_modification_time,
+            },
+        ) {
             return Err(GripError::InvalidConfiguration(
                 "deletion target complete state changed before removal".into(),
             ));

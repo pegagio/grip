@@ -44,12 +44,14 @@ pub fn inspect_candidate(
     let first = inspect_pass(
         candidate_descriptor_bytes,
         candidate.mappings().iter().collect::<Vec<_>>(),
+        home.project_root()?,
         home.path(),
         accepted,
     )?;
     let second = inspect_pass(
         candidate_descriptor_bytes,
         candidate.mappings().iter().collect::<Vec<_>>(),
+        home.project_root()?,
         home.path(),
         accepted,
     )?;
@@ -77,7 +79,13 @@ where
         .clone()
         .map_or(DiscoveryScope::All, DiscoveryScope::Mapping);
     let selected = select_mappings(initial, selected_source.as_deref())?;
-    let first = inspect_pass(&initial.bytes, selected, home.path(), accepted)?;
+    let first = inspect_pass(
+        &initial.bytes,
+        selected,
+        home.project_root()?,
+        home.path(),
+        accepted,
+    )?;
     between_passes();
 
     let current = publication::load(home, false).map_err(|error| {
@@ -93,7 +101,13 @@ where
         ));
     }
     let selected = select_mappings(&current, selected_source.as_deref())?;
-    let second = inspect_pass(&current.bytes, selected, home.path(), accepted)?;
+    let second = inspect_pass(
+        &current.bytes,
+        selected,
+        home.project_root()?,
+        home.path(),
+        accepted,
+    )?;
     publication::revalidate_readonly(home, initial, OPERATION)?;
     if first != second {
         return Err(stale(
@@ -131,6 +145,7 @@ fn select_mappings<'a>(
 fn inspect_pass(
     registry_bytes: &[u8],
     mappings: Vec<&Mapping>,
+    project_root: &Path,
     reserved_metadata: &Path,
     accepted: &AcceptedState,
 ) -> Result<DiscoveryPass, GripError> {
@@ -145,6 +160,7 @@ fn inspect_pass(
             }
             MappingKind::Tree => inspect_tree_mapping(
                 mapping,
+                project_root,
                 reserved_metadata,
                 &mut records,
                 &mut node_evidence,
@@ -438,6 +454,7 @@ fn inspect_file_mapping(
 
 fn inspect_tree_mapping(
     mapping: &Mapping,
+    project_root: &Path,
     reserved_metadata: &Path,
     records: &mut Vec<DiscoveryRecord>,
     evidence_map: &mut BTreeMap<(EvidenceSide, PathBuf, Vec<u8>), model::NodeEvidence>,
@@ -467,6 +484,25 @@ fn inspect_tree_mapping(
             Some(names.clone()),
         ),
     );
+    let mut global_policies = Vec::new();
+    let project_directory = Directory::open(project_root)
+        .map_err(|error| unavailable(project_root, "directory_unreadable", error))?;
+    if project_directory
+        .child_names()
+        .map_err(|error| unavailable(project_root, "directory_unreadable", error))?
+        .iter()
+        .any(|name| name == b".gripignore")
+    {
+        let (policy, key, evidence) = ignore_policy::load(
+            &project_directory,
+            project_root,
+            project_root,
+            &[],
+            project_directory.root_metadata().st_dev as u64,
+        )?;
+        global_policies.push(policy);
+        policy_evidence.insert(key, evidence);
+    }
     walk_source(
         mapping,
         &root,
@@ -476,7 +512,7 @@ fn inspect_tree_mapping(
         records,
         evidence_map,
         policy_evidence,
-        &[],
+        &global_policies,
         reserved_metadata,
     )
 }

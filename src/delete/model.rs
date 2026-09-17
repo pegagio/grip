@@ -114,6 +114,7 @@ pub struct DeletionCounts {
 pub struct DeletionPlan {
     pub operation: &'static str,
     pub authority: DeletionAuthority,
+    pub use_modification_time: bool,
     pub plan_id: String,
     pub scope: ClassificationScope,
     pub entries: Vec<DeletionEntryDisposition>,

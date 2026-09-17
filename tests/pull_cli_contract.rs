@@ -4,23 +4,30 @@ use clap::Parser;
 use grip::cli::{Cli, Command};
 use std::ffi::OsString;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn pull_parses_default_execute_selectors_and_dry_run_aliases() {
     let execute = Cli::try_parse_from(["grip", "pull"]).unwrap();
     assert!(matches!(
         execute.command,
-        Command::Pull(ref args) if !args.dry_run && !args.destination && args.path.is_none()
+        Command::Pull(ref args) if !args.dry_run && !args.source && args.path.is_none()
     ));
     for alias in ["-n", "--dry-run"] {
         let preview = Cli::try_parse_from(["grip", "pull", alias]).unwrap();
         assert!(matches!(preview.command, Command::Pull(ref args) if args.dry_run));
     }
-    let destination = Cli::try_parse_from(["grip", "pull", "--destination", "/target"]).unwrap();
+    let source = Cli::try_parse_from(["grip", "pull", "--source", "source-path"]).unwrap();
     assert!(matches!(
-        destination.command,
+        source.command,
         Command::Pull(ref args)
-            if args.destination && args.path == Some(OsString::from("/target"))
+            if args.source && args.path == Some(OsString::from("source-path"))
+    ));
+    let short_source = Cli::try_parse_from(["grip", "pull", "-s", "source-path"]).unwrap();
+    assert!(matches!(
+        short_source.command,
+        Command::Pull(ref args)
+            if args.source && args.path == Some(OsString::from("source-path"))
     ));
     let leading_dash = Cli::try_parse_from(["grip", "pull", "--", "-literal"]).unwrap();
     assert!(matches!(
@@ -28,10 +35,16 @@ fn pull_parses_default_execute_selectors_and_dry_run_aliases() {
         Command::Pull(ref args) if args.path == Some(OsString::from("-literal"))
     ));
     assert!(Cli::try_parse_from(["grip", "pull", "one", "two"]).is_err());
+    let adopt = Cli::try_parse_from(["grip", "pull", "-a", "~/destination"]).unwrap();
+    assert!(matches!(
+        adopt.command,
+        Command::Pull(ref args) if args.adopt && args.path == Some(OsString::from("~/destination"))
+    ));
+    assert!(Cli::try_parse_from(["grip", "pull", "--adopt", "--source", "source"]).is_err());
 }
 
 #[test]
-fn pull_source_and_destination_selectors_resolve_the_same_managed_action() {
+fn pull_destination_selector_and_explicit_source_selector_resolve_the_same_managed_action() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
     let source = root.path().join("source");
@@ -45,21 +58,15 @@ fn pull_source_and_destination_selectors_resolve_the_same_managed_action() {
     );
     fs::write(&destination, "changed").unwrap();
 
-    let source_output = support::project_command(
-        root.path(),
-        &metadata_dir,
-        &["--output=json", "pull", "--dry-run", "source"],
-    );
     let destination_output = support::project_command(
         root.path(),
         &metadata_dir,
-        &[
-            "--output=json",
-            "pull",
-            "--dry-run",
-            "--destination",
-            "~/destination",
-        ],
+        &["--output=json", "pull", "--dry-run", "~/destination"],
+    );
+    let source_output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output=json", "pull", "--dry-run", "--source", "source"],
     );
     assert!(source_output.status.success());
     assert!(destination_output.status.success());
@@ -79,6 +86,46 @@ fn pull_source_and_destination_selectors_resolve_the_same_managed_action() {
     assert_eq!(
         destination_json["details"]["scope"]["path_space"],
         "destination"
+    );
+}
+
+#[test]
+fn forced_pull_uses_default_destination_selector_to_restore_source_metadata() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "accepted").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+    assert!(
+        support::project_command(root.path(), &metadata_dir, &["push"])
+            .status
+            .success()
+    );
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let ordinary = support::project_command(root.path(), &metadata_dir, &["pull"]);
+    assert!(ordinary.status.success());
+    assert_eq!(
+        fs::metadata(&source).unwrap().permissions().mode() & 0o7777,
+        0o644
+    );
+
+    let forced = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["pull", "--force", destination.to_str().unwrap()],
+    );
+    assert!(
+        forced.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&forced.stdout),
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    assert_eq!(
+        fs::metadata(&source).unwrap().permissions().mode() & 0o7777,
+        0o600
     );
 }
 
@@ -340,7 +387,7 @@ fn pull_human_results_cover_apply_noop_and_blocked_outcomes() {
     assert_eq!(
         String::from_utf8(blocked.stdout).unwrap(),
         format!(
-            "Error: Pull blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Error: Pull blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             fs::canonicalize(&destination).unwrap().display(),
             fs::canonicalize(&destination).unwrap().display(),
         )
@@ -359,7 +406,6 @@ fn pull_human_results_cover_apply_noop_and_blocked_outcomes() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination.to_str().unwrap(),
         ],
     );
@@ -370,8 +416,11 @@ fn pull_human_results_cover_apply_noop_and_blocked_outcomes() {
 fn blocked_pull_uses_diff_for_an_aggregate_tree_conflict() {
     let (root, metadata_dir, _source, destination) = support::aggregate_tree_collision_fixture();
 
-    let output =
-        support::project_command(root.path(), &metadata_dir, &["pull", "source/nested/file"]);
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["pull", "--source", "source/nested/file"],
+    );
     assert_eq!(output.status.code(), Some(10));
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains(&format!(

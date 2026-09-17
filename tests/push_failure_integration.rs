@@ -84,7 +84,7 @@ fn aggregate_fixture() -> (
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let initial = grip::push::plan::build_with_parent_requirements(
+    let mut initial = grip::push::plan::build_with_parent_requirements(
         ClassificationScope {
             kind: "all".into(),
             path_space: PathSpace::Source,
@@ -95,6 +95,7 @@ fn aggregate_fixture() -> (
         registry.missing_destination_parents(),
     )
     .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut initial, false).unwrap();
     grip::mutation::execution::execute(&home, &registry, &state, &selection, &initial).unwrap();
 
     fs::write(&source_a, "source-wins-a").unwrap();
@@ -107,7 +108,7 @@ fn aggregate_fixture() -> (
         .values()
         .map(|entry| classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let plan = grip::mutation::plan::build_aggregate_force_push(
+    let mut plan = grip::mutation::plan::build_aggregate_force_push(
         ClassificationScope {
             kind: "all".into(),
             path_space: PathSpace::Source,
@@ -118,6 +119,7 @@ fn aggregate_fixture() -> (
         registry.missing_destination_parents(),
     )
     .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();
     (root, home, registry, state, selection, plan)
 }
 

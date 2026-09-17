@@ -120,7 +120,7 @@ fn ordinary_operations_and_destination_winner_force_leave_destination_links_unch
         &["sync"][..],
         &["push", "--force"][..],
         &["push", "--force", "--destination", "~/destination"][..],
-        &["pull", "--force", "--destination", "~/destination"][..],
+        &["pull", "--force", "~/destination"][..],
     ] {
         let output = fixture.command(arguments);
         assert!(

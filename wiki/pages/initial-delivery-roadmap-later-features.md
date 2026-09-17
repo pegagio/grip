@@ -2,7 +2,7 @@
 title: Initial delivery roadmap later features
 type: reference
 sources: [S003]
-updated: 2026-09-16
+updated: 2026-09-17
 ---
 
 # Initial delivery roadmap later features
@@ -14,10 +14,10 @@ This continuation records Features 013 through 020 from the current roadmap ledg
 15. **015 — Simplify Status Output (`verified`):** replaces verbose default human status detail with concise, path-centered conflicts, push, pull, and baseline-attention groups while preserving detailed JSON, `diff`, selection, and exit contracts. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 16. **016 — Current-Directory Status Paths (`implemented`):** makes default-human source labels relative to the invocation directory and lets an ordinary displayed label select the same entry in a following `push`. (S003)
 17. **017 — Simplify Default Command Output (`implemented`):** makes mapping, status, mutation, and error output concise while preserving JSON and detailed `diff` contracts. (S003)
-18. **018 — Source-Authoritative Mapping Addition (`implemented`):** records the destination as the initial comparison reference for an unequal newly added source-defined member, so ordinary synchronization offers a push without payload mutation during `add`. (S003)
-19. **019 — Executable Force-Resolution Guidance (`implemented`):** emits force guidance only for exact resolvable entries and directs aggregate conflicts to inspect `grip diff SOURCE`. (S003)
+18. **018 — Source-Authoritative Mapping Addition (`verified`):** records the destination as the initial comparison reference for an unequal newly added source-defined member, so ordinary synchronization offers a push without payload mutation during `add`. (S003)
+19. **019 — Executable Force-Resolution Guidance (`verified`):** emits force guidance only for exact resolvable entries and directs aggregate conflicts to inspect `grip diff SOURCE`. (S003)
 20. **020 — Binary Size Investigation (`abandoned`):** was not pursued because the reported approximately 4.5 MB release artifact already met its less-than-10 MiB stretch target. (S003)
-Verified Features 014 and 015 extend the destination-declaration and initial status-presentation contracts. Implemented Features 013 and 016 through 019 extend source input, status-path, concise-output, initial-add, and force-guidance behavior pending debrief; Feature 020 was abandoned without implementation. (S003)
+Verified Features 014, 015, 018, and 019 extend the destination-declaration, initial status-presentation, initial-add, and force-guidance contracts. Implemented Features 013, 016, and 017 extend source input, status-path, and concise default-output behavior pending their roadmap transitions; Feature 020 was abandoned without implementation. (S003)
 
 ## Related pages
 

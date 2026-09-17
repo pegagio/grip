@@ -2,7 +2,7 @@
 title: Roadmap open questions recent
 type: reference
 sources: [S003]
-updated: 2026-09-16
+updated: 2026-09-17
 ---
 
 # Roadmap open questions recent

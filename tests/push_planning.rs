@@ -90,6 +90,9 @@ fn metadata_only_change_plans_complete_transition() {
     record.destination = Some(file_state('a'));
     record.source_complete = Some(complete_file("0644"));
     record.destination_complete = Some(complete_file("0600"));
+    record.changed_dimensions.source_to_destination = Some(vec![
+        grip::classification::model::ChangedDimension::PermissionMode,
+    ]);
     record.endpoint_capabilities = vec![destination_capability_profile()];
     let plan = grip::push::plan::build(scope(), vec![record]).unwrap();
     assert_eq!(plan.actions.len(), 1);

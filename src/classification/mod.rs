@@ -5,6 +5,13 @@ pub mod model;
 use crate::observation::model::{Membership, ObservedEntry, SupportedState};
 use model::{ChangedDimension, ChangedDimensions, Classification, ClassificationRecord, Direction};
 
+/// Per-operation comparison controls. Modification times are observational by default because
+/// ordinary source-control checkouts recreate them without changing file content.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ComparisonOptions {
+    pub use_modification_time: bool,
+}
+
 pub fn changed_dimensions(
     first: Option<&SupportedState>,
     second: Option<&SupportedState>,
@@ -106,6 +113,14 @@ pub fn classify_accepted(
     entry: &ObservedEntry,
     accepted: &crate::state::AcceptedState,
 ) -> ClassificationRecord {
+    classify_accepted_with_options(entry, accepted, ComparisonOptions::default())
+}
+
+pub fn classify_accepted_with_options(
+    entry: &ObservedEntry,
+    accepted: &crate::state::AcceptedState,
+    options: ComparisonOptions,
+) -> ClassificationRecord {
     let complete = accepted.complete_baselines.get(&entry.identity);
     if entry.source_complete.is_none() && entry.destination_complete.is_none() && complete.is_none()
     {
@@ -134,9 +149,9 @@ pub fn classify_accepted(
     } else if entry.blocking {
         Classification::UnsupportedManaged
     } else if let Some(baseline) = complete {
-        classify_complete_with_baseline(source, destination, baseline)
+        classify_complete_with_baseline(source, destination, baseline, options)
     } else {
-        classify_complete_without_baseline(source, destination)
+        classify_complete_without_baseline(source, destination, options)
     };
     let (direction, attention, blocking, reason) = properties(classification);
     let mut record = classify(entry, None);
@@ -153,9 +168,17 @@ pub fn classify_accepted(
     record.baseline_complete = complete.cloned();
     record.destination_link = entry.destination_link.clone();
     record.changed_dimensions = ChangedDimensions {
-        source_to_baseline: changed_dimensions_complete(source, complete),
-        destination_to_baseline: changed_dimensions_complete(destination, complete),
-        source_to_destination: changed_dimensions_complete(source, destination),
+        source_to_baseline: changed_dimensions_complete_with_options(source, complete, options),
+        destination_to_baseline: changed_dimensions_complete_with_options(
+            destination,
+            complete,
+            options,
+        ),
+        source_to_destination: changed_dimensions_complete_with_options(
+            source,
+            destination,
+            options,
+        ),
     };
     record
 }
@@ -163,6 +186,14 @@ pub fn classify_accepted(
 pub fn changed_dimensions_complete(
     first: Option<&crate::metadata::model::SupportedEntryStateV3>,
     second: Option<&crate::metadata::model::SupportedEntryStateV3>,
+) -> Option<Vec<ChangedDimension>> {
+    changed_dimensions_complete_with_options(first, second, ComparisonOptions::default())
+}
+
+pub fn changed_dimensions_complete_with_options(
+    first: Option<&crate::metadata::model::SupportedEntryStateV3>,
+    second: Option<&crate::metadata::model::SupportedEntryStateV3>,
+    options: ComparisonOptions,
 ) -> Option<Vec<ChangedDimension>> {
     let (Some(first), Some(second)) = (first, second) else {
         return None;
@@ -185,7 +216,10 @@ pub fn changed_dimensions_complete(
     if a.gid != b.gid {
         dimensions.push(ChangedDimension::Group);
     }
-    if a.modified_time != b.modified_time {
+    if options.use_modification_time
+        && first.node_kind != crate::discovery::model::NodeKind::Directory
+        && a.modified_time != b.modified_time
+    {
         dimensions.push(ChangedDimension::ModificationTime);
     }
     if a.extended_attributes != b.extended_attributes {
@@ -203,10 +237,13 @@ pub fn changed_dimensions_complete(
 fn classify_complete_without_baseline(
     source: Option<&crate::metadata::model::SupportedEntryStateV3>,
     destination: Option<&crate::metadata::model::SupportedEntryStateV3>,
+    options: ComparisonOptions,
 ) -> Classification {
     match (source, destination) {
         (Some(_), None) => Classification::SourceAddition,
-        (Some(a), Some(b)) if a == b => Classification::InitialMatch,
+        (Some(a), Some(b)) if complete_equivalent_with_options(a, b, options) => {
+            Classification::InitialMatch
+        }
         (Some(_), Some(_)) => Classification::InitialCollision,
         _ => Classification::DestinationOnlyUnmanaged,
     }
@@ -216,21 +253,76 @@ fn classify_complete_with_baseline(
     source: Option<&crate::metadata::model::SupportedEntryStateV3>,
     destination: Option<&crate::metadata::model::SupportedEntryStateV3>,
     baseline: &crate::metadata::model::SupportedEntryStateV3,
+    options: ComparisonOptions,
 ) -> Classification {
     match (source, destination) {
         (None, None) => Classification::ConvergedDeletion,
-        (None, Some(value)) if value == baseline => Classification::SourceSideDeletion,
+        (None, Some(value)) if complete_equivalent_with_options(value, baseline, options) => {
+            Classification::SourceSideDeletion
+        }
         (None, Some(_)) => Classification::DeleteChangeConflict,
-        (Some(value), None) if value == baseline => Classification::DestinationSideDeletion,
+        (Some(value), None) if complete_equivalent_with_options(value, baseline, options) => {
+            Classification::DestinationSideDeletion
+        }
         (Some(_), None) => Classification::ChangeDeleteConflict,
-        (Some(a), Some(b)) if a == baseline && b == baseline => Classification::Synchronized,
-        (Some(a), Some(b)) if a != baseline && b == baseline => Classification::SourceOnlyChange,
-        (Some(a), Some(b)) if a == baseline && b != baseline => {
+        (Some(a), Some(b))
+            if complete_equivalent_with_options(a, baseline, options)
+                && complete_equivalent_with_options(b, baseline, options) =>
+        {
+            Classification::Synchronized
+        }
+        (Some(a), Some(b))
+            if !complete_equivalent_with_options(a, baseline, options)
+                && complete_equivalent_with_options(b, baseline, options) =>
+        {
+            Classification::SourceOnlyChange
+        }
+        (Some(a), Some(b))
+            if complete_equivalent_with_options(a, baseline, options)
+                && !complete_equivalent_with_options(b, baseline, options) =>
+        {
             Classification::DestinationOnlyChange
         }
-        (Some(a), Some(b)) if a == b => Classification::ConvergedTwoSidedChange,
+        (Some(a), Some(b)) if complete_equivalent_with_options(a, b, options) => {
+            Classification::ConvergedTwoSidedChange
+        }
         (Some(_), Some(_)) => Classification::DivergentConflict,
     }
+}
+
+/// Compare complete state over the managed dimensions. Directory timestamps are observational
+/// evidence only: directory writes routinely change them without changing managed content.
+pub fn complete_equivalent(
+    first: &crate::metadata::model::SupportedEntryStateV3,
+    second: &crate::metadata::model::SupportedEntryStateV3,
+) -> bool {
+    complete_equivalent_with_options(first, second, ComparisonOptions::default())
+}
+
+pub fn complete_equivalent_with_options(
+    first: &crate::metadata::model::SupportedEntryStateV3,
+    second: &crate::metadata::model::SupportedEntryStateV3,
+    options: ComparisonOptions,
+) -> bool {
+    if first.node_kind != second.node_kind {
+        return false;
+    }
+    if options.use_modification_time
+        && first.node_kind != crate::discovery::model::NodeKind::Directory
+    {
+        return first == second;
+    }
+    let mut first = first.clone();
+    let mut second = second.clone();
+    first.metadata.modified_time = crate::metadata::model::ModificationTime {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    second.metadata.modified_time = crate::metadata::model::ModificationTime {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    first == second
 }
 
 fn classify_without_baseline(

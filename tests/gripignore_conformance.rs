@@ -136,3 +136,102 @@ fn nested_policy_has_deeper_precedence_but_cannot_reinclude_below_a_pruned_paren
         Some("source_addition")
     );
 }
+
+#[test]
+fn project_root_policy_applies_to_every_tree_mapping_and_source_policy_can_override_it() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("home");
+    let destination = root.path().join("destination");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(root.path().join(".gripignore"), "**/.DS_Store\n*.tmp\n").unwrap();
+    fs::write(source.join(".gripignore"), "!keep.tmp\n").unwrap();
+    fs::write(source.join("nested/.DS_Store"), "ignored").unwrap();
+    fs::write(source.join("drop.tmp"), "ignored").unwrap();
+    fs::write(source.join("keep.tmp"), "managed").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output", "json", "status", "home"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let paths = result["details"]["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|record| record["relative_path"]["display"].as_str())
+        .collect::<Vec<_>>();
+    assert!(!paths.contains(&"nested/.DS_Store"));
+    assert!(!paths.contains(&"drop.tmp"));
+    assert!(paths.contains(&"keep.tmp"));
+}
+
+#[test]
+fn forced_adoption_reports_a_verified_exemption_for_global_and_nested_policy() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("home");
+    let destination = root.path().join("destination");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::create_dir_all(destination.join("nested")).unwrap();
+    fs::write(root.path().join(".gripignore"), "*.secret\n").unwrap();
+    fs::write(source.join("nested/.gripignore"), "*.secret\n").unwrap();
+    fs::write(destination.join("nested/keep.secret"), "x").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let ordinary = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "--adopt",
+            destination.join("nested/keep.secret").to_str().unwrap(),
+        ],
+    );
+    assert!(!ordinary.status.success());
+    assert!(!source.join("nested/keep.secret").exists());
+
+    let forced = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "--adopt",
+            "--force",
+            destination.join("nested/keep.secret").to_str().unwrap(),
+        ],
+    );
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    let result: Value = serde_json::from_slice(&forced.stdout).unwrap();
+    assert!(
+        result["details"]["warning"]["gripignore_path"]["display"]
+            .as_str()
+            .unwrap()
+            .ends_with("/home/nested/.gripignore")
+    );
+    assert_eq!(
+        result["details"]["warning"]["recommended_gripignore_rules"],
+        serde_json::json!(["!keep.secret"])
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("nested/.gripignore")).unwrap(),
+        "*.secret\n"
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("nested/keep.secret")).unwrap(),
+        "x"
+    );
+}

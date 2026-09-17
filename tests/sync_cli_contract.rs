@@ -168,7 +168,7 @@ fn sync_human_blocked_result_gives_force_choices_while_json_retains_evidence() {
     assert_eq!(
         human,
         format!(
-            "Error: Sync blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Error: Sync blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             human_destination.display(),
             human_destination.display(),
         )
@@ -187,7 +187,6 @@ fn sync_human_blocked_result_gives_force_choices_while_json_retains_evidence() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             human_destination.to_str().unwrap(),
         ],
     );

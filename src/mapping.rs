@@ -347,7 +347,8 @@ pub fn validate_ownership(mappings: &[Mapping]) -> Vec<OwnershipConflict> {
                 first.kind,
                 &second.destination,
                 second.kind,
-            ) {
+            ) && !permits_exact_file_reservation(first, second)
+            {
                 conflicts.push(conflict(
                     "destination_overlap",
                     first,
@@ -384,6 +385,7 @@ pub fn validate_ownership(mappings: &[Mapping]) -> Vec<OwnershipConflict> {
             ] {
                 if let Some(path_relation) =
                     namespaces_overlap(source_path, source_kind, destination_path, destination_kind)
+                    && !permits_cross_mapping_source(first, second, source_owner, destination_owner)
                 {
                     conflicts.push(conflict(
                         "cross_mapping_recursion",
@@ -400,6 +402,69 @@ pub fn validate_ownership(mappings: &[Mapping]) -> Vec<OwnershipConflict> {
     conflicts.sort();
     conflicts.dedup();
     conflicts
+}
+
+/// Return current-source conflicts for the one allowed exact-leaf reservation shape.
+///
+/// A contained tree destination may contain a separately sourced exact file destination, but only
+/// while the tree source has no member that would map to the reserved leaf.
+pub fn validate_contained_tree_reservations(mappings: &[Mapping]) -> Vec<OwnershipConflict> {
+    let mut conflicts = Vec::new();
+    for (index, first) in mappings.iter().enumerate() {
+        for second in &mappings[index + 1..] {
+            let Some((file, tree)) = exact_file_and_contained_tree(first, second) else {
+                continue;
+            };
+            let relative = file
+                .destination
+                .strip_prefix(&tree.destination)
+                .expect("validated contained destination relation");
+            let tree_member = tree.source.join(relative);
+            if std::fs::symlink_metadata(&tree_member).is_ok() {
+                conflicts.push(OwnershipConflict {
+                    reason: "reserved_destination_member",
+                    first_mapping: file.source.clone(),
+                    second_mapping: Some(tree.source.clone()),
+                    first_path: tree_member,
+                    second_path: file.destination.clone(),
+                    relation: "equal",
+                });
+            }
+        }
+    }
+    conflicts.sort();
+    conflicts.dedup();
+    conflicts
+}
+
+fn permits_exact_file_reservation(first: &Mapping, second: &Mapping) -> bool {
+    exact_file_and_contained_tree(first, second).is_some()
+}
+
+fn permits_cross_mapping_source(
+    first: &Mapping,
+    second: &Mapping,
+    source_owner: &Mapping,
+    destination_owner: &Mapping,
+) -> bool {
+    exact_file_and_contained_tree(first, second).is_some()
+        && source_owner.kind == MappingKind::File
+        && destination_owner.kind == MappingKind::Tree
+}
+
+fn exact_file_and_contained_tree<'a>(
+    first: &'a Mapping,
+    second: &'a Mapping,
+) -> Option<(&'a Mapping, &'a Mapping)> {
+    [(first, second), (second, first)]
+        .into_iter()
+        .find(|(file, tree)| {
+            file.kind == MappingKind::File
+                && tree.kind == MappingKind::Tree
+                && contained_source_prefix(tree).is_some()
+                && relation(&file.destination, &tree.destination) == Relation::Descendant
+                && relation(&file.source, &tree.source) == Relation::Disjoint
+        })
 }
 
 #[cfg(test)]

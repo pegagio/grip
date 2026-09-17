@@ -182,6 +182,37 @@ fn copied_state_with_payload_drift_blocks_mutation() {
     );
 }
 
+#[test]
+fn diff_tool_configuration_change_does_not_block_push_with_source_drift() {
+    let fixture = prepare_bound_fixture();
+    let source = fixture.project_root.join("source");
+    let destination = fixture.home_root.join("destination");
+    fs::write(&source, "changed").unwrap();
+
+    let descriptor = fs::read_to_string(fixture.descriptor_path()).unwrap();
+    fs::write(
+        fixture.descriptor_path(),
+        format!(
+            "{descriptor}\n[diff]\ntool = \"local\"\n\n[difftool.local]\nprogram = \"/usr/bin/diff\"\n"
+        ),
+    )
+    .unwrap();
+
+    let output = fixture.command(&["push"]);
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(destination).unwrap(), "changed");
+
+    let status = fixture.command(&["--output=json", "status"]);
+    assert!(status.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(value["details"]["project"]["state"], "bound");
+}
+
 fn copied_project(
     fixture: &ProjectFixture,
     name: &str,

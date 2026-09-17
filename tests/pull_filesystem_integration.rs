@@ -84,6 +84,228 @@ fn pull_updates_only_established_tree_members() {
 }
 
 #[test]
+fn pull_adopt_copies_one_destination_only_tree_file_and_publishes_a_baseline() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("adopted"), "destination content").unwrap();
+    fs::write(destination.join("sibling"), "leave unmanaged").unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let adopted = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "--adopt",
+            destination.join("adopted").to_str().unwrap(),
+        ],
+    );
+    assert!(
+        adopted.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&adopted.stdout),
+        String::from_utf8_lossy(&adopted.stderr)
+    );
+    assert_eq!(support::json(&adopted)["details"]["operation"], "adopt");
+    assert_eq!(
+        fs::read_to_string(source.join("adopted")).unwrap(),
+        "destination content"
+    );
+    assert!(!source.join("sibling").exists());
+    let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
+    assert!(status.status.success());
+    assert_eq!(support::json(&status)["details"]["attention_count"], 0);
+}
+
+#[test]
+fn pull_adopt_creates_and_baselines_missing_source_ancestors() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir_all(destination.join("one/two")).unwrap();
+    fs::write(destination.join("one/two/adopted"), "destination content").unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "-a",
+            destination.join("one/two/adopted").to_str().unwrap(),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("one/two/adopted")).unwrap(),
+        "destination content"
+    );
+    let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
+    assert!(status.status.success());
+    assert_eq!(support::json(&status)["details"]["attention_count"], 0);
+}
+
+#[test]
+fn pull_adopt_rejects_ignored_target_unless_forced_and_reports_retention_guidance() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(source.join(".gripignore"), "*.secret\n").unwrap();
+    fs::write(destination.join("adopted.secret"), "destination content").unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+    let selector = destination.join("adopted.secret");
+
+    let rejected = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "--adopt",
+            selector.to_str().unwrap(),
+        ],
+    );
+    assert!(!rejected.status.success());
+    assert_eq!(support::json(&rejected)["code"], "invalid_configuration");
+    assert!(!source.join("adopted.secret").exists());
+
+    let adopted = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "--adopt",
+            "--force",
+            selector.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        adopted.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&adopted.stdout),
+        String::from_utf8_lossy(&adopted.stderr)
+    );
+    let json = support::json(&adopted);
+    assert_eq!(json["details"]["warning"]["kind"], "ignored_path_adopted");
+    assert_eq!(
+        json["details"]["warning"]["recommended_gripignore_rules"],
+        serde_json::json!(["!adopted.secret"])
+    );
+    assert_eq!(
+        fs::read_to_string(source.join(".gripignore")).unwrap(),
+        "*.secret\n"
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("adopted.secret")).unwrap(),
+        "destination content"
+    );
+}
+
+#[test]
+fn pull_adopt_dry_run_does_not_create_source_or_publish_state() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("adopted"), "destination content").unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let preview = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "--adopt",
+            "--dry-run",
+            destination.join("adopted").to_str().unwrap(),
+        ],
+    );
+    assert!(preview.status.success());
+    assert_eq!(support::json(&preview)["details"]["result"], "planned");
+    assert!(!source.join("adopted").exists());
+    let status = support::project_command(root.path(), &metadata_dir, &["--output=json", "status"]);
+    assert_eq!(support::json(&status)["details"]["attention_count"], 0);
+}
+
+#[test]
+fn pull_adopt_rejects_existing_source_and_nonregular_destination_without_mutation() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(source.join("existing"), "source").unwrap();
+    fs::write(destination.join("existing"), "destination").unwrap();
+    fs::create_dir(destination.join("directory")).unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    for selector in [destination.join("existing"), destination.join("directory")] {
+        let before = support::snapshot(root.path());
+        let output = support::project_command(
+            root.path(),
+            &metadata_dir,
+            &[
+                "--output=json",
+                "pull",
+                "--adopt",
+                selector.to_str().unwrap(),
+            ],
+        );
+        assert!(!output.status.success());
+        assert_eq!(support::snapshot(root.path()), before);
+    }
+}
+
+#[test]
+fn pull_adopt_rejects_a_source_ancestor_symlink_without_following_it() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source-tree");
+    let destination = root.path().join("destination-tree");
+    let outside = root.path().join("outside");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir_all(destination.join("nested")).unwrap();
+    fs::create_dir(&outside).unwrap();
+    symlink(&outside, source.join("nested")).unwrap();
+    fs::write(destination.join("nested/adopted"), "destination content").unwrap();
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &[
+            "--output=json",
+            "pull",
+            "--adopt",
+            destination.join("nested/adopted").to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(!outside.join("adopted").exists());
+}
+
+#[test]
 fn pull_does_not_recreate_a_missing_source_or_parent() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
@@ -142,7 +364,6 @@ fn forced_pull_restores_only_the_selected_missing_tree_source() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination_selector.to_str().unwrap(),
         ],
     );
@@ -160,7 +381,6 @@ fn forced_pull_restores_only_the_selected_missing_tree_source() {
             "--output=json",
             "pull",
             "--force",
-            "--destination",
             destination_selector.to_str().unwrap(),
         ],
     );
@@ -200,12 +420,7 @@ fn forced_pull_with_a_missing_destination_winner_deletes_the_source() {
     let deleted = support::project_command(
         root.path(),
         &metadata_dir,
-        &[
-            "pull",
-            "--force",
-            "--destination",
-            destination.to_str().unwrap(),
-        ],
+        &["pull", "--force", destination.to_str().unwrap()],
     );
     assert!(
         deleted.status.success(),
@@ -234,12 +449,7 @@ fn forced_pull_restores_a_missing_file_source() {
     let restored = support::project_command(
         root.path(),
         &metadata_dir,
-        &[
-            "pull",
-            "--force",
-            "--destination",
-            destination.to_str().unwrap(),
-        ],
+        &["pull", "--force", destination.to_str().unwrap()],
     );
     assert!(restored.status.success());
     assert_eq!(fs::read_to_string(&source).unwrap(), "accepted");
@@ -267,7 +477,6 @@ fn forced_pull_restores_a_missing_mapped_directory() {
         &[
             "pull",
             "--force",
-            "--destination",
             destination.join("nested").to_str().unwrap(),
         ],
     );

@@ -62,9 +62,10 @@ fn pull_plan_is_direction_bound_and_deterministic() {
         .collect::<Vec<_>>();
     let mut reversed = records.clone();
     reversed.reverse();
-    let second =
+    let mut second =
         grip::mutation::plan::build_for(MutationDirection::Pull, first.scope.clone(), reversed)
             .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut second, false).unwrap();
     assert_eq!(first, second);
     assert_eq!(first.direction, Some(MutationDirection::Pull));
     assert_eq!(first.actions.len(), 1);

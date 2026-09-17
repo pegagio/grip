@@ -1,16 +1,20 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.13.4 -> 1.13.5
-Bump rationale: Record verified completion of Feature 028 after a trustworthy worktree debrief found no outcome, scope, or constraint findings.
+Version change: 1.21.0 -> 1.21.1
+Bump rationale: Record Feature 035 verification after its follow-up debrief resolved the validation blocker.
 
 Changes this revision:
-  - Verified Feature 028 Configurable External Diff Program
+  - Added Feature 034 Optional Modification-Time Detection [implemented]
+  - Added Feature 035 Pull Destination Selectors [in-progress]
+  - Added Feature 036 Destination Adoption [implemented]
+  - Verified Feature 036 Destination Adoption
+  - Verified Feature 035 Pull Destination Selectors
 
-Specs affected: 028
-Open questions added/resolved: resolved Q-23
+Specs affected: 035
+Open questions added/resolved: none
 
-Notes: Debrief `specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md` reviewed HEAD through WORKTREE and recommended verified with no findings.
+Notes: Feature 034 makes timestamps an explicit per-operation comparison choice. Feature 035 makes `pull` destination-oriented without changing pull's destination-winning force authority; its follow-up debrief resolved the prior validation blocker. Feature 036 permits one exact, explicit import of a destination-only regular file without broadening ordinary tree discovery; its debrief found no Must-Address issues.
 -->
 
 # Grip — Spec Roadmap
@@ -390,6 +394,102 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-16 that `grip diff` should open a configurable diff program, with `diff` as the reasonable default.
 - **Notes:** The completed specification selects a Git-style named-tool configuration: `~/.grip/config.toml` provides the machine-wide layer and selected-project `.grip/config.toml` overrides matching fields; `GRIP_EXTERNAL_DIFF` is an executable-only per-invocation override; arguments are literal tokens; selected file and directory endpoints are passed directly; normal child exit codes propagate unchanged; signals return `128 + signal`; and no temporary comparison material is created. Verified by [Feature 028 debrief](../../specs/028-configurable-external-diff/roadmap-reviews/debrief-20260916T172049Z.md) with no findings.
 
+### 029 — Operational Output and State Rebinding  [status: implemented]
+
+- **Spec dir:** `specs/029-operational-output-and-state`
+- **Description:** Make selected external-diff output tool-owned and verbose diagnostics readable, make human push and aggregate-force reporting actionable, and avoid rebinding failures caused only by output-oriented project configuration.
+- **Outcome:** An operator sees an unpolluted external comparison, can opt into a property-oriented Grip explanation, understands payload-file counts and aggregate-force blockers, and can change a diff profile without falsely invalidating accepted payload evidence.
+- **Scope (in):** Selected external-diff standard-output ownership; verbose standard-error inspection; property-oriented managed metadata values; omission of unmanaged compatibility noise; endpoint-role capability output; payload-file action counts; no-selector aggregate-force blocker reasons and managed path evidence; State V4 rebind eligibility for non-mapping descriptor changes; documentation; and isolated regression coverage.
+- **Scope (out):** New diff-tool configuration syntax or precedence; JSON schema changes; shell execution; changes to mapping ownership, source-defined membership, external-diff endpoint safety, force authority, baseline publication safety, descriptor schema, or State V4 storage format; aggregate pull force; and a user-facing state history or recovery interface.
+- **Depends on:** 004, 011, 027, 028
+- **Governed by:** C-02, C-04, C-05, C-06, C-07, C-08, C-10, C-11, C-12, C-13
+- **Addresses:** Direct active-user decisions on 2026-09-16: tree push counts must describe payload files; aggregate force blockers must be explained; selected external-diff output must be tool-owned with readable verbose detail; unmanaged metadata notes are not useful; and diff-profile changes must not invalidate payload authorization.
+- **Notes:** This feature flows forward from verified Feature 027's aggregate-force reporting and Feature 028's external-diff configuration contract. The raw descriptor digest remains publication evidence, but rebinding authorization distinguishes unchanged project root, destination home, and resolved mapping identity from output-only descriptor changes. The implementation is present and tested; verification is pending roadmap debrief.
+
+### 030 — Contained Tree Mapping Overrides  [status: implemented]
+
+- **Spec dir:** `specs/030-contained-tree-overrides`
+- **Description:** Permit an exact file mapping to reserve one destination leaf inside a contained `home/` tree mapping while rejecting any source member that would make the tree own that same leaf.
+- **Outcome:** A project can keep an exact override such as `git/ignore -> ~/.gitignore` and also add `home/ -> ~/`, provided `home/.gitignore` is absent; no registry ever gives both mappings ownership of one destination leaf.
+- **Scope (in):** Narrow contained-tree destination reservation; candidate and loaded-registry duplicate-leaf rejection; no-publication rejection behavior; accurate failed-add human output; documentation; and isolated regression coverage.
+- **Scope (out):** General nested mapping support; tree-tree overlap; source overlap; duplicate destination ownership; implicit ignores; changes to contained-source recursive-member checks; mutation authority; state schema; or symlink policy.
+- **Depends on:** 002, 025, 026
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-09, C-10, C-11, C-12
+- **Addresses:** Direct active-user decision on 2026-09-16 that `grip add home/ ~/` is valid alongside an existing exact `git/ignore -> ~/.gitignore` mapping, but must reject a current `home/.gitignore` duplicate.
+- **Notes:** This reverses only the prior blanket rejection for this narrow contained-tree/exact-leaf combination. The exact file mapping remains the leaf owner. All unrelated topology, overlap, and no-follow protections remain authoritative.
+
+### 031 — Ambient Label Metadata and Add Diagnostics  [status: implemented]
+
+- **Spec dir:** `specs/031-ambient-label-metadata`
+- **Description:** Exclude the opaque macOS `com.apple.metadata:kMDLabel_*` metadata-label family from synchronization and explain a failed `add` baseline blocker in human-readable terms.
+- **Outcome:** Ambient macOS label metadata does not prevent an otherwise safe mapping from being admitted, while a genuinely unknown managed extended attribute reports its path, endpoint, and attribute name without leaking its value.
+- **Scope (in):** Exact prefix-based exclusion for nonempty `kMDLabel_` suffixes; preserved blocking behavior for unrelated unknown attributes; concise human failed-add baseline diagnostics; fixture coverage; and documentation.
+- **Scope (out):** Broad `com.apple.metadata` exclusions; synchronization of label metadata; xattr-value display; changes to baseline safety, destination ownership, or arbitrary unknown xattr policy.
+- **Depends on:** 009, 030
+- **Governed by:** C-02, C-05, C-09, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-16 after a contained-tree add was blocked by a destination-only `com.apple.metadata:kMDLabel_*` attribute.
+- **Notes:** The exact prefix is ambient macOS label metadata. Its value remains unmanaged and must never appear in human or JSON diagnostics. Unknown attributes outside this narrowly named family remain blocking.
+
+### 032 — Current Status Entries  [status: implemented]
+
+- **Spec dir:** `specs/032-current-status-entries`
+- **Description:** Show each current managed entry in human `grip status` output, rather than reporting only its count.
+- **Outcome:** Operators can identify current entries alongside actionable push, pull, conflict, and baseline groups without changing machine output or operation semantics.
+- **Scope (in):** Deterministic human `Current:` section for current records; clean-status coverage; mixed-status coverage; documentation; and isolated renderer tests.
+- **Scope (out):** Classification changes; JSON changes; altered exit behavior; metadata diagnostics; new selectors; or synchronization planning changes.
+- **Depends on:** 015, 029
+- **Governed by:** C-02, C-05, C-08, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-16 that the human status summary must identify the entry described by its current count.
+- **Notes:** Current records use `=` between their already-rendered source and destination identities. Existing action groups and their stable ordering remain unchanged.
+
+### 033 — Global Ignore Policy and Directory Timestamp Boundary  [status: implemented]
+
+- **Spec dir:** `specs/033-global-ignore-directory-times`
+- **Description:** Apply the project-root `.gripignore` as a global policy for every tree mapping and treat directory modification time as unmanaged observational evidence.
+- **Outcome:** A project-wide `**/.DS_Store` rule excludes matching members from any tree mapping, narrower source policy may override it, and directory timestamp drift neither creates a change nor transfers a timestamp.
+- **Scope (in):** Project-root policy inheritance and precedence; policy-only exclusion; directory timestamp comparison, plan, capability, application, and verification behavior; documentation; and isolated regression coverage.
+- **Scope (out):** File timestamp changes; new ignore syntax; external diff-program behavior; other directory metadata; state-schema migration; and changes to mapping ownership.
+- **Depends on:** 003, 009, 011
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-10, C-11, C-12
+- **Addresses:** Direct active-user decisions on 2026-09-16 that the project-root `.gripignore` is a global tree policy like `.gitignore`, and that directory modification times are unmanaged.
+- **Notes:** The project policy is lowest precedence; source-root and nested policy remain narrower overrides. Existing baseline timestamps remain decodable diagnostic evidence, but complete-state equality ignores them for directories. Regular-file modification time remains managed.
+
+### 034 — Optional Modification-Time Detection  [status: implemented]
+
+- **Spec dir:** `specs/034-optional-modification-times`
+- **Description:** Ignore file and directory modification times by default, with an explicit per-operation option to compare and transfer them.
+- **Outcome:** Git checkouts and other timestamp-only changes do not create ordinary drift; `-m` and `--use-modification-time` enable timestamp comparison for one `status`, `diff`, `push`, `pull`, or `sync` operation.
+- **Scope (in):** Comparison, planning, revalidation, application, verification, CLI, documentation, and regression coverage for an opt-in timestamp policy.
+- **Scope (out):** Persistent timestamp policy configuration; changed handling for permission modes or other managed metadata; mapping ownership changes.
+- **Depends on:** 033
+- **Governed by:** C-03, C-04, C-05, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-17 that timestamp-only checkout churn must not create default drift while remaining available for explicit synchronization.
+- **Notes:** The option is deliberately operation-local, so the evidence used for classification, mutation planning, revalidation, and verification is consistent within a command.
+
+### 035 — Pull Destination Selectors  [status: verified]
+
+- **Spec dir:** `specs/035-pull-destination-selectors`
+- **Description:** Make `pull PATH` select a destination endpoint by default and provide `-s` and `--source` for an explicit source-space selector.
+- **Outcome:** An operator can copy a displayed destination into `grip pull` or `grip pull --force` without an extra selector flag, while source-space selection remains available and force continues to make the destination authoritative.
+- **Scope (in):** Pull parser, source/destination selector resolution, executable conflict guidance, documentation, and regression coverage including permission-only destination-winner restoration.
+- **Scope (out):** A change to pull direction, aggregate forced pull, a new mutation mode, selector changes for status, diff, push, or sync, and changes to metadata comparison policy.
+- **Depends on:** 011, 019, 034
+- **Governed by:** C-03, C-04, C-05, C-07, C-10, C-11, C-12, C-14
+- **Addresses:** Direct active-user decision on 2026-09-17 that pull arguments should be destination-semantic and a destination-side permission mode should be explicitly recoverable with `pull --force`.
+- **Notes:** This intentionally supersedes the historical pull `--destination` selector spelling. `pull --force DESTINATION` is the exact-entry destination-winner repair; ordinary pull remains conservative and never discards source-only changes. Verification evidence: `specs/035-pull-destination-selectors/roadmap-reviews/debrief-20260917T174124Z.md` (`PROCEED`, no findings).
+
+### 036 — Destination Adoption  [status: verified]
+
+- **Spec dir:** `specs/036-destination-adoption`
+- **Description:** Add explicit adoption of one existing destination-only regular file beneath an existing tree mapping through `grip pull -a|--adopt DESTINATION`.
+- **Outcome:** An operator can enroll one exact destination file as a source-defined managed tree member without a conflicting nested mapping or an external copy command, while ordinary tree discovery continues to leave destination-only content unmanaged.
+- **Scope (in):** Exact destination-space selection; source-side ancestor validation and creation of only intervening directories; copy, verification, and accepted-baseline publication; dry-run; ignored-path rejection and exact `--force` override; no-follow revalidation; human and JSON diagnostics; documentation; and isolated filesystem regression coverage.
+- **Scope (out):** Directory or bulk adoption; ambient destination traversal; automatic adoption by ordinary `pull`, `status`, or `diff`; changes to pull direction; conflict-winner selection; and automatic edits to `.gripignore`.
+- **Depends on:** 003, 004, 005, 011, 019, 034, 035
+- **Governed by:** C-02, C-03, C-04, C-05, C-07, C-09, C-10, C-11, C-12, C-14
+- **Addresses:** Direct active-user decision on 2026-09-17 that one existing destination-only file must be adoptable through Grip under a parent tree mapping, without a separate mapping or shell copy.
+- **Notes:** Adoption is intentionally an exact-path exception to source-defined tree membership. It requires a source-side directory ancestor, does not follow symbolic links, and applies `--force` only to the selected path's ignore-policy rejection. A forced adoption leaves `.gripignore` unchanged and reports precise negation rules needed for ordinary later discovery to retain membership. Verification evidence: `specs/036-destination-adoption/roadmap-reviews/debrief-20260917T165449Z.md` (`PROCEED WITH UPDATES`; no Must-Address findings).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -433,4 +533,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.13.5 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16
+**Version**: 1.21.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-17

@@ -29,7 +29,13 @@ pub fn build_from_actioned(
             })?;
         if record.blocking
             || record.source_complete.is_none()
-            || record.source_complete != record.destination_complete
+            || !record
+                .source_complete
+                .as_ref()
+                .zip(record.destination_complete.as_ref())
+                .is_some_and(|(source, destination)| {
+                    crate::classification::complete_equivalent(source, destination)
+                })
         {
             return Err(GripError::BaselineNotAcceptable {
                 records: vec![record.clone()],
@@ -67,7 +73,13 @@ pub fn build(
                     | Classification::Synchronized
                     | Classification::MetadataMigrationReady
             ) || record.source_complete.is_none()
-                || record.source_complete != record.destination_complete
+                || !record
+                    .source_complete
+                    .as_ref()
+                    .zip(record.destination_complete.as_ref())
+                    .is_some_and(|(source, destination)| {
+                        crate::classification::complete_equivalent(source, destination)
+                    })
                 || record.blocking
         })
         .cloned()
@@ -121,7 +133,11 @@ pub fn build_for_add(
         }
 
         let baseline = match (&record.source_complete, &record.destination_complete) {
-            (Some(source), Some(destination)) if source == destination => Some(source),
+            (Some(source), Some(destination))
+                if crate::classification::complete_equivalent(source, destination) =>
+            {
+                Some(source)
+            }
             (Some(_), Some(destination)) => Some(destination),
             // A source-only member is already a normal pending push. Destination-only
             // members are not source-defined ownership, so neither creates an entry.

@@ -92,6 +92,56 @@ fn status_diff_dry_run_and_push_report_and_apply_metadata_only_changes() {
 }
 
 #[test]
+fn modification_time_is_ignored_by_default_and_opted_in_with_short_or_long_flag() {
+    let fixture = accepted_fixture();
+    support::set_fixture_modified_time(&fixture.source, 1_700_000_000, 123);
+
+    let default_status = support::project_command(
+        fixture.root.path(),
+        &fixture.metadata_dir,
+        &["--output", "json", "status"],
+    );
+    assert_eq!(
+        support::json(&default_status)["details"]["records"][0]["classification"],
+        "synchronized"
+    );
+    let default_push = support::project_command(
+        fixture.root.path(),
+        &fixture.metadata_dir,
+        &["--output", "json", "push", "--dry-run"],
+    );
+    assert_eq!(
+        support::json(&default_push)["details"]["counts"]["actions"],
+        0
+    );
+
+    let opted_status = support::project_command(
+        fixture.root.path(),
+        &fixture.metadata_dir,
+        &["--output", "json", "status", "-m"],
+    );
+    assert_eq!(
+        support::json(&opted_status)["details"]["records"][0]["classification"],
+        "source_only_change"
+    );
+    let opted_push = support::project_command(
+        fixture.root.path(),
+        &fixture.metadata_dir,
+        &["--output", "json", "push", "--use-modification-time"],
+    );
+    assert!(opted_push.status.success());
+    let source =
+        grip::observation::fingerprint::inspect_complete(&fixture.source, NodeKind::File).unwrap();
+    let destination =
+        grip::observation::fingerprint::inspect_complete(&fixture.destination, NodeKind::File)
+            .unwrap();
+    assert_eq!(
+        source.state.metadata.modified_time,
+        destination.state.metadata.modified_time
+    );
+}
+
+#[test]
 fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
     let fixture = accepted_fixture();
 
@@ -163,14 +213,15 @@ fn existing_read_and_mutation_commands_share_the_complete_metadata_contract() {
         .status
         .success()
     );
-    assert_eq!(
-        grip::observation::fingerprint::inspect_complete(&fixture.source, NodeKind::File)
-            .unwrap()
-            .state,
+    let source =
+        grip::observation::fingerprint::inspect_complete(&fixture.source, NodeKind::File).unwrap();
+    let destination =
         grip::observation::fingerprint::inspect_complete(&fixture.destination, NodeKind::File)
-            .unwrap()
-            .state
-    );
+            .unwrap();
+    assert!(grip::classification::complete_equivalent(
+        &source.state,
+        &destination.state
+    ));
 }
 
 #[test]
