@@ -220,7 +220,10 @@ where
                             &destination,
                             metadata.expected_after.node_kind,
                         )?;
-                        if complete.state != metadata.expected_after {
+                        if !crate::classification::complete_equivalent(
+                            &complete.state,
+                            &metadata.expected_after,
+                        ) {
                             return Err(GripError::Internal(
                                 "complete file verification failed".into(),
                             ));
@@ -305,7 +308,10 @@ where
                         &destination,
                         metadata.expected_after.node_kind,
                     )?;
-                    if verified.state != metadata.expected_after {
+                    if !crate::classification::complete_equivalent(
+                        &verified.state,
+                        &metadata.expected_after,
+                    ) {
                         return Err(GripError::Internal(
                             "complete metadata verification failed".into(),
                         ));
@@ -813,7 +819,9 @@ fn publish_aggregate_entry(
     }
     let mut next = state.accepted.clone();
     match (&record.source_complete, &record.destination_complete) {
-        (Some(source), Some(destination)) if source == destination => {
+        (Some(source), Some(destination))
+            if crate::classification::complete_equivalent(source, destination) =>
+        {
             next.complete_baselines
                 .insert(identity.clone(), source.clone());
         }
@@ -1016,7 +1024,9 @@ fn revalidate_action(
                     normalized == *expected
                 })
             });
-            origin.is_some_and(|actual| *actual == metadata.expected_after) && target_matches
+            origin.is_some_and(|actual| {
+                crate::classification::complete_equivalent(actual, &metadata.expected_after)
+            }) && target_matches
         })
     } else {
         true
@@ -1029,7 +1039,12 @@ fn revalidate_action(
                         destination.node_kind == crate::discovery::model::NodeKind::Directory
                     })
                     && action.metadata.as_ref().is_some_and(|metadata| {
-                        record.source_complete.as_ref() == Some(&metadata.expected_after)
+                        record.source_complete.as_ref().is_some_and(|actual| {
+                            crate::classification::complete_equivalent(
+                                actual,
+                                &metadata.expected_after,
+                            )
+                        })
                     })
             }
             MutationDirection::Pull => {
@@ -1038,7 +1053,12 @@ fn revalidate_action(
                         source.node_kind == crate::discovery::model::NodeKind::Directory
                     })
                     && action.metadata.as_ref().is_some_and(|metadata| {
-                        record.destination_complete.as_ref() == Some(&metadata.expected_after)
+                        record.destination_complete.as_ref().is_some_and(|actual| {
+                            crate::classification::complete_equivalent(
+                                actual,
+                                &metadata.expected_after,
+                            )
+                        })
                     })
             }
         }

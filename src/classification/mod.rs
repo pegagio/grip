@@ -185,7 +185,9 @@ pub fn changed_dimensions_complete(
     if a.gid != b.gid {
         dimensions.push(ChangedDimension::Group);
     }
-    if a.modified_time != b.modified_time {
+    if first.node_kind != crate::discovery::model::NodeKind::Directory
+        && a.modified_time != b.modified_time
+    {
         dimensions.push(ChangedDimension::ModificationTime);
     }
     if a.extended_attributes != b.extended_attributes {
@@ -206,7 +208,7 @@ fn classify_complete_without_baseline(
 ) -> Classification {
     match (source, destination) {
         (Some(_), None) => Classification::SourceAddition,
-        (Some(a), Some(b)) if a == b => Classification::InitialMatch,
+        (Some(a), Some(b)) if complete_equivalent(a, b) => Classification::InitialMatch,
         (Some(_), Some(_)) => Classification::InitialCollision,
         _ => Classification::DestinationOnlyUnmanaged,
     }
@@ -219,18 +221,57 @@ fn classify_complete_with_baseline(
 ) -> Classification {
     match (source, destination) {
         (None, None) => Classification::ConvergedDeletion,
-        (None, Some(value)) if value == baseline => Classification::SourceSideDeletion,
+        (None, Some(value)) if complete_equivalent(value, baseline) => {
+            Classification::SourceSideDeletion
+        }
         (None, Some(_)) => Classification::DeleteChangeConflict,
-        (Some(value), None) if value == baseline => Classification::DestinationSideDeletion,
+        (Some(value), None) if complete_equivalent(value, baseline) => {
+            Classification::DestinationSideDeletion
+        }
         (Some(_), None) => Classification::ChangeDeleteConflict,
-        (Some(a), Some(b)) if a == baseline && b == baseline => Classification::Synchronized,
-        (Some(a), Some(b)) if a != baseline && b == baseline => Classification::SourceOnlyChange,
-        (Some(a), Some(b)) if a == baseline && b != baseline => {
+        (Some(a), Some(b))
+            if complete_equivalent(a, baseline) && complete_equivalent(b, baseline) =>
+        {
+            Classification::Synchronized
+        }
+        (Some(a), Some(b))
+            if !complete_equivalent(a, baseline) && complete_equivalent(b, baseline) =>
+        {
+            Classification::SourceOnlyChange
+        }
+        (Some(a), Some(b))
+            if complete_equivalent(a, baseline) && !complete_equivalent(b, baseline) =>
+        {
             Classification::DestinationOnlyChange
         }
-        (Some(a), Some(b)) if a == b => Classification::ConvergedTwoSidedChange,
+        (Some(a), Some(b)) if complete_equivalent(a, b) => Classification::ConvergedTwoSidedChange,
         (Some(_), Some(_)) => Classification::DivergentConflict,
     }
+}
+
+/// Compare complete state over the managed dimensions. Directory timestamps are observational
+/// evidence only: directory writes routinely change them without changing managed content.
+pub fn complete_equivalent(
+    first: &crate::metadata::model::SupportedEntryStateV3,
+    second: &crate::metadata::model::SupportedEntryStateV3,
+) -> bool {
+    if first.node_kind != second.node_kind {
+        return false;
+    }
+    if first.node_kind != crate::discovery::model::NodeKind::Directory {
+        return first == second;
+    }
+    let mut first = first.clone();
+    let mut second = second.clone();
+    first.metadata.modified_time = crate::metadata::model::ModificationTime {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    second.metadata.modified_time = crate::metadata::model::ModificationTime {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    first == second
 }
 
 fn classify_without_baseline(

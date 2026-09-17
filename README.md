@@ -59,13 +59,13 @@ Mapped:
  editor -> ~/.config/editor
 ```
 
-For a tree mapping, Grip discovers ordinary non-ignored source entries on every inspection. Source-side `.gripignore` files use Gitignore-compatible rules. The project metadata directory `.grip` is structurally reserved and is never mapping payload, even if ignore rules attempt to re-include it.
+For a tree mapping, Grip discovers ordinary non-ignored source entries on every inspection. The project-root `.gripignore` is a global Gitignore-compatible policy for every tree mapping; a source-root or nested `.gripignore` can override it at its narrower scope. Policy files are not mapping payload. The project metadata directory `.grip` is structurally reserved and is never mapping payload, even if ignore rules attempt to re-include it.
 
 A tree source may be strictly beneath its own destination root, which supports a dotfiles repository layout such as `grip add home/ ~/`. Grip inspects only current non-ignored source members and retained accepted identities at their exact paired destination paths; it does not enumerate unrelated home content. An existing disjoint exact file mapping may reserve one destination leaf beneath such a tree—for example, `git/ignore -> ~/.gitignore` may coexist with `home/ -> ~/` while `home/.gitignore` is absent. If that tree source member exists, Grip rejects the mapping set rather than assigning the destination leaf to both mappings. Equal roots, destinations beneath their source, contained file mappings, and all other ownership overlap remain invalid.
 
 For a contained-source tree, each managed relative path must be disjoint from the destination-relative path that locates the source tree. If a managed member equals, contains, or falls beneath that path, Grip blocks with `recursive_member_topology` and reports the relation. This blocker cannot be forced or bypassed with an exact selector. If the subtree is intentionally unmanaged, exclude it explicitly in the source tree's `.gripignore`.
 
-Grip synchronizes only its allowlisted metadata. Ambient macOS `com.apple.metadata:kMDLabel_<opaque-id>` attributes are excluded from comparison and transfer. Other unknown extended attributes remain blockers; a failed human `add` identifies the affected path, endpoint, and attribute name without displaying its value.
+Grip synchronizes only its allowlisted metadata. Directory modification times are observational and are neither compared nor transferred; regular-file modification times remain managed. Ambient macOS `com.apple.metadata:kMDLabel_<opaque-id>` attributes are excluded from comparison and transfer. Other unknown extended attributes remain blockers; a failed human `add` identifies the affected path, endpoint, and attribute name without displaying its value.
 
 Human `grip status` names every current managed entry in a `Current:` section using `=` between the source and destination paths. This section appears alongside action sections and for an otherwise fully current nonempty scope; JSON status remains the machine-readable interface.
 

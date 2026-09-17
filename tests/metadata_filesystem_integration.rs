@@ -326,20 +326,20 @@ fn directory_metadata_pull_runs_after_child_transfer_and_preserves_neighbors() {
         std::fs::read(fixture.source.join("nested/file")).unwrap(),
         b"destination child"
     );
-    assert_eq!(
-        grip::observation::fingerprint::inspect_complete(
+    assert!(grip::classification::complete_equivalent(
+        &grip::observation::fingerprint::inspect_complete(
             &fixture.source.join("nested"),
             NodeKind::Directory,
         )
         .unwrap()
         .state,
-        grip::observation::fingerprint::inspect_complete(
+        &grip::observation::fingerprint::inspect_complete(
             &fixture.destination.join("nested"),
             NodeKind::Directory,
         )
         .unwrap()
         .state
-    );
+    ));
     assert_eq!(support::snapshot(&neighbor), neighbor_before);
 }
 
@@ -376,6 +376,10 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v4()
         support::json(&preview)["details"]["actions"][0]["kind"],
         "finalize_directory_metadata"
     );
+    assert_eq!(
+        support::json(&preview)["details"]["actions"][0]["metadata"]["changed_dimensions"],
+        serde_json::json!(["permission_mode"])
+    );
     let push = support::project_command(fixture.root.path(), &fixture.metadata_dir, &["push"]);
     assert!(
         push.status.success(),
@@ -392,7 +396,10 @@ fn directory_metadata_is_finalized_after_descendants_and_published_in_state_v4()
         NodeKind::Directory,
     )
     .unwrap();
-    assert_eq!(source.state, destination.state);
+    assert!(grip::classification::complete_equivalent(
+        &source.state,
+        &destination.state
+    ));
     let state = grip::state::decode_v4(
         &std::fs::read(fixture.metadata_dir.join("state/state.json")).unwrap(),
     )
@@ -526,13 +533,13 @@ fn tree_addition_finalizes_directories_deepest_first_after_child_creation() {
         } else {
             NodeKind::File
         };
-        assert_eq!(
-            grip::observation::fingerprint::inspect_complete(&source_path, kind)
+        assert!(grip::classification::complete_equivalent(
+            &grip::observation::fingerprint::inspect_complete(&source_path, kind)
                 .unwrap()
                 .state,
-            grip::observation::fingerprint::inspect_complete(&destination_path, kind)
+            &grip::observation::fingerprint::inspect_complete(&destination_path, kind)
                 .unwrap()
                 .state,
-        );
+        ));
     }
 }

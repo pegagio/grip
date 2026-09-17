@@ -686,20 +686,22 @@ where
         )
         .map_err(io::Error::from)?;
         hook(MetadataApplyPhase::AfterPermissionMode)?;
-        rustix::fs::futimens(
-            target,
-            &rustix::fs::Timestamps {
-                last_access: rustix::fs::Timespec {
-                    tv_sec: 0,
-                    tv_nsec: rustix::fs::UTIME_OMIT,
+        if node_kind != crate::discovery::model::NodeKind::Directory {
+            rustix::fs::futimens(
+                target,
+                &rustix::fs::Timestamps {
+                    last_access: rustix::fs::Timespec {
+                        tv_sec: 0,
+                        tv_nsec: rustix::fs::UTIME_OMIT,
+                    },
+                    last_modification: rustix::fs::Timespec {
+                        tv_sec: expected.modified_time.seconds,
+                        tv_nsec: i64::from(expected.modified_time.nanoseconds),
+                    },
                 },
-                last_modification: rustix::fs::Timespec {
-                    tv_sec: expected.modified_time.seconds,
-                    tv_nsec: i64::from(expected.modified_time.nanoseconds),
-                },
-            },
-        )
-        .map_err(io::Error::from)?;
+            )
+            .map_err(io::Error::from)?;
+        }
         hook(MetadataApplyPhase::AfterModificationTime)?;
         let final_flags = flags_to_raw(&expected.bsd_flags);
         // SAFETY: target remains open and final_flags contains only supported flags.
@@ -711,7 +713,17 @@ where
         hook(MetadataApplyPhase::AfterDurability)?;
         hook(MetadataApplyPhase::BeforeVerification)?;
         let observed = observe_metadata(target, node_kind)?;
-        if &observed != expected {
+        let expected_state = crate::metadata::model::SupportedEntryStateV3 {
+            node_kind,
+            content: None,
+            metadata: expected.clone(),
+        };
+        let observed_state = crate::metadata::model::SupportedEntryStateV3 {
+            node_kind,
+            content: None,
+            metadata: observed,
+        };
+        if !crate::classification::complete_equivalent(&observed_state, &expected_state) {
             return Err(io::Error::other("complete metadata verification failed"));
         }
         hook(MetadataApplyPhase::AfterVerification)?;

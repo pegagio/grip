@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.17.0 -> 1.17.1
-Bump rationale: Record Feature 032 as implemented after validation and convergence.
+Version change: 1.17.1 -> 1.18.0
+Bump rationale: Add Feature 033 to govern global tree-ignore policy and unmanaged directory modification times.
 
 Changes this revision:
-  - Updated Feature 032 Current Status Entries [implemented]
+  - Added Feature 033 Global Ignore Policy and Directory Timestamp Boundary [implemented]
 
-Specs affected: 032
+Specs affected: 033
 Open questions added/resolved: none
 
-Notes: Feature 032 preserves Feature 015's presentation-only boundary: it makes existing current classification records visible without altering planning, JSON, or synchronization semantics. It remains pending roadmap debrief before verification.
+Notes: Feature 033 flows forward from Features 003 and 009. It keeps file timestamp and all other supported directory metadata semantics intact while making directory modification time observational only.
 -->
 
 # Grip — Spec Roadmap
@@ -438,6 +438,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-16 that the human status summary must identify the entry described by its current count.
 - **Notes:** Current records use `=` between their already-rendered source and destination identities. Existing action groups and their stable ordering remain unchanged.
 
+### 033 — Global Ignore Policy and Directory Timestamp Boundary  [status: implemented]
+
+- **Spec dir:** `specs/033-global-ignore-directory-times`
+- **Description:** Apply the project-root `.gripignore` as a global policy for every tree mapping and treat directory modification time as unmanaged observational evidence.
+- **Outcome:** A project-wide `**/.DS_Store` rule excludes matching members from any tree mapping, narrower source policy may override it, and directory timestamp drift neither creates a change nor transfers a timestamp.
+- **Scope (in):** Project-root policy inheritance and precedence; policy-only exclusion; directory timestamp comparison, plan, capability, application, and verification behavior; documentation; and isolated regression coverage.
+- **Scope (out):** File timestamp changes; new ignore syntax; external diff-program behavior; other directory metadata; state-schema migration; and changes to mapping ownership.
+- **Depends on:** 003, 009, 011
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-10, C-11, C-12
+- **Addresses:** Direct active-user decisions on 2026-09-16 that the project-root `.gripignore` is a global tree policy like `.gitignore`, and that directory modification times are unmanaged.
+- **Notes:** The project policy is lowest precedence; source-root and nested policy remain narrower overrides. Existing baseline timestamps remain decodable diagnostic evidence, but complete-state equality ignores them for directories. Regular-file modification time remains managed.
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -481,4 +493,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.17.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16
+**Version**: 1.18.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16

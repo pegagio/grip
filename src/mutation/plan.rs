@@ -445,6 +445,7 @@ fn build_with_parents(
                 ActionKind::CreateDirectory | ActionKind::ReplaceDestinationLinkDirectory
             ) && let Some(expected_after) = expected_after
             {
+                let changed_dimensions = all_metadata_dimensions(expected_after.node_kind);
                 finalizers.push(MutationAction {
                     index: usize::MAX,
                     direction,
@@ -463,7 +464,7 @@ fn build_with_parents(
                     metadata: Some(crate::mutation::model::MetadataActionEvidence {
                         expected_before: None,
                         expected_after,
-                        changed_dimensions: all_metadata_dimensions(),
+                        changed_dimensions,
                         flags_to_clear: BTreeSet::new(),
                         capability_proofs: Vec::new(),
                     }),
@@ -571,16 +572,21 @@ fn build_with_parents(
     Ok(plan)
 }
 
-fn all_metadata_dimensions() -> BTreeSet<crate::metadata::model::MetadataDimension> {
-    BTreeSet::from([
+fn all_metadata_dimensions(
+    node_kind: NodeKind,
+) -> BTreeSet<crate::metadata::model::MetadataDimension> {
+    let mut dimensions = BTreeSet::from([
         crate::metadata::model::MetadataDimension::PermissionMode,
         crate::metadata::model::MetadataDimension::Owner,
         crate::metadata::model::MetadataDimension::Group,
-        crate::metadata::model::MetadataDimension::ModificationTime,
         crate::metadata::model::MetadataDimension::ExtendedAttribute,
         crate::metadata::model::MetadataDimension::AccessControlList,
         crate::metadata::model::MetadataDimension::BsdFlags,
-    ])
+    ]);
+    if node_kind != NodeKind::Directory {
+        dimensions.insert(crate::metadata::model::MetadataDimension::ModificationTime);
+    }
+    dimensions
 }
 
 fn transition_preflight_blockers(
@@ -615,6 +621,11 @@ fn transition_preflight_blockers(
             paths: paths.clone(),
         });
     }
+    let node_kind = record
+        .source_complete
+        .as_ref()
+        .or(record.destination_complete.as_ref())
+        .map(|state| state.node_kind);
     for dimension in [
         MetadataDimension::PermissionMode,
         MetadataDimension::Owner,
@@ -624,6 +635,11 @@ fn transition_preflight_blockers(
         MetadataDimension::AccessControlList,
         MetadataDimension::BsdFlags,
     ] {
+        if node_kind == Some(NodeKind::Directory)
+            && dimension == MetadataDimension::ModificationTime
+        {
+            continue;
+        }
         let capable = profile.capabilities.iter().any(|capability| {
             capability.dimension == dimension
                 && matches!(capability.apply, Evidence::Observed { value: true })
@@ -704,41 +720,44 @@ fn metadata_action_evidence(
             record.destination_complete.as_ref()?,
         ),
     };
-    let changed_dimensions = before.map_or_else(all_metadata_dimensions, |before| {
-        crate::classification::changed_dimensions_complete(Some(before), Some(after))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|dimension| match dimension {
-                crate::classification::model::ChangedDimension::NodeKind => {
-                    crate::metadata::model::MetadataDimension::Node
-                }
-                crate::classification::model::ChangedDimension::Content => {
-                    crate::metadata::model::MetadataDimension::Content
-                }
-                crate::classification::model::ChangedDimension::PermissionMode => {
-                    crate::metadata::model::MetadataDimension::PermissionMode
-                }
-                crate::classification::model::ChangedDimension::Owner => {
-                    crate::metadata::model::MetadataDimension::Owner
-                }
-                crate::classification::model::ChangedDimension::Group => {
-                    crate::metadata::model::MetadataDimension::Group
-                }
-                crate::classification::model::ChangedDimension::ModificationTime => {
-                    crate::metadata::model::MetadataDimension::ModificationTime
-                }
-                crate::classification::model::ChangedDimension::ExtendedAttribute => {
-                    crate::metadata::model::MetadataDimension::ExtendedAttribute
-                }
-                crate::classification::model::ChangedDimension::AccessControlList => {
-                    crate::metadata::model::MetadataDimension::AccessControlList
-                }
-                crate::classification::model::ChangedDimension::BsdFlags => {
-                    crate::metadata::model::MetadataDimension::BsdFlags
-                }
-            })
-            .collect()
-    });
+    let changed_dimensions = before.map_or_else(
+        || all_metadata_dimensions(after.node_kind),
+        |before| {
+            crate::classification::changed_dimensions_complete(Some(before), Some(after))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|dimension| match dimension {
+                    crate::classification::model::ChangedDimension::NodeKind => {
+                        crate::metadata::model::MetadataDimension::Node
+                    }
+                    crate::classification::model::ChangedDimension::Content => {
+                        crate::metadata::model::MetadataDimension::Content
+                    }
+                    crate::classification::model::ChangedDimension::PermissionMode => {
+                        crate::metadata::model::MetadataDimension::PermissionMode
+                    }
+                    crate::classification::model::ChangedDimension::Owner => {
+                        crate::metadata::model::MetadataDimension::Owner
+                    }
+                    crate::classification::model::ChangedDimension::Group => {
+                        crate::metadata::model::MetadataDimension::Group
+                    }
+                    crate::classification::model::ChangedDimension::ModificationTime => {
+                        crate::metadata::model::MetadataDimension::ModificationTime
+                    }
+                    crate::classification::model::ChangedDimension::ExtendedAttribute => {
+                        crate::metadata::model::MetadataDimension::ExtendedAttribute
+                    }
+                    crate::classification::model::ChangedDimension::AccessControlList => {
+                        crate::metadata::model::MetadataDimension::AccessControlList
+                    }
+                    crate::classification::model::ChangedDimension::BsdFlags => {
+                        crate::metadata::model::MetadataDimension::BsdFlags
+                    }
+                })
+                .collect()
+        },
+    );
     let flags_to_clear = before.map_or_else(BTreeSet::new, |before| {
         before
             .metadata

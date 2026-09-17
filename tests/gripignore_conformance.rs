@@ -136,3 +136,39 @@ fn nested_policy_has_deeper_precedence_but_cannot_reinclude_below_a_pruned_paren
         Some("source_addition")
     );
 }
+
+#[test]
+fn project_root_policy_applies_to_every_tree_mapping_and_source_policy_can_override_it() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("home");
+    let destination = root.path().join("destination");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(root.path().join(".gripignore"), "**/.DS_Store\n*.tmp\n").unwrap();
+    fs::write(source.join(".gripignore"), "!keep.tmp\n").unwrap();
+    fs::write(source.join("nested/.DS_Store"), "ignored").unwrap();
+    fs::write(source.join("drop.tmp"), "ignored").unwrap();
+    fs::write(source.join("keep.tmp"), "managed").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    support::write_descriptor(&metadata_dir, &[("tree", &source, &destination)]);
+
+    let output = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["--output", "json", "status", "home"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let paths = result["details"]["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|record| record["relative_path"]["display"].as_str())
+        .collect::<Vec<_>>();
+    assert!(!paths.contains(&"nested/.DS_Store"));
+    assert!(!paths.contains(&"drop.tmp"));
+    assert!(paths.contains(&"keep.tmp"));
+}

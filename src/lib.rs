@@ -1642,11 +1642,10 @@ fn fenced_candidate_is_current(
             return Ok(false);
         };
         if entry.blocking
-            || entry
+            || !entry
                 .destination_complete
                 .as_ref()
-                .map(|state| &state.state)
-                != Some(baseline)
+                .is_some_and(|state| classification::complete_equivalent(&state.state, baseline))
         {
             return Ok(false);
         }
