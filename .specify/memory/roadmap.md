@@ -1,19 +1,20 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.20.0 -> 1.21.0
-Bump rationale: Record Feature 036 verification after its implementation debrief.
+Version change: 1.21.0 -> 1.21.1
+Bump rationale: Record Feature 035 verification after its follow-up debrief resolved the validation blocker.
 
 Changes this revision:
   - Added Feature 034 Optional Modification-Time Detection [implemented]
   - Added Feature 035 Pull Destination Selectors [in-progress]
   - Added Feature 036 Destination Adoption [implemented]
   - Verified Feature 036 Destination Adoption
+  - Verified Feature 035 Pull Destination Selectors
 
-Specs affected: 034, 035, 036
+Specs affected: 035
 Open questions added/resolved: none
 
-Notes: Feature 034 makes timestamps an explicit per-operation comparison choice. Feature 035 makes `pull` destination-oriented without changing pull's destination-winning force authority. Feature 036 permits one exact, explicit import of a destination-only regular file without broadening ordinary tree discovery; its debrief found no Must-Address issues.
+Notes: Feature 034 makes timestamps an explicit per-operation comparison choice. Feature 035 makes `pull` destination-oriented without changing pull's destination-winning force authority; its follow-up debrief resolved the prior validation blocker. Feature 036 permits one exact, explicit import of a destination-only regular file without broadening ordinary tree discovery; its debrief found no Must-Address issues.
 -->
 
 # Grip — Spec Roadmap
@@ -465,7 +466,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-17 that timestamp-only checkout churn must not create default drift while remaining available for explicit synchronization.
 - **Notes:** The option is deliberately operation-local, so the evidence used for classification, mutation planning, revalidation, and verification is consistent within a command.
 
-### 035 — Pull Destination Selectors  [status: in-progress]
+### 035 — Pull Destination Selectors  [status: verified]
 
 - **Spec dir:** `specs/035-pull-destination-selectors`
 - **Description:** Make `pull PATH` select a destination endpoint by default and provide `-s` and `--source` for an explicit source-space selector.
@@ -475,7 +476,7 @@ The following specifications form the approved path from a read-only foundation 
 - **Depends on:** 011, 019, 034
 - **Governed by:** C-03, C-04, C-05, C-07, C-10, C-11, C-12, C-14
 - **Addresses:** Direct active-user decision on 2026-09-17 that pull arguments should be destination-semantic and a destination-side permission mode should be explicitly recoverable with `pull --force`.
-- **Notes:** This intentionally supersedes the historical pull `--destination` selector spelling. `pull --force DESTINATION` is the exact-entry destination-winner repair; ordinary pull remains conservative and never discards source-only changes.
+- **Notes:** This intentionally supersedes the historical pull `--destination` selector spelling. `pull --force DESTINATION` is the exact-entry destination-winner repair; ordinary pull remains conservative and never discards source-only changes. Verification evidence: `specs/035-pull-destination-selectors/roadmap-reviews/debrief-20260917T174124Z.md` (`PROCEED`, no findings).
 
 ### 036 — Destination Adoption  [status: verified]
 
@@ -532,4 +533,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.21.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-17
+**Version**: 1.21.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-17

@@ -121,9 +121,14 @@ fn status_rejects_a_large_file_changed_during_observation() {
     writer.join().unwrap();
 
     assert!(!status.status.success(), "{status:?}");
-    let output = String::from_utf8_lossy(&status.stdout);
+    let output: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert!(
-        output.contains("entry changed while complete metadata was observed"),
+        output["status"] == "error"
+            && output["code"] == "operational_failure"
+            && matches!(
+                output["details"]["reason"].as_str(),
+                Some("stale_discovery_evidence" | "stale_metadata_evidence")
+            ),
         "unexpected status failure: {output}"
     );
 }

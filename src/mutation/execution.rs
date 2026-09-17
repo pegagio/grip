@@ -21,6 +21,14 @@ pub struct ExecutionSuccess {
     pub prior_generation: Option<u64>,
 }
 
+/// Immutable operation evidence required while revalidating one planned action.
+struct RevalidationContext<'a> {
+    operation: MutationOperation,
+    use_modification_time: bool,
+    expected_adoption_policy_digest: Option<&'a str>,
+    adoption_target: Option<&'a crate::observation::model::EntryIdentity>,
+}
+
 /// Execute one actionful, unblocked plan under the selected project's writer lock.
 pub fn execute(
     home: &ProjectPaths,
@@ -128,6 +136,12 @@ where
 
     for index in 0..plan.actions.len() {
         let adoption_policy_digest = plan.adoption_policy_digest.as_deref();
+        let revalidation = RevalidationContext {
+            operation,
+            use_modification_time: plan.use_modification_time,
+            expected_adoption_policy_digest: adoption_policy_digest,
+            adoption_target: adoption_target.as_ref(),
+        };
         let action = &mut plan.actions[index];
         action.status = crate::mutation::model::ActionStatus::InProgress;
         let mut failure_reason = "journal_failure";
@@ -135,16 +149,7 @@ where
             receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
             failure_reason = "revalidation_failure";
             fault(crate::mutation::FaultPhase::BeforeActionRevalidation(index))?;
-            revalidate_action(
-                home,
-                &locked_registry,
-                &locked_state,
-                action,
-                operation,
-                plan.use_modification_time,
-                adoption_policy_digest,
-                adoption_target.as_ref(),
-            )?;
+            revalidate_action(home, &locked_registry, &locked_state, action, &revalidation)?;
             action.milestones.revalidation = "passed".into();
             failure_reason = "journal_failure";
             receipt.checkpoint_action(index, "in_progress", evidence(action), None)?;
@@ -202,10 +207,7 @@ where
                             &locked_registry,
                             &locked_state,
                             action,
-                            operation,
-                            plan.use_modification_time,
-                            adoption_policy_digest,
-                            adoption_target.as_ref(),
+                            &revalidation,
                         )?;
                         crate::mutation::filesystem::publish_replacement(
                             &mut staged,
@@ -286,10 +288,7 @@ where
                         &locked_registry,
                         &locked_state,
                         action,
-                        operation,
-                        plan.use_modification_time,
-                        adoption_policy_digest,
-                        adoption_target.as_ref(),
+                        &revalidation,
                     )?;
                     crate::mutation::filesystem::replace_link_with_empty_directory(&destination)?;
                     action.milestones.publication = "visible".into();
@@ -1061,11 +1060,9 @@ fn revalidate_action(
     registry: &RegistrySnapshot,
     state: &StateSnapshot,
     action: &crate::mutation::model::MutationAction,
-    operation: MutationOperation,
-    use_modification_time: bool,
-    expected_adoption_policy_digest: Option<&str>,
-    adoption_target: Option<&crate::observation::model::EntryIdentity>,
+    context: &RevalidationContext<'_>,
 ) -> Result<(), GripError> {
+    let operation = context.operation;
     let operation_name = operation.as_str();
     let current_registry = crate::registry::publication::load(home, false)
         .map_err(|error| error.for_mapping_operation(operation_name))?;
@@ -1080,10 +1077,10 @@ fn revalidate_action(
         return Ok(());
     };
     if operation == MutationOperation::Adopt {
-        let expected = expected_adoption_policy_digest.ok_or_else(|| {
+        let expected = context.expected_adoption_policy_digest.ok_or_else(|| {
             GripError::Internal("adoption action has no ignore-policy evidence".into())
         })?;
-        let target = adoption_target.ok_or_else(|| {
+        let target = context.adoption_target.ok_or_else(|| {
             GripError::Internal("adoption action has no exact target identity".into())
         })?;
         let current = crate::discovery::ignore_policy::adoption_decision(
@@ -1132,7 +1129,7 @@ fn revalidate_action(
         entry,
         &state.accepted,
         classification::ComparisonOptions {
-            use_modification_time,
+            use_modification_time: context.use_modification_time,
         },
     );
     if action.expected_destination_link != record.destination_link {

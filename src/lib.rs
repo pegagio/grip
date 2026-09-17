@@ -650,7 +650,7 @@ fn execute_adopt(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
             "adopt",
             "adopt_unsupported_evidence",
             ResultCategory::InvalidConfiguration,
-            &format!(
+            format!(
                 "selected destination cannot be adopted because its evidence is unsupported: {reason}{detail}"
             ),
         ));

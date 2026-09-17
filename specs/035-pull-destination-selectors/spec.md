@@ -1,7 +1,7 @@
 # Feature Specification: Pull Destination Selectors
 
 **Created**: 2026-09-17
-**Status**: In progress
+**Status**: Complete
 
 ## Requirements
 
