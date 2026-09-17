@@ -62,6 +62,22 @@ fn descriptor_observation_captures_complete_file_metadata_and_xattr_policy() {
 }
 
 #[test]
+fn opaque_ambient_label_xattrs_are_excluded_but_empty_and_unrelated_names_are_unknown() {
+    assert_eq!(
+        grip::metadata::xattr_policy(b"com.apple.metadata:kMDLabel_opaque"),
+        grip::metadata::XattrPolicy::Excluded
+    );
+    assert_eq!(
+        grip::metadata::xattr_policy(b"com.apple.metadata:kMDLabel_"),
+        grip::metadata::XattrPolicy::Unknown
+    );
+    assert_eq!(
+        grip::metadata::xattr_policy(b"com.apple.metadata:kMDItemUserTags"),
+        grip::metadata::XattrPolicy::Unknown
+    );
+}
+
+#[test]
 fn descriptor_observation_captures_directory_metadata_independently_of_children() {
     let fixture = support::MetadataFixture::tree();
     support::set_fixture_mode(&fixture.source, 0o750);

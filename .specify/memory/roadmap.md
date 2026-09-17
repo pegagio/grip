@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.13.5 -> 1.14.0
-Bump rationale: Add Feature 029, a new forward-flowing implemented feature that refines operational output and State V4 rebinding after verified Features 027 and 028.
+Version change: 1.17.0 -> 1.17.1
+Bump rationale: Record Feature 032 as implemented after validation and convergence.
 
 Changes this revision:
-  - Added Feature 029 Operational Output and State Rebinding [implemented]
+  - Updated Feature 032 Current Status Entries [implemented]
 
-Specs affected: 029
+Specs affected: 032
 Open questions added/resolved: none
 
-Notes: Feature 029 records the active-user-approved implementation delta. It must be debriefed before being marked verified.
+Notes: Feature 032 preserves Feature 015's presentation-only boundary: it makes existing current classification records visible without altering planning, JSON, or synchronization semantics. It remains pending roadmap debrief before verification.
 -->
 
 # Grip — Spec Roadmap
@@ -402,6 +402,42 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decisions on 2026-09-16: tree push counts must describe payload files; aggregate force blockers must be explained; selected external-diff output must be tool-owned with readable verbose detail; unmanaged metadata notes are not useful; and diff-profile changes must not invalidate payload authorization.
 - **Notes:** This feature flows forward from verified Feature 027's aggregate-force reporting and Feature 028's external-diff configuration contract. The raw descriptor digest remains publication evidence, but rebinding authorization distinguishes unchanged project root, destination home, and resolved mapping identity from output-only descriptor changes. The implementation is present and tested; verification is pending roadmap debrief.
 
+### 030 — Contained Tree Mapping Overrides  [status: implemented]
+
+- **Spec dir:** `specs/030-contained-tree-overrides`
+- **Description:** Permit an exact file mapping to reserve one destination leaf inside a contained `home/` tree mapping while rejecting any source member that would make the tree own that same leaf.
+- **Outcome:** A project can keep an exact override such as `git/ignore -> ~/.gitignore` and also add `home/ -> ~/`, provided `home/.gitignore` is absent; no registry ever gives both mappings ownership of one destination leaf.
+- **Scope (in):** Narrow contained-tree destination reservation; candidate and loaded-registry duplicate-leaf rejection; no-publication rejection behavior; accurate failed-add human output; documentation; and isolated regression coverage.
+- **Scope (out):** General nested mapping support; tree-tree overlap; source overlap; duplicate destination ownership; implicit ignores; changes to contained-source recursive-member checks; mutation authority; state schema; or symlink policy.
+- **Depends on:** 002, 025, 026
+- **Governed by:** C-02, C-03, C-04, C-05, C-06, C-09, C-10, C-11, C-12
+- **Addresses:** Direct active-user decision on 2026-09-16 that `grip add home/ ~/` is valid alongside an existing exact `git/ignore -> ~/.gitignore` mapping, but must reject a current `home/.gitignore` duplicate.
+- **Notes:** This reverses only the prior blanket rejection for this narrow contained-tree/exact-leaf combination. The exact file mapping remains the leaf owner. All unrelated topology, overlap, and no-follow protections remain authoritative.
+
+### 031 — Ambient Label Metadata and Add Diagnostics  [status: implemented]
+
+- **Spec dir:** `specs/031-ambient-label-metadata`
+- **Description:** Exclude the opaque macOS `com.apple.metadata:kMDLabel_*` metadata-label family from synchronization and explain a failed `add` baseline blocker in human-readable terms.
+- **Outcome:** Ambient macOS label metadata does not prevent an otherwise safe mapping from being admitted, while a genuinely unknown managed extended attribute reports its path, endpoint, and attribute name without leaking its value.
+- **Scope (in):** Exact prefix-based exclusion for nonempty `kMDLabel_` suffixes; preserved blocking behavior for unrelated unknown attributes; concise human failed-add baseline diagnostics; fixture coverage; and documentation.
+- **Scope (out):** Broad `com.apple.metadata` exclusions; synchronization of label metadata; xattr-value display; changes to baseline safety, destination ownership, or arbitrary unknown xattr policy.
+- **Depends on:** 009, 030
+- **Governed by:** C-02, C-05, C-09, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-16 after a contained-tree add was blocked by a destination-only `com.apple.metadata:kMDLabel_*` attribute.
+- **Notes:** The exact prefix is ambient macOS label metadata. Its value remains unmanaged and must never appear in human or JSON diagnostics. Unknown attributes outside this narrowly named family remain blocking.
+
+### 032 — Current Status Entries  [status: implemented]
+
+- **Spec dir:** `specs/032-current-status-entries`
+- **Description:** Show each current managed entry in human `grip status` output, rather than reporting only its count.
+- **Outcome:** Operators can identify current entries alongside actionable push, pull, conflict, and baseline groups without changing machine output or operation semantics.
+- **Scope (in):** Deterministic human `Current:` section for current records; clean-status coverage; mixed-status coverage; documentation; and isolated renderer tests.
+- **Scope (out):** Classification changes; JSON changes; altered exit behavior; metadata diagnostics; new selectors; or synchronization planning changes.
+- **Depends on:** 015, 029
+- **Governed by:** C-02, C-05, C-08, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-16 that the human status summary must identify the entry described by its current count.
+- **Notes:** Current records use `=` between their already-rendered source and destination identities. Existing action groups and their stable ordering remain unchanged.
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -445,4 +481,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.13.5 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16
+**Version**: 1.17.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16

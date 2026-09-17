@@ -21,6 +21,8 @@ pub const EXCLUDED_XATTRS: [&[u8]; 7] = [
     b"com.apple.root.installed",
 ];
 
+const AMBIENT_LABEL_XATTR_PREFIX: &[u8] = b"com.apple.metadata:kMDLabel_";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XattrPolicy {
     Synchronized,
@@ -31,7 +33,11 @@ pub enum XattrPolicy {
 pub fn xattr_policy(name: &[u8]) -> XattrPolicy {
     if SYNCHRONIZED_XATTRS.contains(&name) {
         XattrPolicy::Synchronized
-    } else if EXCLUDED_XATTRS.contains(&name) {
+    } else if EXCLUDED_XATTRS.contains(&name)
+        || name
+            .strip_prefix(AMBIENT_LABEL_XATTR_PREFIX)
+            .is_some_and(|suffix| !suffix.is_empty())
+    {
         XattrPolicy::Excluded
     } else {
         XattrPolicy::Unknown

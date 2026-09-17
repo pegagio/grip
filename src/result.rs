@@ -1016,6 +1016,7 @@ pub fn render(outcome: CommandOutcome, mode: OutputMode, writer: &mut dyn Write)
                 outcome.message.clone()
             };
             writeln!(writer, "{message}")?;
+            render_human_baseline_add_blockers(&outcome.details, writer)?;
             render_human_metadata_details(&outcome.details, writer)?;
             if let Some(conflicts) = outcome.details.get("conflicts").and_then(Value::as_array) {
                 for conflict in conflicts {
@@ -1895,6 +1896,9 @@ fn render_human_concise_mapping(
     outcome: &CommandOutcome,
     writer: &mut dyn Write,
 ) -> io::Result<bool> {
+    if outcome.category != ResultCategory::Success {
+        return Ok(false);
+    }
     let operation = outcome.details.get("operation").and_then(Value::as_str);
     match operation {
         Some("add") => {
@@ -1951,7 +1955,7 @@ fn render_human_status(
         return writeln!(writer, "Status: no managed entries found.");
     }
 
-    let mut current = 0;
+    let mut current = Vec::new();
     let mut conflicts = Vec::new();
     let mut push = Vec::new();
     let mut pull = Vec::new();
@@ -1962,7 +1966,7 @@ fn render_human_status(
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            current += 1;
+            current.push((index, record));
         } else if record
             .get("blocking")
             .and_then(Value::as_bool)
@@ -1980,15 +1984,16 @@ fn render_human_status(
 
     write!(
         writer,
-        "Status: {} {} checked; {current} current",
+        "Status: {} {} checked; {} current",
         records.len(),
-        singular_or_plural(records.len(), "entry", "entries")
+        singular_or_plural(records.len(), "entry", "entries"),
+        current.len()
     )?;
-    if conflicts.is_empty() && push.is_empty() && pull.is_empty() && needs_baseline.is_empty() {
+    let no_action_needed =
+        conflicts.is_empty() && push.is_empty() && pull.is_empty() && needs_baseline.is_empty();
+    if no_action_needed {
         writeln!(writer, "; no action needed.")?;
-        return Ok(());
-    }
-    if !push.is_empty() {
+    } else if !push.is_empty() {
         write!(writer, "; {} to push", push.len())?;
     }
     if !pull.is_empty() {
@@ -2005,7 +2010,14 @@ fn render_human_status(
     if !needs_baseline.is_empty() {
         write!(writer, "; {} needs baseline", needs_baseline.len())?;
     }
-    writeln!(writer, ".")?;
+    if !no_action_needed {
+        writeln!(writer, ".")?;
+    }
+
+    render_human_status_section("Current", "=", &current, source_paths, guidance, writer)?;
+    if no_action_needed {
+        return Ok(());
+    }
 
     render_human_status_section(
         "Changes to push",
@@ -2332,6 +2344,52 @@ fn render_human_metadata_details(
     Ok(())
 }
 
+fn render_human_baseline_add_blockers(
+    details: &Map<String, Value>,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    if details.get("operation").and_then(Value::as_str) != Some("baseline_accept")
+        || details.get("reason").and_then(Value::as_str) != Some("baseline_not_acceptable")
+    {
+        return Ok(());
+    }
+    let Some(records) = details.get("records").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for record in records {
+        let Some(findings) = record
+            .get("compatibility_findings")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for finding in findings.iter().filter(|finding| {
+            finding.get("blocking").and_then(Value::as_bool) == Some(true)
+                && finding.get("reason").and_then(Value::as_str) == Some("unknown_xattr")
+        }) {
+            let endpoint = finding
+                .get("endpoint")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let path = if endpoint == "source" {
+                classification_path(record, "source_path")
+            } else {
+                classification_path(record, "destination_path")
+            };
+            let attribute = finding
+                .get("required")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            writeln!(writer, "Blocked entry: {path}")?;
+            writeln!(
+                writer,
+                "  {endpoint} has an unknown managed extended attribute: {attribute}"
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn recovery_reference(reference: &Value) -> String {
     match reference.get("kind").and_then(Value::as_str) {
         Some("payload") => format!(
@@ -2614,7 +2672,7 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "Status: 6 entries checked; 1 current; 1 to push; 1 to pull; 1 conflict; 2 needs baseline.\n\nChanges to push:\n  main.py -> ~/push\n\nChanges to pull:\n  ../shared/config.yml <- ~/pull\n\nConflicts:\n  ../README.md <-> ~/conflict\n    Blocked: Grip cannot safely proceed with this managed entry.\n\nNeeds baseline:\n  new-file >-< ~/deleted\n  reconcile >-< ~/migration\n"
+            "Status: 6 entries checked; 1 current; 1 to push; 1 to pull; 1 conflict; 2 needs baseline.\n\nCurrent:\n  current = ~/current\n\nChanges to push:\n  main.py -> ~/push\n\nChanges to pull:\n  ../shared/config.yml <- ~/pull\n\nConflicts:\n  ../README.md <-> ~/conflict\n    Blocked: Grip cannot safely proceed with this managed entry.\n\nNeeds baseline:\n  new-file >-< ~/deleted\n  reconcile >-< ~/migration\n"
         );
     }
 

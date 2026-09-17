@@ -147,6 +147,40 @@ fn human_status_renders_a_compact_push_section() {
 }
 
 #[test]
+fn human_status_lists_current_entries_before_action_sections() {
+    let (root, metadata_dir, _) = fixture();
+    let source = root.path().join("pending-source");
+    let destination = root.path().join("pending-destination");
+    fs::write(&source, "source").unwrap();
+    fs::write(&destination, "destination").unwrap();
+    assert!(
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["add", "pending-source", "~/pending-destination"],
+        )
+        .status
+        .success()
+    );
+
+    let status = support::project_command(root.path(), &metadata_dir, &["status"]);
+    assert!(status.status.success());
+    let human = String::from_utf8(status.stdout).unwrap();
+    let current = format!(
+        "Current:\n  source = {}",
+        fs::canonicalize(root.path().join("destination"))
+            .unwrap()
+            .display()
+    );
+    assert!(human.contains(&current), "{human}");
+    assert!(human.contains("Changes to push:"), "{human}");
+    assert!(
+        human.find("Current:") < human.find("Changes to push:"),
+        "{human}"
+    );
+}
+
+#[test]
 fn human_status_renders_initial_matches_as_needing_a_baseline() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
@@ -388,7 +422,12 @@ fn human_status_distinguishes_clean_and_empty_scopes() {
     let clean = support::project_command(root.path(), &metadata_dir, &["status"]);
     assert_eq!(
         String::from_utf8(clean.stdout).unwrap(),
-        "Status: 1 entry checked; 1 current; no action needed.\n"
+        format!(
+            "Status: 1 entry checked; 1 current; no action needed.\n\nCurrent:\n  source = {}\n",
+            fs::canonicalize(root.path().join("destination"))
+                .unwrap()
+                .display(),
+        )
     );
 
     let empty_root = tempfile::tempdir().unwrap();

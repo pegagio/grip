@@ -50,9 +50,13 @@ There are no public command families or aliases for `mapping`, `validate`, `chec
 
 Tree membership is defined by source-side discovery and `.gripignore`. Ignored entries are outside Grip's active membership. A direct ignore-file edit is therefore a policy change: it prunes relevant state and a later unignore is treated as new membership rather than a restored history.
 
-A tree source may be strictly beneath its own resolved destination root, enabling a repository `home/` tree to map to `~/`. This is a narrow exception: equal roots, destination-beneath-source roots, file containment, and cross-mapping ownership conflicts remain invalid. Destination inspection is limited to exact current or retained managed identities, so unrelated destination siblings are not enumerated, classified, baselined, or used as drift evidence.
+A tree source may be strictly beneath its own resolved destination root, enabling a repository `home/` tree to map to `~/`. A disjoint exact file mapping may reserve one destination leaf beneath that contained tree destination when the tree source has no corresponding member: for example, `git/ignore -> ~/.gitignore` may coexist with `home/ -> ~/` only while `home/.gitignore` is absent. A current or later tree source member at that leaf blocks the registry rather than creating two owners. Equal roots, destination-beneath-source roots, file containment, and all other cross-mapping ownership conflicts remain invalid. Destination inspection is limited to exact current or retained managed identities, so unrelated destination siblings are not enumerated, classified, baselined, or used as drift evidence.
 
 For an admitted contained-source mapping, Grip compares every active managed relative path with the destination-relative source location using component boundaries. Equal, ancestor, and descendant relations block as `recursive_member_topology`; disjoint paths remain safe. The diagnostic identifies the relation and resolved pair, and an intentionally unmanaged unsafe subtree must be excluded through ordinary `.gripignore` policy. Force and narrow selectors do not override the mapping-wide topology blocker.
+
+The metadata boundary remains allowlist-based. Grip ignores opaque macOS `com.apple.metadata:kMDLabel_<opaque-id>` attributes as ambient label state; it neither compares nor transfers them. Unknown attributes outside this family remain safety blockers. When such an attribute prevents `add`, human output names the affected managed file, endpoint, and attribute name but never its value.
+
+Human status output identifies each current managed entry as `source = destination`, including when the entire nonempty scope is current. It retains separate stable sections for entries needing action; JSON status preserves the complete machine-readable record set.
 
 ## Inspection and synchronization
 

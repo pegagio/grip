@@ -1054,6 +1054,78 @@ fn force_add_without_one_equal_destination_owner_does_not_publish_metadata() {
 }
 
 #[test]
+fn rejected_human_add_does_not_render_successful_mapping_output() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    fs::write(root.path().join("source"), "source").unwrap();
+    fs::write(root.path().join("destination"), "destination").unwrap();
+
+    let rejected = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "--force", "source", "~/destination"],
+    );
+    assert!(!rejected.status.success());
+    let human = String::from_utf8(rejected.stdout).unwrap();
+    assert!(human.starts_with("Error:"), "{human}");
+    assert!(!human.contains("Mapped:"), "{human}");
+}
+
+#[test]
+fn add_excludes_opaque_ambient_label_xattrs() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "payload").unwrap();
+    fs::write(&destination, "payload").unwrap();
+    support::set_fixture_xattr(
+        &destination,
+        "com.apple.metadata:kMDLabel_opaque-label",
+        b"ambient-value-must-not-be-managed",
+    );
+
+    let added = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "source", "destination"],
+    );
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stdout)
+    );
+    assert_eq!(fs::read_to_string(destination).unwrap(), "payload");
+}
+
+#[test]
+fn rejected_human_add_names_unknown_managed_xattr_without_its_value() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "payload").unwrap();
+    fs::write(&destination, "payload").unwrap();
+    support::set_fixture_xattr(&destination, "com.example.unknown", b"secret-xattr-value");
+
+    let rejected = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["add", "source", "destination"],
+    );
+    assert!(!rejected.status.success());
+    let human = String::from_utf8(rejected.stdout).unwrap();
+    assert!(human.contains("Blocked entry:"), "{human}");
+    assert!(human.contains("/destination\n"), "{human}");
+    assert!(
+        human
+            .contains("destination has an unknown managed extended attribute: com.example.unknown"),
+        "{human}"
+    );
+    assert!(!human.contains("secret-xattr-value"), "{human}");
+}
+
+#[test]
 fn force_add_rejects_a_malformed_registry_with_multiple_equal_destination_files() {
     let root = tempfile::tempdir().unwrap();
     let metadata_dir = support::initialize_project_metadata(root.path());
