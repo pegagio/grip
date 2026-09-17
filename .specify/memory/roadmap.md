@@ -1,16 +1,19 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.17.1 -> 1.18.0
-Bump rationale: Add Feature 033 to govern global tree-ignore policy and unmanaged directory modification times.
+Version change: 1.20.0 -> 1.21.0
+Bump rationale: Record Feature 036 verification after its implementation debrief.
 
 Changes this revision:
-  - Added Feature 033 Global Ignore Policy and Directory Timestamp Boundary [implemented]
+  - Added Feature 034 Optional Modification-Time Detection [implemented]
+  - Added Feature 035 Pull Destination Selectors [in-progress]
+  - Added Feature 036 Destination Adoption [implemented]
+  - Verified Feature 036 Destination Adoption
 
-Specs affected: 033
+Specs affected: 034, 035, 036
 Open questions added/resolved: none
 
-Notes: Feature 033 flows forward from Features 003 and 009. It keeps file timestamp and all other supported directory metadata semantics intact while making directory modification time observational only.
+Notes: Feature 034 makes timestamps an explicit per-operation comparison choice. Feature 035 makes `pull` destination-oriented without changing pull's destination-winning force authority. Feature 036 permits one exact, explicit import of a destination-only regular file without broadening ordinary tree discovery; its debrief found no Must-Address issues.
 -->
 
 # Grip — Spec Roadmap
@@ -450,6 +453,42 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decisions on 2026-09-16 that the project-root `.gripignore` is a global tree policy like `.gitignore`, and that directory modification times are unmanaged.
 - **Notes:** The project policy is lowest precedence; source-root and nested policy remain narrower overrides. Existing baseline timestamps remain decodable diagnostic evidence, but complete-state equality ignores them for directories. Regular-file modification time remains managed.
 
+### 034 — Optional Modification-Time Detection  [status: implemented]
+
+- **Spec dir:** `specs/034-optional-modification-times`
+- **Description:** Ignore file and directory modification times by default, with an explicit per-operation option to compare and transfer them.
+- **Outcome:** Git checkouts and other timestamp-only changes do not create ordinary drift; `-m` and `--use-modification-time` enable timestamp comparison for one `status`, `diff`, `push`, `pull`, or `sync` operation.
+- **Scope (in):** Comparison, planning, revalidation, application, verification, CLI, documentation, and regression coverage for an opt-in timestamp policy.
+- **Scope (out):** Persistent timestamp policy configuration; changed handling for permission modes or other managed metadata; mapping ownership changes.
+- **Depends on:** 033
+- **Governed by:** C-03, C-04, C-05, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-17 that timestamp-only checkout churn must not create default drift while remaining available for explicit synchronization.
+- **Notes:** The option is deliberately operation-local, so the evidence used for classification, mutation planning, revalidation, and verification is consistent within a command.
+
+### 035 — Pull Destination Selectors  [status: in-progress]
+
+- **Spec dir:** `specs/035-pull-destination-selectors`
+- **Description:** Make `pull PATH` select a destination endpoint by default and provide `-s` and `--source` for an explicit source-space selector.
+- **Outcome:** An operator can copy a displayed destination into `grip pull` or `grip pull --force` without an extra selector flag, while source-space selection remains available and force continues to make the destination authoritative.
+- **Scope (in):** Pull parser, source/destination selector resolution, executable conflict guidance, documentation, and regression coverage including permission-only destination-winner restoration.
+- **Scope (out):** A change to pull direction, aggregate forced pull, a new mutation mode, selector changes for status, diff, push, or sync, and changes to metadata comparison policy.
+- **Depends on:** 011, 019, 034
+- **Governed by:** C-03, C-04, C-05, C-07, C-10, C-11, C-12, C-14
+- **Addresses:** Direct active-user decision on 2026-09-17 that pull arguments should be destination-semantic and a destination-side permission mode should be explicitly recoverable with `pull --force`.
+- **Notes:** This intentionally supersedes the historical pull `--destination` selector spelling. `pull --force DESTINATION` is the exact-entry destination-winner repair; ordinary pull remains conservative and never discards source-only changes.
+
+### 036 — Destination Adoption  [status: verified]
+
+- **Spec dir:** `specs/036-destination-adoption`
+- **Description:** Add explicit adoption of one existing destination-only regular file beneath an existing tree mapping through `grip pull -a|--adopt DESTINATION`.
+- **Outcome:** An operator can enroll one exact destination file as a source-defined managed tree member without a conflicting nested mapping or an external copy command, while ordinary tree discovery continues to leave destination-only content unmanaged.
+- **Scope (in):** Exact destination-space selection; source-side ancestor validation and creation of only intervening directories; copy, verification, and accepted-baseline publication; dry-run; ignored-path rejection and exact `--force` override; no-follow revalidation; human and JSON diagnostics; documentation; and isolated filesystem regression coverage.
+- **Scope (out):** Directory or bulk adoption; ambient destination traversal; automatic adoption by ordinary `pull`, `status`, or `diff`; changes to pull direction; conflict-winner selection; and automatic edits to `.gripignore`.
+- **Depends on:** 003, 004, 005, 011, 019, 034, 035
+- **Governed by:** C-02, C-03, C-04, C-05, C-07, C-09, C-10, C-11, C-12, C-14
+- **Addresses:** Direct active-user decision on 2026-09-17 that one existing destination-only file must be adoptable through Grip under a parent tree mapping, without a separate mapping or shell copy.
+- **Notes:** Adoption is intentionally an exact-path exception to source-defined tree membership. It requires a source-side directory ancestor, does not follow symbolic links, and applies `--force` only to the selected path's ignore-policy rejection. A forced adoption leaves `.gripignore` unchanged and reports precise negation rules needed for ordinary later discovery to retain membership. Verification evidence: `specs/036-destination-adoption/roadmap-reviews/debrief-20260917T165449Z.md` (`PROCEED WITH UPDATES`; no Must-Address findings).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -493,4 +532,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.18.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-16
+**Version**: 1.21.0 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-17

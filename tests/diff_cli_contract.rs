@@ -85,7 +85,7 @@ fn verbose_selected_diff_explains_grip_inspection_on_stderr_without_polluting_to
 
     let output = fixture
         .command_builder(&fixture.project_root)
-        .args(["diff", "-v", "source"])
+        .args(["diff", "-v", "-m", "source"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");

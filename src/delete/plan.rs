@@ -57,7 +57,9 @@ pub fn build(
                 DeletionAuthority::Destination => record.source_complete.clone(),
             };
             let authorized = if let Some(baseline) = record.baseline_complete.as_ref() {
-                expected_target_complete.as_ref() == Some(baseline)
+                expected_target_complete.as_ref().is_some_and(|current| {
+                    crate::classification::complete_equivalent(current, baseline)
+                })
             } else {
                 record.baseline.as_ref() == Some(&expected_target)
             };
@@ -178,6 +180,7 @@ pub fn build(
     let mut plan = DeletionPlan {
         operation: "delete",
         authority,
+        use_modification_time: false,
         plan_id: String::new(),
         scope,
         entries,
@@ -188,6 +191,17 @@ pub fn build(
     };
     plan.plan_id = digest(&plan)?;
     Ok(plan)
+}
+
+/// Bind timestamp comparison to a deletion plan so revalidation preserves the command policy.
+pub fn configure_modification_time(
+    plan: &mut DeletionPlan,
+    use_modification_time: bool,
+) -> Result<(), GripError> {
+    plan.use_modification_time = use_modification_time;
+    plan.plan_id.clear();
+    plan.plan_id = digest(plan)?;
+    Ok(())
 }
 
 fn depth(relative: &[u8]) -> usize {

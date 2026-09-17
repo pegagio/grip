@@ -1,8 +1,8 @@
 ---
 title: Mappings and managed membership
 type: concept
-sources: [S001, S004, S015, S017, S020, S025, S026]
-updated: 2026-09-15
+sources: [S001, S004, S015, S017, S020, S025, S026, S029]
+updated: 2026-09-17
 ---
 
 # Mappings and managed membership
@@ -16,6 +16,8 @@ Ownership and topology validation apply after destination resolution, so distinc
 `grip list [SOURCE]` reads declarations. `grip remove SOURCE` removes the declaration and its baseline evidence without changing either endpoint. Re-adding a mapping begins new membership and never restores a previous baseline. (S001)
 
 Tree membership comes from source-side discovery subject to `.gripignore`. Operators edit `.gripignore` directly; Grip provides no `ignore` command. (S001)
+
+`pull -a|--adopt DESTINATION` is the sole explicit exception to ordinary source-defined tree membership: it enrolls one existing destination-only regular file strictly beneath a declared tree mapping, creates only missing source ancestors, then verifies and baselines that exact set. It does not create a mapping or discover siblings. An ignored paired source path requires `--force`, which changes no `.gripignore` policy and reports the precise exemptions needed for later ordinary discovery; force does not bypass ownership, topology, metadata, source-existence, or stale-evidence checks. [Destination adoption](./destination-adoption.md) records the complete boundary. (S001) (S029)
 
 A tree source may be strictly beneath its own destination root, enabling `grip add home/ ~/` when the project is stored under that home. Grip examines only current non-ignored source members and retained accepted identities at their exact paired destination paths; unrelated destination content is outside inventory and ownership. A managed member that equals, contains, or falls beneath the destination-relative source location blocks as `recursive_member_topology`; an intentionally unmanaged unsafe subtree must be excluded explicitly through `.gripignore`. Equal roots, destinations beneath their source, contained file mappings, and cross-mapping ownership overlap remain invalid. (S001) (S004) (S025)
 

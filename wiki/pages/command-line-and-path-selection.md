@@ -2,7 +2,7 @@
 title: Command-line and path selection
 type: component
 sources: [S003, S004, S014, S015, S016, S017, S028]
-updated: 2026-09-16
+updated: 2026-09-17
 ---
 
 # Command-line and path selection
@@ -21,6 +21,8 @@ Human output is the default; `-o json` is the supported machine format. `-p` is 
 `add` accepts ordinary relative source spellings such as `./app/`, normalizes them to a project-relative declaration, and retains that normalized source. It accepts an absolute, `~`-relative, or project-relative destination declaration and retains its exact submitted spelling. (S004) (S016) (S017)
 
 Source-space selectors apply the same source normalization before lookup. Destination-aware operations resolve relative destination declarations from the selected project root, never the current directory, while preserving the declaration separately. (S016) (S017)
+
+`pull PATH` uses destination space by default; `-s` and `--source` opt into source-space selection. `status`, `diff`, `push`, `pull`, and `sync` ignore modification times by default, while `-m` and `--use-modification-time` enable comparison and transfer for that one operation. `pull -a` and `pull --adopt` are the explicit destination-only tree-file enrollment form and cannot be combined with `--source`. (S004)
 
 Default human `status` renders an actionable source path relative to the invocation directory. An ordinary displayed source path can be passed unchanged to `push` from that same directory; other source-space commands retain project-relative selector interpretation. [Mapping registry publication](./mapping-registry-publication.md) records the corresponding persisted-declaration boundary. (S004) (S016)
 

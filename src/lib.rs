@@ -460,11 +460,14 @@ fn execute_aggregate_force_push(
 }
 
 fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
+    if args.adopt {
+        return execute_adopt(args);
+    }
     if args.force {
         return execute_forced_direction(
             args.dry_run,
             args.use_modification_time,
-            args.destination,
+            !args.source,
             args.path.as_deref(),
             mutation::model::ConflictWinner::Destination,
         );
@@ -474,10 +477,10 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     let registry = registry::publication::load(&home, false)
         .map_err(|error| error.for_mapping_operation("pull"))?;
     let state = state::publication::load(&home)?;
-    let path_space = if args.destination {
-        observation::model::PathSpace::Destination
-    } else {
+    let path_space = if args.source {
         observation::model::PathSpace::Source
+    } else {
+        observation::model::PathSpace::Destination
     };
     let selector = args
         .path
@@ -528,6 +531,221 @@ fn execute_pull(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
     state::rebinding::require_mutation(&state.rebinding)?;
     let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
     Ok(CommandOutcome::mutation_applied(&applied))
+}
+
+fn execute_adopt(args: &cli::PullArgs) -> Result<CommandOutcome, GripError> {
+    let path = args.path.as_deref().ok_or_else(|| {
+        GripError::lifecycle(
+            "adopt",
+            "adopt_requires_exact_destination",
+            ResultCategory::InvalidUsage,
+            "--adopt requires one destination file selector",
+        )
+    })?;
+    let context = selected_project()?;
+    let home = selected_home()?;
+    let registry = registry::publication::load(&home, false)
+        .map_err(|error| error.for_mapping_operation("adopt"))?;
+    let state = state::publication::load(&home)?;
+    let selector =
+        resolve_portable_selector(&context, path, observation::model::PathSpace::Destination)?;
+    reject_fenced_selector(
+        &home,
+        Some(&selector),
+        observation::model::PathSpace::Destination,
+    )?;
+    let selected = observation::model::resolve_selection(
+        &registry,
+        &state.accepted,
+        Some(&selector),
+        observation::model::PathSpace::Destination,
+        "adopt",
+    )?;
+    let identity = match selected {
+        observation::model::Selection::Subtree(identity)
+            if identity.mapping.kind == mapping::MappingKind::Tree =>
+        {
+            identity
+        }
+        _ => {
+            return Err(GripError::lifecycle(
+                "adopt",
+                "adopt_requires_tree_member",
+                ResultCategory::InvalidConfiguration,
+                "--adopt requires one file strictly beneath an existing tree mapping",
+            ));
+        }
+    };
+    let identities = adoption_identities(&identity)?;
+    let ignore = discovery::ignore_policy::adoption_decision(
+        home.project_root()?,
+        &identity.mapping.source,
+        &identity.source_path(),
+    )?;
+    if ignore.ignored && !args.force {
+        return Err(GripError::lifecycle(
+            "adopt",
+            "adopt_target_ignored",
+            ResultCategory::InvalidConfiguration,
+            "selected destination maps to a source path ignored by .gripignore; rerun with --force to adopt it without changing policy",
+        ));
+    }
+    let selection = observation::model::Selection::Entries(identities.clone());
+    reject_fenced_selection(&home, &selection)?;
+    let observed = observation::inspect_adoption(&home, &registry, &state.accepted, &identities)
+        .map_err(|error| error.for_operation("adopt"))?;
+    state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("adopt"))?;
+    let entry = observed.get(&identity).ok_or_else(|| {
+        GripError::lifecycle(
+            "adopt",
+            "adopt_destination_not_found",
+            ResultCategory::InvalidConfiguration,
+            "selected destination file is not available for adoption",
+        )
+    })?;
+    if entry.source.is_some() {
+        return Err(GripError::lifecycle(
+            "adopt",
+            "adopt_source_exists",
+            ResultCategory::InvalidConfiguration,
+            "selected destination already has a source-side entry",
+        ));
+    }
+    if entry.destination.as_ref().map(|state| state.node_kind)
+        != Some(discovery::model::NodeKind::File)
+        || entry.destination_complete.is_none()
+    {
+        return Err(GripError::lifecycle(
+            "adopt",
+            "adopt_destination_not_regular_file",
+            ResultCategory::InvalidConfiguration,
+            "selected destination must be a supported regular file",
+        ));
+    }
+    if entry.blocking {
+        let reason = entry
+            .unsupported
+            .first()
+            .map(String::as_str)
+            .unwrap_or_else(|| {
+                entry
+                    .metadata_findings
+                    .iter()
+                    .find(|finding| finding.blocking)
+                    .map(|finding| finding.message.as_str())
+                    .unwrap_or("unsupported metadata")
+            });
+        let detail = entry
+            .metadata_findings
+            .iter()
+            .find(|finding| finding.blocking)
+            .map(|finding| {
+                format!(
+                    " at {} ({:?}: {})",
+                    finding.path_display, finding.field, finding.required
+                )
+            })
+            .unwrap_or_default();
+        return Err(GripError::lifecycle(
+            "adopt",
+            "adopt_unsupported_evidence",
+            ResultCategory::InvalidConfiguration,
+            &format!(
+                "selected destination cannot be adopted because its evidence is unsupported: {reason}{detail}"
+            ),
+        ));
+    }
+    let records = observed
+        .values()
+        .map(|entry| {
+            classification::classify_accepted_with_options(
+                entry,
+                &state.accepted,
+                comparison_options(args.use_modification_time),
+            )
+        })
+        .collect::<Vec<_>>();
+    let scope = classification_scope(
+        &selection,
+        Some(&selector),
+        observation::model::PathSpace::Destination,
+    );
+    let mut plan = mutation::plan::build_adopt(scope, records)?;
+    mutation::plan::configure_modification_time(&mut plan, args.use_modification_time)?;
+    plan.adoption_policy_digest = Some(ignore.policy_digest.clone());
+    if args.dry_run || !plan.blockers.is_empty() || plan.actions.is_empty() {
+        let outcome = CommandOutcome::mutation_plan(
+            &plan,
+            if args.dry_run { "dry_run" } else { "execute" },
+            state.accepted.generation,
+        );
+        return Ok(if ignore.ignored {
+            outcome.with_adoption_warning(ignore.recommendation_path, ignore.recommendation_rules)
+        } else {
+            outcome
+        });
+    }
+    revalidate_project_for_mutation()?;
+    state::rebinding::require_mutation(&state.rebinding)?;
+    let applied = mutation::execution::execute(&home, &registry, &state, &selection, &plan)?;
+    let outcome = CommandOutcome::mutation_applied(&applied);
+    Ok(if ignore.ignored {
+        outcome.with_adoption_warning(ignore.recommendation_path, ignore.recommendation_rules)
+    } else {
+        outcome
+    })
+}
+
+fn adoption_identities(
+    target: &observation::model::EntryIdentity,
+) -> Result<Vec<observation::model::EntryIdentity>, GripError> {
+    let root = &target.mapping.source;
+    let root_metadata = std::fs::symlink_metadata(root)
+        .map_err(|error| GripError::from_io("could not inspect adoption source root", error))?;
+    if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+        return Err(GripError::lifecycle(
+            "adopt",
+            "adopt_requires_source_ancestor",
+            ResultCategory::InvalidConfiguration,
+            "selected file has no safe existing source-side ancestor directory",
+        ));
+    }
+    let components = target
+        .relative_path
+        .split(|byte| *byte == b'/')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+    let mut relative = Vec::new();
+    let mut identities = Vec::new();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        if !relative.is_empty() {
+            relative.push(b'/');
+        }
+        relative.extend_from_slice(component);
+        let identity =
+            observation::model::EntryIdentity::new(target.mapping.clone(), relative.clone())
+                .map_err(|message| GripError::InvalidConfiguration(message.into()))?;
+        match std::fs::symlink_metadata(identity.source_path()) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                return Err(GripError::lifecycle(
+                    "adopt",
+                    "adopt_source_ancestor_unsafe",
+                    ResultCategory::InvalidConfiguration,
+                    "selected file has an unsafe source-side ancestor",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => identities.push(identity),
+            Err(error) => {
+                return Err(GripError::from_io(
+                    "could not inspect adoption source ancestor",
+                    error,
+                ));
+            }
+        }
+    }
+    identities.push(target.clone());
+    Ok(identities)
 }
 
 fn execute_forced_direction(
@@ -627,7 +845,8 @@ fn execute_forced_direction(
         // Ordinary planning blocks one-sided absence. An exact forced direction is the
         // explicit authority that discharges only that blocker.
         records[0].blocking = false;
-        let plan = delete::plan::build(authority, scope, records)?;
+        let mut plan = delete::plan::build(authority, scope, records)?;
+        delete::plan::configure_modification_time(&mut plan, use_modification_time)?;
         let baseline = mutation::model::BaselineOutcome {
             outcome: "not_attempted".into(),
             prior_generation: state.accepted.generation,
@@ -773,9 +992,10 @@ fn exact_resolution_selection(
                 Err(resolution_selector_error(requested))
             }
         }
-        Selection::All | Selection::Subtree(_) | Selection::Unmanaged(_) => {
-            Err(resolution_selector_error(requested))
-        }
+        Selection::All
+        | Selection::Entries(_)
+        | Selection::Subtree(_)
+        | Selection::Unmanaged(_) => Err(resolution_selector_error(requested)),
     }
 }
 
@@ -795,6 +1015,9 @@ fn reject_fenced_selection(
         | observation::model::Selection::Subtree(identity) => {
             fence.protects_resolved(&identity.mapping)
         }
+        observation::model::Selection::Entries(identities) => identities
+            .iter()
+            .any(|identity| fence.protects_resolved(&identity.mapping)),
         observation::model::Selection::Unmanaged(_) => false,
     };
     if selected {
@@ -931,6 +1154,9 @@ fn execute_inspection(
             observation::model::Selection::Entry(identity)
             | observation::model::Selection::Subtree(identity) => {
                 (identity.source_path(), identity.destination_path())
+            }
+            observation::model::Selection::Entries(_) => {
+                unreachable!("diff does not select multiple exact entries")
             }
             observation::model::Selection::All | observation::model::Selection::Unmanaged(_) => {
                 unreachable!("a supplied selector is exact")
@@ -1069,6 +1295,12 @@ fn classification_scope(
         Selection::Entry(identity) => {
             ("entry", Some(identity.mapping.source.display().to_string()))
         }
+        Selection::Entries(identities) => (
+            "entries",
+            identities
+                .first()
+                .map(|identity| identity.mapping.source.display().to_string()),
+        ),
         Selection::Subtree(identity) => (
             "subtree",
             Some(identity.mapping.source.display().to_string()),

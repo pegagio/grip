@@ -58,7 +58,6 @@ fn aggregate_tree_conflicts_preserve_force_scope_and_machine_contracts() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination.to_str().unwrap(),
         ],
     );

@@ -75,7 +75,8 @@ Human `grip status` names every current managed entry in a `Current:` section us
 grip status [-e|--exit-code] [-m|--use-modification-time] [-d|--destination] [PATH]
 grip diff [-m|--use-modification-time] [-d|--destination] [PATH]
 grip push [-n|--dry-run] [-m|--use-modification-time] [-f|--force] [-d|--destination] [PATH]
-grip pull [-n|--dry-run] [-m|--use-modification-time] [-f|--force] [-d|--destination] [PATH]
+grip pull [-n|--dry-run] [-m|--use-modification-time] [-f|--force] [-s|--source] [PATH]
+grip pull [-n|--dry-run] [-m|--use-modification-time] [-f|--force] -a|--adopt DESTINATION
 grip sync [-n|--dry-run] [-m|--use-modification-time] [-d|--destination] [PATH]
 ```
 
@@ -93,7 +94,9 @@ args = ["--diff"]
 
 Grip invokes the program as `code --diff SOURCE DESTINATION` and leaves standard output entirely to that program. Add `-v` or `--verbose` to a selected human diff, for example `grip diff -v git/ignore`, when you want Grip's readable inspection explanation on standard error before the tool runs. `args = ["--literal-option"]` supplies literal arguments before the source and destination paths. Project fields replace matching global fields, including the complete `args` array. `GRIP_EXTERNAL_DIFF` is executable-only and receives exactly the two endpoints, so use a wrapper when it needs options. Grip never uses a shell. JSON output and unselected `grip diff` remain read-only and never launch a tool.
 
-Source selectors for mapping commands, `status`, `diff`, `pull`, and `sync` use project-relative source space. A relative source selector for `push` is resolved from the current working directory so an ordinary source path displayed by `grip status` can be used directly from that same directory. Absolute source selectors remain invalid. `--destination` selects in destination space where supported; `--` terminates option parsing for dash-prefixed paths.
+Source selectors for mapping commands, `status`, `diff`, and `sync` use project-relative source space. `pull PATH` selects in destination space by default; use `-s` or `--source` to select the corresponding source path instead. A relative source selector for `push` is resolved from the current working directory so an ordinary source path displayed by `grip status` can be used directly from that same directory. Absolute source selectors remain invalid. `--destination` selects in destination space where supported by the other commands; `--` terminates option parsing for dash-prefixed paths.
+
+Ordinary tree membership remains source-defined, so it never imports destination-only files. To intentionally bring one existing destination regular file under an existing tree mapping into the source, use `grip pull --adopt DESTINATION` (or `-a`). Grip copies only that file and any missing source ancestors, then verifies and baselines that exact set; it never creates a separate mapping or imports siblings. Adoption requires a destination path strictly below a tree mapping and cannot be combined with `--source`. If the corresponding source path is ignored, the ordinary command refuses it. `grip pull --adopt --force DESTINATION` overrides only that ignore eligibility for this adoption, changes no `.gripignore` file, and reports the exact rules to add if ordinary discovery should retain the member later. It does not override ownership, topology, metadata, source-existence, or stale-evidence blockers.
 
 Grip compares the current source, current destination, and last accepted baseline. Adding unequal existing endpoints records the destination as that mapping's initial comparison reference without copying either side, so the source is immediately offered as an ordinary push. It propagates unambiguous one-sided changes, reports converged or synchronized entries as no-ops, and blocks divergent conflicts until force chooses a source or destination winner. `grip push --force PATH` and `grip pull --force PATH` remain exact-entry operations; `grip push --force` without `PATH` is the explicit aggregate source-winning operation for all eligible managed entries in the selected project. Destination-only content outside source-defined managed membership remains unmanaged.
 
@@ -125,7 +128,7 @@ Changes to push:
 Conflicts:
   README.md <-> ~/workspace/README.md
     Keep source: grip push --force README.md
-    Keep destination: grip pull --force --destination ~/workspace/README.md
+    Keep destination: grip pull --force ~/workspace/README.md
 
 Needs baseline:
   CHANGELOG.md >-< ~/workspace/CHANGELOG.md

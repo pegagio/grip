@@ -667,6 +667,7 @@ pub fn test_push_plan(action_count: usize) -> grip::push::model::PushPlan {
         direction: Some(grip::mutation::model::MutationDirection::Push),
         winner: None,
         use_modification_time: true,
+        adoption_policy_digest: None,
         plan_id: "a".repeat(64),
         scope: ClassificationScope {
             kind: "all".into(),
@@ -796,7 +797,7 @@ pub fn sync_execution_fixture() -> (
         .values()
         .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let plan = grip::mutation::plan::build_sync_with_parent_requirements(
+    let mut plan = grip::mutation::plan::build_sync_with_parent_requirements(
         grip::classification::model::ClassificationScope {
             kind: "all".into(),
             path_space: grip::observation::model::PathSpace::Source,
@@ -807,6 +808,7 @@ pub fn sync_execution_fixture() -> (
         registry.missing_destination_parents(),
     )
     .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();
     (root, home, registry, state, selection, plan)
 }
 
@@ -840,7 +842,7 @@ pub fn resolution_execution_fixture(
         .values()
         .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let plan = grip::mutation::plan::build_resolution(
+    let mut plan = grip::mutation::plan::build_resolution(
         grip::classification::model::ClassificationScope {
             kind: "entry".into(),
             path_space: grip::observation::model::PathSpace::Source,
@@ -851,6 +853,7 @@ pub fn resolution_execution_fixture(
         winner,
     )
     .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();
     (root, home, registry, state, selection, plan)
 }
 
@@ -894,7 +897,7 @@ pub fn mixed_sync_execution_fixture() -> (
         .values()
         .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let plan = grip::mutation::plan::build_sync_with_parent_requirements(
+    let mut plan = grip::mutation::plan::build_sync_with_parent_requirements(
         grip::classification::model::ClassificationScope {
             kind: "all".into(),
             path_space: grip::observation::model::PathSpace::Source,
@@ -905,6 +908,7 @@ pub fn mixed_sync_execution_fixture() -> (
         registry.missing_destination_parents(),
     )
     .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();
     (root, home, registry, state, selection, plan)
 }
 

@@ -134,6 +134,20 @@ pub fn build_for(
     )
 }
 
+/// Build the exact destination-to-source plan used by explicit destination adoption.
+pub fn build_adopt(
+    scope: ClassificationScope,
+    records: Vec<ClassificationRecord>,
+) -> Result<MutationPlan, GripError> {
+    build_with_parents(
+        MutationOperation::Adopt,
+        None,
+        scope,
+        records,
+        BTreeMap::new(),
+    )
+}
+
 /// Build one exact-entry conflict resolution plan for an explicit winner.
 pub fn build_resolution(
     scope: ClassificationScope,
@@ -380,13 +394,17 @@ fn build_with_parents(
                                 origin.node_kind == target.node_kind
                                     && origin.content == target.content
                             });
-                        let restoring_missing_source = operation == MutationOperation::Resolve
+                        let restoring_missing_source = (operation == MutationOperation::Resolve
                             && winner == Some(ConflictWinner::Destination)
                             && matches!(
                                 record.classification,
                                 Classification::SourceSideDeletion
                                     | Classification::DeleteChangeConflict
-                            );
+                            ))
+                            || (operation == MutationOperation::Adopt
+                                && record.source.is_none()
+                                && record.classification
+                                    == Classification::DestinationOnlyUnmanaged);
                         let kind = match complete_kind {
                             NodeKind::File if restoring_missing_source => ActionKind::AddFile,
                             NodeKind::Directory if restoring_missing_source => {
@@ -545,13 +563,14 @@ fn build_with_parents(
         operation,
         direction: match operation {
             MutationOperation::Push => Some(MutationDirection::Push),
-            MutationOperation::Pull => Some(MutationDirection::Pull),
+            MutationOperation::Pull | MutationOperation::Adopt => Some(MutationDirection::Pull),
             MutationOperation::Sync
             | MutationOperation::Resolve
             | MutationOperation::AggregateForcePush => None,
         },
         winner,
         use_modification_time: true,
+        adoption_policy_digest: None,
         plan_id: String::new(),
         scope,
         acceptance_identities: entries
@@ -858,6 +877,15 @@ pub fn disposition_for_operation(
         MutationOperation::Pull => {
             disposition_for_direction(MutationDirection::Pull, classification, blocking)
         }
+        MutationOperation::Adopt => {
+            if blocking {
+                Disposition::Blocked
+            } else if classification == Classification::DestinationOnlyUnmanaged {
+                Disposition::Action
+            } else {
+                Disposition::NoAction
+            }
+        }
         MutationOperation::Sync => {
             if blocking {
                 return Disposition::Blocked;
@@ -906,6 +934,9 @@ pub(crate) fn resolution_is_actionable(
     ) || matches!(
         (winner, classification),
         (
+            ConflictWinner::Destination,
+            Classification::SourceOnlyChange
+        ) | (
             ConflictWinner::Source,
             Classification::DestinationSideDeletion | Classification::ChangeDeleteConflict
         ) | (
@@ -940,7 +971,7 @@ fn action_direction(
 ) -> MutationDirection {
     match operation {
         MutationOperation::Push => MutationDirection::Push,
-        MutationOperation::Pull => MutationDirection::Pull,
+        MutationOperation::Pull | MutationOperation::Adopt => MutationDirection::Pull,
         MutationOperation::Sync => {
             if classification == Classification::DestinationOnlyChange {
                 MutationDirection::Pull

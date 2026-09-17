@@ -34,6 +34,149 @@ pub fn inspect(
     Ok(second)
 }
 
+/// Inspect one explicitly selected destination-only tree member without broadening ordinary
+/// source-defined discovery. This is used solely by the `pull --adopt` mutation path.
+pub fn inspect_adoption(
+    home: &ProjectPaths,
+    registry: &RegistrySnapshot,
+    accepted: &AcceptedState,
+    identities: &[EntryIdentity],
+) -> Result<Observation, GripError> {
+    let identity = identities.first().ok_or_else(|| {
+        GripError::InvalidConfiguration("adoption requires at least one selected member".into())
+    })?;
+    let mapping = registry
+        .registry
+        .mappings()
+        .iter()
+        .find(|mapping| ResolvedMapping::from(*mapping) == identity.mapping)
+        .ok_or_else(|| {
+            GripError::InvalidConfiguration("adoption mapping is no longer declared".into())
+        })?;
+    if mapping.kind != MappingKind::Tree || identity.relative_path.is_empty() {
+        return Err(GripError::InvalidConfiguration(
+            "adoption requires a tree member below its mapping root".into(),
+        ));
+    }
+    let mut observed = Observation::new();
+    for identity in identities {
+        if identity.mapping != mapping.into() {
+            return Err(GripError::InvalidConfiguration(
+                "adoption members must belong to one tree mapping".into(),
+            ));
+        }
+        validate_adoption_ancestor_chain(&identity.mapping.source, &identity.relative_path)?;
+        validate_adoption_ancestor_chain(&identity.mapping.destination, &identity.relative_path)?;
+        let source_complete = inspect_complete_supported(&identity.source_path())?;
+        let source_blocking =
+            match crate::discovery::filesystem::metadata_at_path(&identity.source_path()) {
+                Ok(metadata)
+                    if metadata.classify(metadata.stat.st_dev as u64) == NodeKind::Symlink =>
+                {
+                    Some("symlink")
+                }
+                Ok(_) if source_complete.is_none() => Some("wrong_node_kind"),
+                Ok(_) => None,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(GripError::from_io(
+                        "could not inspect adoption source",
+                        error,
+                    ));
+                }
+            };
+        let destination_outcome = inspect_destination_leaf(&identity.destination_path())?;
+        let (destination_complete, destination_link, destination_blocking) =
+            match destination_outcome {
+                fingerprint::RelativeCompleteObservation::Missing => (None, None, None),
+                fingerprint::RelativeCompleteObservation::Supported(complete) => {
+                    (Some(*complete), None, None)
+                }
+                fingerprint::RelativeCompleteObservation::DestinationLeafLink(link) => {
+                    (None, Some(link), None)
+                }
+                fingerprint::RelativeCompleteObservation::Blocking { reason } => {
+                    (None, None, Some(reason))
+                }
+            };
+        let source = source_complete.as_ref().map(legacy_from_complete);
+        let destination = destination_complete.as_ref().map(legacy_from_complete);
+        let membership = match (source_complete.is_some(), destination_complete.is_some()) {
+            (true, true) => Membership::Active,
+            (false, true) => Membership::DestinationOnly,
+            (true, false) => Membership::Untracked,
+            (false, false) => Membership::DestinationOnly,
+        };
+        let mut entry = ObservedEntry {
+            identity: identity.clone(),
+            membership,
+            source: source.as_ref().map(|value| value.0.clone()),
+            destination: destination.as_ref().map(|value| value.0.clone()),
+            source_complete,
+            destination_complete,
+            destination_link,
+            metadata_findings: Vec::new(),
+            endpoint_capabilities: endpoint_profiles(identity)?,
+            source_diagnostic: source.map(|value| value.1),
+            destination_diagnostic: destination.map(|value| value.1),
+            unsupported: source_blocking
+                .into_iter()
+                .map(|reason| format!("source:{reason}"))
+                .chain(
+                    destination_blocking
+                        .into_iter()
+                        .map(|reason| format!("destination:{reason}")),
+                )
+                .collect(),
+            blocking: source_blocking.is_some() || destination_blocking.is_some(),
+        };
+        append_xattr_findings(&mut entry);
+        append_bsd_flag_findings(&mut entry);
+        append_ownership_findings(&mut entry)?;
+        observed.insert(identity.clone(), entry);
+    }
+    crate::registry::publication::revalidate_readonly(home, registry, "adopt")?;
+    if identities
+        .iter()
+        .any(|identity| accepted.complete_baselines.contains_key(identity))
+    {
+        return Err(GripError::InvalidConfiguration(
+            "adoption target is already an accepted managed member".into(),
+        ));
+    }
+    Ok(observed)
+}
+
+/// Verify every parent directory through descriptor-relative, non-following traversal.
+///
+/// Exact adoption intentionally observes paths that ordinary source discovery has not admitted.
+/// Repeating this check for each action prevents a newly-created source parent or destination
+/// parent from being replaced by a link between planning and publication.
+fn validate_adoption_ancestor_chain(
+    root: &std::path::Path,
+    relative: &[u8],
+) -> Result<(), GripError> {
+    let mut directory = crate::discovery::filesystem::Directory::open(root)
+        .map_err(|error| GripError::from_io("could not open adoption tree root", error))?;
+    let components = relative
+        .split(|byte| *byte == b'/')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        directory = match directory.open_child_directory(component) {
+            Ok(child) => child,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(GripError::from_io(
+                    "adoption ancestor is not a safe directory",
+                    error,
+                ));
+            }
+        };
+    }
+    Ok(())
+}
+
 /// Inspect a proposed add registry while retaining the active registry as the revalidation
 /// authority. The candidate is never published merely to obtain baseline evidence.
 pub fn inspect_candidate(

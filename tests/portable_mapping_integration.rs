@@ -260,8 +260,8 @@ fn project_commands_resolve_source_and_destination_selectors_in_portable_spaces(
         vec!["status", "--destination", "~/destination"],
         vec!["diff", "./source/"],
         vec!["push", "--dry-run", "./source/"],
-        vec!["pull", "--dry-run", "./source/"],
-        vec!["pull", "--dry-run", "--destination", "~/destination"],
+        vec!["pull", "--dry-run", "--source", "./source/"],
+        vec!["pull", "--dry-run", "~/destination"],
         vec!["sync", "--dry-run", "./source/"],
     ] {
         let output = fixture.command(&arguments);

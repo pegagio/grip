@@ -109,11 +109,14 @@ pub struct PullArgs {
     /// Preview the complete plan without locking or mutation.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
-    /// Interpret PATH in destination space without changing pull direction.
     #[arg(short = 'f', long)]
     pub force: bool,
-    #[arg(short = 'd', long)]
-    pub destination: bool,
+    /// Adopt one destination-only regular file beneath an existing tree mapping.
+    #[arg(short = 'a', long, conflicts_with = "source")]
+    pub adopt: bool,
+    /// Interpret PATH in source space instead of the default destination space.
+    #[arg(short = 's', long)]
+    pub source: bool,
     /// Select one mapping, entry, or component-boundary subtree.
     #[arg(value_name = "PATH")]
     pub path: Option<OsString>,

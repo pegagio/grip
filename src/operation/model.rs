@@ -387,7 +387,7 @@ fn validate_common(
         || operation.is_some_and(|value| {
             !matches!(
                 value,
-                "push" | "pull" | "sync" | "resolve" | "delete" | "aggregate_force_push"
+                "push" | "pull" | "adopt" | "sync" | "resolve" | "delete" | "aggregate_force_push"
             )
         })
         || !is_digest(plan_id)

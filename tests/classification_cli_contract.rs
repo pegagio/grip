@@ -217,7 +217,7 @@ fn human_status_shows_force_choices_for_an_ordinary_divergent_conflict() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             fs::canonicalize(&destination).unwrap().display(),
             fs::canonicalize(&destination).unwrap().display(),
         )
@@ -236,7 +236,6 @@ fn human_status_shows_force_choices_for_an_ordinary_divergent_conflict() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination.to_str().unwrap(),
         ],
     );
@@ -255,7 +254,7 @@ fn human_status_explains_exact_force_choices_for_a_missing_peer() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             destination_display.display(),
             destination_display.display(),
         )
@@ -285,7 +284,7 @@ fn human_status_uses_diff_for_an_aggregate_tree_conflict() {
         "unexpected status output: {text}"
     );
     assert!(!text.contains("grip push --force source/nested/file"));
-    assert!(!text.contains("grip pull --force --destination"));
+    assert!(!text.contains("grip pull --force "));
 
     let force_push = support::project_command(
         root.path(),
@@ -320,7 +319,7 @@ fn human_status_shows_force_choices_for_an_initial_collision() {
     assert_eq!(
         String::from_utf8(status.stdout).unwrap(),
         format!(
-            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Status: 1 entry checked; 0 current; 1 conflict.\n\nConflicts:\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             fs::canonicalize(&destination).unwrap().display(),
             fs::canonicalize(&destination).unwrap().display(),
         )
@@ -339,7 +338,6 @@ fn human_status_shows_force_choices_for_an_initial_collision() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination.to_str().unwrap(),
         ],
     );

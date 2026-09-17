@@ -117,8 +117,17 @@ where
         .map(|entry| entry.identity.clone())
         .collect::<BTreeSet<_>>();
     let mut aggregate_publication_generations = BTreeMap::new();
+    let adoption_target = (operation == MutationOperation::Adopt)
+        .then(|| {
+            plan.entries
+                .iter()
+                .max_by_key(|entry| entry.identity.relative_path.len())
+                .map(|entry| entry.identity.clone())
+        })
+        .flatten();
 
     for index in 0..plan.actions.len() {
+        let adoption_policy_digest = plan.adoption_policy_digest.as_deref();
         let action = &mut plan.actions[index];
         action.status = crate::mutation::model::ActionStatus::InProgress;
         let mut failure_reason = "journal_failure";
@@ -133,6 +142,8 @@ where
                 action,
                 operation,
                 plan.use_modification_time,
+                adoption_policy_digest,
+                adoption_target.as_ref(),
             )?;
             action.milestones.revalidation = "passed".into();
             failure_reason = "journal_failure";
@@ -193,6 +204,8 @@ where
                             action,
                             operation,
                             plan.use_modification_time,
+                            adoption_policy_digest,
+                            adoption_target.as_ref(),
                         )?;
                         crate::mutation::filesystem::publish_replacement(
                             &mut staged,
@@ -275,6 +288,8 @@ where
                         action,
                         operation,
                         plan.use_modification_time,
+                        adoption_policy_digest,
+                        adoption_target.as_ref(),
                     )?;
                     crate::mutation::filesystem::replace_link_with_empty_directory(&destination)?;
                     action.milestones.publication = "visible".into();
@@ -593,8 +608,27 @@ where
         );
     }
     let final_observed = finish_or_fail!(
-        crate::observation::inspect(home, &final_registry, &locked_state.accepted, selection)
-            .map_err(|error| error.for_operation(operation_name)),
+        if operation == MutationOperation::Adopt {
+            let crate::observation::model::Selection::Entries(identities) = selection else {
+                return terminal_prebaseline_failure(
+                    receipt,
+                    plan,
+                    &locked_state,
+                    GripError::Internal("adoption execution lost exact selected identities".into()),
+                    "verification_failure",
+                );
+            };
+            crate::observation::inspect_adoption(
+                home,
+                &final_registry,
+                &locked_state.accepted,
+                identities,
+            )
+            .map_err(|error| error.for_operation(operation_name))
+        } else {
+            crate::observation::inspect(home, &final_registry, &locked_state.accepted, selection)
+                .map_err(|error| error.for_operation(operation_name))
+        },
         "verification_failure"
     );
     let final_records = final_observed
@@ -919,8 +953,21 @@ fn rebuild_plan(
 ) -> Result<MutationPlan, GripError> {
     let operation = expected.operation;
     let operation_name = operation.as_str();
-    let mut observed = crate::observation::inspect(home, registry, &state.accepted, selection)
-        .map_err(|error| error.for_operation(operation_name))?;
+    let mut observed = if operation == MutationOperation::Adopt {
+        let identities = match selection {
+            Selection::Entries(identities) => identities,
+            _ => {
+                return Err(GripError::Internal(
+                    "adoption plan has non-exact selection".into(),
+                ));
+            }
+        };
+        crate::observation::inspect_adoption(home, registry, &state.accepted, identities)
+            .map_err(|error| error.for_operation(operation_name))?
+    } else {
+        crate::observation::inspect(home, registry, &state.accepted, selection)
+            .map_err(|error| error.for_operation(operation_name))?
+    };
     let destination_link_directory = expected.actions.iter().find_map(|action| {
         (action.kind == ActionKind::ReplaceDestinationLinkDirectory)
             .then_some(action.identity.as_ref())
@@ -955,6 +1002,26 @@ fn rebuild_plan(
             expected.scope.clone(),
             records,
         ),
+        MutationOperation::Adopt => {
+            crate::mutation::plan::build_adopt(expected.scope.clone(), records).and_then(
+                |mut plan| {
+                    let identities = match selection {
+                        Selection::Entries(identities) => identities,
+                        _ => unreachable!("adoption selection was checked above"),
+                    };
+                    let target = identities
+                        .last()
+                        .expect("adoption selection has a target identity");
+                    let decision = crate::discovery::ignore_policy::adoption_decision(
+                        home.project_root()?,
+                        &target.mapping.source,
+                        &target.source_path(),
+                    )?;
+                    plan.adoption_policy_digest = Some(decision.policy_digest);
+                    Ok(plan)
+                },
+            )
+        }
         MutationOperation::Sync => crate::mutation::plan::build_sync_with_parent_requirements(
             expected.scope.clone(),
             records,
@@ -996,6 +1063,8 @@ fn revalidate_action(
     action: &crate::mutation::model::MutationAction,
     operation: MutationOperation,
     use_modification_time: bool,
+    expected_adoption_policy_digest: Option<&str>,
+    adoption_target: Option<&crate::observation::model::EntryIdentity>,
 ) -> Result<(), GripError> {
     let operation_name = operation.as_str();
     let current_registry = crate::registry::publication::load(home, false)
@@ -1010,9 +1079,38 @@ fn revalidate_action(
     let Some(identity) = &action.identity else {
         return Ok(());
     };
+    if operation == MutationOperation::Adopt {
+        let expected = expected_adoption_policy_digest.ok_or_else(|| {
+            GripError::Internal("adoption action has no ignore-policy evidence".into())
+        })?;
+        let target = adoption_target.ok_or_else(|| {
+            GripError::Internal("adoption action has no exact target identity".into())
+        })?;
+        let current = crate::discovery::ignore_policy::adoption_decision(
+            home.project_root()?,
+            &target.mapping.source,
+            &target.source_path(),
+        )?;
+        if current.policy_digest != expected {
+            return Err(stale(
+                operation,
+                "effective .gripignore policy changed before mutation action",
+            ));
+        }
+    }
     let selected = Selection::Entry(identity.clone());
-    let observed = crate::observation::inspect(home, &current_registry, &state.accepted, &selected)
-        .map_err(|error| error.for_operation(operation_name))?;
+    let observed = if operation == MutationOperation::Adopt {
+        crate::observation::inspect_adoption(
+            home,
+            &current_registry,
+            &state.accepted,
+            std::slice::from_ref(identity),
+        )
+        .map_err(|error| error.for_operation(operation_name))?
+    } else {
+        crate::observation::inspect(home, &current_registry, &state.accepted, &selected)
+            .map_err(|error| error.for_operation(operation_name))?
+    };
     if observed.values().any(|entry| {
         entry
             .unsupported
@@ -1171,6 +1269,7 @@ fn stale(operation: MutationOperation, message: &str) -> GripError {
         match operation {
             MutationOperation::Push => "stale_push_evidence",
             MutationOperation::Pull => "stale_pull_evidence",
+            MutationOperation::Adopt => "stale_adopt_evidence",
             MutationOperation::Sync => "stale_sync_evidence",
             MutationOperation::Resolve => "stale_resolution_evidence",
             MutationOperation::AggregateForcePush => "stale_aggregate_force_push_evidence",
@@ -1327,6 +1426,7 @@ fn mutation_failure(
     match operation {
         MutationOperation::Push => GripError::PushFailed(Box::new(failure)),
         MutationOperation::Pull
+        | MutationOperation::Adopt
         | MutationOperation::Sync
         | MutationOperation::Resolve
         | MutationOperation::AggregateForcePush => GripError::MutationFailed(Box::new(failure)),

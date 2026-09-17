@@ -265,7 +265,12 @@ fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() 
     let preview = support::project_command(
         fixture.root.path(),
         &fixture.metadata_dir,
-        &["--output=json", "pull", "--dry-run"],
+        &[
+            "--output=json",
+            "pull",
+            "--use-modification-time",
+            "--dry-run",
+        ],
     );
     assert!(preview.status.success());
     assert_eq!(
@@ -275,7 +280,7 @@ fn metadata_only_pull_reproduces_the_complete_destination_state_and_converges() 
     let pull = support::project_command(
         fixture.root.path(),
         &fixture.metadata_dir,
-        &["--output=json", "pull"],
+        &["--output=json", "pull", "--use-modification-time"],
     );
     assert!(
         pull.status.success(),
@@ -425,7 +430,11 @@ fn file_addition_applies_complete_metadata_before_state_v4_publication() {
     support::set_fixture_modified_time(&source, 1_600_000_001, 456);
     support::set_fixture_xattr(&source, "com.apple.TextEncoding", b"utf-8");
     support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
-    let push = support::project_command(root.path(), &metadata_dir, &["push"]);
+    let push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--use-modification-time"],
+    );
     assert!(
         push.status.success(),
         "{}",
@@ -458,9 +467,13 @@ fn full_replacement_transfers_content_and_metadata_as_one_complete_entry() {
     std::fs::write(&source, b"accepted").unwrap();
     support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
     assert!(
-        support::project_command(root.path(), &metadata_dir, &["push"])
-            .status
-            .success()
+        support::project_command(
+            root.path(),
+            &metadata_dir,
+            &["push", "--use-modification-time"],
+        )
+        .status
+        .success()
     );
 
     std::fs::write(&source, b"replacement").unwrap();
@@ -470,7 +483,11 @@ fn full_replacement_transfers_content_and_metadata_as_one_complete_entry() {
     let expected = grip::observation::fingerprint::inspect_complete(&source, NodeKind::File)
         .unwrap()
         .state;
-    let push = support::project_command(root.path(), &metadata_dir, &["push"]);
+    let push = support::project_command(
+        root.path(),
+        &metadata_dir,
+        &["push", "--use-modification-time"],
+    );
     assert!(
         push.status.success(),
         "{}",

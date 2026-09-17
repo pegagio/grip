@@ -270,7 +270,7 @@ fn first_pull_action_failure_leaves_later_actions_unattempted() {
         .values()
         .map(|entry| grip::classification::classify_accepted(entry, &state.accepted))
         .collect();
-    let plan = grip::mutation::plan::build_for(
+    let mut plan = grip::mutation::plan::build_for(
         grip::mutation::model::MutationDirection::Pull,
         grip::classification::model::ClassificationScope {
             kind: "all".into(),
@@ -281,6 +281,7 @@ fn first_pull_action_failure_leaves_later_actions_unattempted() {
         records,
     )
     .unwrap();
+    grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();
     assert_eq!(plan.actions.len(), 2);
     let error = grip::mutation::execution::execute_with_fault_hook(
         &home,

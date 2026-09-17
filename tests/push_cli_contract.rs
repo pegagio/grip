@@ -347,7 +347,7 @@ fn blocked_push_shows_force_choices_for_an_initial_collision() {
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         format!(
-            "Error: Push blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force --destination {}\n",
+            "Error: Push blocked: 1 selected; 0 action(s); 1 blocker(s)\n  source <-> {}\n    Keep source: grip push --force source\n    Keep destination: grip pull --force {}\n",
             fs::canonicalize(&destination).unwrap().display(),
             fs::canonicalize(&destination).unwrap().display(),
         )
@@ -374,7 +374,6 @@ fn blocked_push_shows_force_choices_for_an_initial_collision() {
             "pull",
             "--force",
             "--dry-run",
-            "--destination",
             destination.to_str().unwrap(),
         ],
     );
@@ -451,7 +450,7 @@ fn blocked_push_guidance_uses_a_source_selector_from_the_invocation_directory() 
         String::from_utf8(blocked.stdout)
             .unwrap()
             .contains(&format!(
-                "Keep source: grip push --force main.py\n    Keep destination: grip pull --force --destination {}",
+                "Keep source: grip push --force main.py\n    Keep destination: grip pull --force {}",
                 destination.display()
             ))
     );

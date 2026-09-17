@@ -650,6 +650,24 @@ impl CommandOutcome {
         self
     }
 
+    /// Attach advice emitted only when forced adoption overrides source ignore eligibility.
+    pub fn with_adoption_warning(
+        mut self,
+        gripignore_path: std::path::PathBuf,
+        recommended_rules: Vec<String>,
+    ) -> Self {
+        self.details.insert(
+            "warning".into(),
+            serde_json::json!({
+                "kind": "ignored_path_adopted",
+                "gripignore_path": {"display": gripignore_path},
+                "recommended_gripignore_rules": recommended_rules,
+                "message": "The adopted source path remains ignored by .gripignore; add these rules if it should remain managed by ordinary discovery."
+            }),
+        );
+        self
+    }
+
     /// Mark a mapping-list result as a source-selected human view without changing JSON details.
     pub fn with_human_mapping_selection(mut self, selected: bool) -> Self {
         self.human_mapping_selected = selected;
@@ -925,6 +943,7 @@ fn operation_title(operation: &str) -> &str {
     match operation {
         "push" => "Push",
         "pull" => "Pull",
+        "adopt" => "Adopt",
         "sync" => "Sync",
         "resolve" => "Resolution",
         "aggregate_force_push" => "Aggregate forced push",
@@ -1681,6 +1700,7 @@ fn human_mutation_direction(
     match operation {
         Some("push") | Some("aggregate_force_push") => Some("push"),
         Some("pull") => Some("pull"),
+        Some("adopt") => Some("adopt"),
         Some("sync") => Some("synchronize"),
         Some("resolve") => match details.get("winner").and_then(Value::as_str) {
             Some("source") => Some("push"),
@@ -1695,6 +1715,7 @@ fn human_mutation_title(direction: &str) -> &'static str {
     match direction {
         "push" => "Push",
         "pull" => "Pull",
+        "adopt" => "Adopt",
         "synchronize" => "Sync",
         _ => "Mutation",
     }
@@ -1834,6 +1855,13 @@ fn render_human_successful_mutation(
                 "Would pull"
             }
         }
+        "adopt" => {
+            if completed {
+                "Adopted"
+            } else {
+                "Would adopt"
+            }
+        }
         "synchronize" => {
             if completed {
                 "Synchronized"
@@ -1872,6 +1900,29 @@ fn render_human_successful_mutation(
     }
     if directory_actions > 0 {
         writeln!(writer, "Created {directory_actions} directory(ies).")?;
+    }
+    if let Some(warning) = outcome.details.get("warning") {
+        let path = warning
+            .get("gripignore_path")
+            .and_then(|value| value.get("display"))
+            .and_then(Value::as_str)
+            .unwrap_or(".gripignore");
+        let rules = warning
+            .get("recommended_gripignore_rules")
+            .and_then(Value::as_array)
+            .map(|rules| {
+                rules
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        writeln!(writer, "Note: {path} still ignores this adopted path.")?;
+        writeln!(
+            writer,
+            "  To keep it managed by ordinary discovery, add: {rules}"
+        )?;
     }
     Ok(true)
 }
@@ -2167,7 +2218,7 @@ fn render_human_force_resolution(
     writeln!(writer, "{indent}Keep source: grip push --force {source}")?;
     writeln!(
         writer,
-        "{indent}Keep destination: grip pull --force --destination {destination}"
+        "{indent}Keep destination: grip pull --force {destination}"
     )
 }
 
