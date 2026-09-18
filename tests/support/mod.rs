@@ -806,6 +806,7 @@ pub fn sync_execution_fixture() -> (
         },
         records,
         registry.missing_destination_parents(),
+        false,
     )
     .unwrap();
     grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();
@@ -906,6 +907,7 @@ pub fn mixed_sync_execution_fixture() -> (
         },
         records,
         registry.missing_destination_parents(),
+        false,
     )
     .unwrap();
     grip::mutation::plan::configure_modification_time(&mut plan, false).unwrap();

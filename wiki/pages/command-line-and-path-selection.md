@@ -2,7 +2,7 @@
 title: Command-line and path selection
 type: component
 sources: [S003, S004, S014, S015, S016, S017, S028]
-updated: 2026-09-17
+updated: 2026-09-18
 ---
 
 # Command-line and path selection
@@ -31,5 +31,7 @@ The destination declaration decision preserves lexical spelling while keeping re
 The hierarchy is an intentional pre-release replacement, so superseded commands are rejected rather than accepted as compatibility aliases. [Git-inspired command hierarchy](./git-inspired-command-hierarchy.md) records the durable decision and its force and baseline boundaries. (S014)
 
 No-selector `grip push --force` is an explicit aggregate source-winning operation across all managed project entries, while a supplied selector retains the exact-entry force contract. `grip push --force --dry-run` previews that aggregate without payload or accepted-state mutation. Verified Feature 028 makes an exact human-readable `grip diff` invoke a configured external program while preserving unselected and JSON inspection. [Initial delivery roadmap future features](./initial-delivery-roadmap-future-features.md) records its bounded scope. (S003) (S004)
+
+Specced Feature 037 narrows `sync PATH` for one exact, equal, baseline-free source-defined managed entry: it may publish accepted evidence without copying payloads. It does not add a public baseline command, permit automatic acceptance, or expand force, conflict, or broad-scope behavior. (S003)
 
 [External diff program](./external-diff-program.md) records the configuration, direct invocation, safety, and exit boundary for an exact selected diff. (S028)

@@ -69,7 +69,7 @@ Ordinary synchronization is conservative:
 - `pull` applies unambiguous destination-to-source changes.
 - `sync` combines only unambiguous changes in both directions and blocks the selected scope if a conflict remains.
 
-All three accept `-n` to render the complete plan without mutation. Ordinary operations block divergent entries, unbaselined collisions, and one-sided absence.
+All three accept `-n` to render the complete plan without mutation. An exact source-selected `sync` may establish accepted evidence without a payload copy only when the selector resolves to one complete equivalent managed entry with no baseline; no-selector, tree-root, and multi-entry scopes retain their existing no-acceptance behavior. Ordinary operations block divergent entries, unbaselined collisions, and one-sided absence.
 
 Successful action-bearing output is concise: previews begin `Would push N file(s):`, `Would pull N file(s):`, or `Would synchronize N file(s):`; completed commands begin `Pushed N file(s):`, `Pulled N file(s):`, or `Synchronized N file(s):`. `N` counts file-level payload actions, not directory setup actions. Each following row states only its actual source, destination, and arrow. This applies to forced directional resolutions as well. A no-action mutation says `Nothing to push.`, `Nothing to pull.`, or `Nothing to synchronize.` A baseline-only mutation says it would establish or established a baseline for the accepted files.
 

@@ -2,7 +2,7 @@
 title: Implementation and delivery direction
 type: decision
 sources: [S001, S002, S003, S004, S006, S008, S009, S013, S014]
-updated: 2026-09-17
+updated: 2026-09-18
 ---
 
 # Implementation and delivery direction
@@ -26,6 +26,8 @@ Features 013 and 014 complete the current path-input contract without changing t
 The current product deliberately adds no daemon, watcher, persistent index, compatibility reader, automatic Git behavior, retained payload backup, or user-facing recovery interface. Its verification surface includes current-interface rejection coverage, isolated filesystem and state tests, the repository quality gate, and explicit representative performance qualification. (S014)
 
 The roadmap records Features 014, 015, 018, and 019 as verified. Features 013, 016, and 017 remain implemented pending their roadmap transitions: they normalize source input, make status paths actionable from the invocation directory, and simplify default human output. (S003)
+
+Specced Feature 037 is deliberately a narrow planning correction: exact selected `sync` may establish accepted evidence for an equivalent initial match, while the existing ownership, revalidation, verification, force, and conflict boundaries remain unchanged. (S003)
 
 Feature 011 records a clean convergence pass, formatting, lint, default-test, and release-build validation, plus representative performance acceptance for the revised command hierarchy. (S014)
 

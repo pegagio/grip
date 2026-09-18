@@ -1023,8 +1023,9 @@ fn rebuild_plan(
         }
         MutationOperation::Sync => crate::mutation::plan::build_sync_with_parent_requirements(
             expected.scope.clone(),
-            records,
+            records.clone(),
             registry.missing_destination_parents(),
+            matches!(selection, Selection::Entry(_) | Selection::Subtree(_)) && records.len() == 1,
         ),
         MutationOperation::Resolve => {
             let winner = expected.winner.ok_or_else(|| {
