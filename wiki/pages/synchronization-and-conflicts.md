@@ -1,13 +1,15 @@
 ---
 title: Synchronization and conflicts
 type: component
-sources: [S001, S004, S023, S027]
-updated: 2026-09-17
+sources: [S001, S004, S023, S027, S030]
+updated: 2026-09-18
 ---
 
 # Synchronization and conflicts
 
 `grip push` applies only unambiguous source-to-destination changes. `grip pull` applies only unambiguous destination-to-source changes. `grip sync` combines safe changes in both directions and blocks the selected scope on any conflict. `-n` previews each operation without mutation. (S001)
+
+An exact `sync SOURCE` that resolves to one complete equivalent managed entry without an accepted baseline may publish that entry's baseline without a payload action. This acceptance-only path does not apply to no-selector, mapping-root, or multi-entry subtree sync, and it does not make unequal, absent, ignored, unsafe, unsupported, or destination-only evidence acceptable. (S030)
 
 `push -f PATH` makes the source authoritative for exactly one managed entry. `pull -f PATH` makes the destination authoritative for exactly one managed entry. Force may propagate intentional absence. It is rejected for broad, ambiguous, mapping-wide, or tree-wide selection and is unavailable to `sync`. (S001)
 

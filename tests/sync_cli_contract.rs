@@ -42,6 +42,38 @@ fn sync_preview_reports_operation_and_per_action_direction_without_mutation() {
 }
 
 #[test]
+fn selected_initial_match_cli_transcripts_distinguish_preview_from_completion() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let metadata_dir = support::initialize_project_metadata(root.path());
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::write(&source, "same").unwrap();
+    fs::write(&destination, "same").unwrap();
+    support::copy_complete_metadata(
+        &source,
+        &destination,
+        grip::discovery::model::NodeKind::File,
+    );
+    support::write_descriptor(&metadata_dir, &[("file", &source, &destination)]);
+
+    let preview =
+        support::project_command(root.path(), &metadata_dir, &["sync", "--dry-run", "source"]);
+    assert!(preview.status.success());
+    assert_eq!(
+        String::from_utf8(preview.stdout).unwrap(),
+        "Would establish a baseline for 1 file(s).\n"
+    );
+    assert!(!metadata_dir.join("state/state.json").exists());
+
+    let completed = support::project_command(root.path(), &metadata_dir, &["sync", "source"]);
+    assert!(completed.status.success());
+    assert_eq!(
+        String::from_utf8(completed.stdout).unwrap(),
+        "Established a baseline for 1 file(s).\n"
+    );
+}
+
+#[test]
 fn sync_rejects_extra_selectors() {
     let root = tempfile::tempdir_in("/private/tmp").unwrap();
     let output = support::command(root.path(), &["sync", "one", "two"]);

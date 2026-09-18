@@ -7,7 +7,7 @@ Sources are immutable inputs — the wiki never edits them.
 |----|--------|------|----------------|---------------|---------------|
 | S001 | `docs/product-definition.md` | file | 2026-09-03 | 2026-09-17 | `mappings-and-managed-membership.md` |
 | S002 | `.specify/memory/constitution.md` | file | 2026-09-03 | 2026-09-03 | `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md`, `safety-and-recovery-model.md`, `implementation-and-delivery-direction.md` |
-| S003 | `.specify/memory/roadmap.md` | file | 2026-09-03 | 2026-09-17 | `initial-delivery-roadmap.md`, `initial-delivery-roadmap-current-features.md`, `initial-delivery-roadmap-later-features.md`, `implementation-and-delivery-direction.md` |
+| S003 | `.specify/memory/roadmap.md` | file | 2026-09-03 | 2026-09-18 | `command-line-and-path-selection.md`, `implementation-and-delivery-direction.md`, `initial-delivery-roadmap.md`, `initial-delivery-roadmap-current-features.md`, `initial-delivery-roadmap-future-features.md`, `initial-delivery-roadmap-later-features.md`, `initial-delivery-roadmap-recent-features.md`, `roadmap-open-questions-recent.md`, `roadmap-open-questions.md` |
 | S004 | `README.md` | file | 2026-09-03 | 2026-09-17 | `command-line-and-path-selection.md` |
 | S005 | `specs/002-mapping-registry-ownership` | directory | 2026-09-04 | 2026-09-04 | `mappings-and-managed-membership.md`, `safety-and-recovery-model.md`, `filesystem-support-boundaries.md`, `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md`, `mapping-registry-publication.md`, `configuration-and-state.md` |
 | S006 | `specs/003-source-discovery-gripignore` | directory | 2026-09-05 | 2026-09-05 | `command-line-and-path-selection.md`, `mappings-and-managed-membership.md`, `filesystem-support-boundaries.md`, `implementation-and-delivery-direction.md`, `proportional-engineering-rigor.md`, `spec-evolution-and-merge-bounded-persistence.md` |
@@ -34,3 +34,4 @@ Sources are immutable inputs — the wiki never edits them.
 | S027 | `specs/027-aggregate-forced-push` | directory | 2026-09-16 | 2026-09-16 | `synchronization-and-conflicts.md`, `safety-and-recovery-model.md` |
 | S028 | `specs/028-configurable-external-diff` | directory | 2026-09-16 | 2026-09-16 | `external-diff-program.md`, `configuration-and-state.md`, `command-line-and-path-selection.md` |
 | S029 | `specs/036-destination-adoption` | directory | 2026-09-17 | 2026-09-17 | `destination-adoption.md`, `mappings-and-managed-membership.md` |
+| S030 | `specs/037-initial-match-sync-baseline` | directory | 2026-09-18 | 2026-09-18 | `baseline-classification-and-status.md`, `synchronization-and-conflicts.md` |

@@ -1,8 +1,8 @@
 ---
 title: Baselines, classification, and status
 type: component
-sources: [S001, S004, S018, S019, S020, S026]
-updated: 2026-09-17
+sources: [S001, S004, S018, S019, S020, S026, S030]
+updated: 2026-09-18
 ---
 
 # Baselines, classification, and status
@@ -18,6 +18,8 @@ Feature 015 introduced concise path-centered status groups. Feature 017 defines 
 For a newly added unequal source-defined member, Grip records the destination as the initial comparison reference without changing either payload. The existing classifier then presents the source as an ordinary pending push; later destination drift remains a conflict. [Mapping addition and initial baselines](./mapping-addition-and-initial-baselines.md) records the publication boundary. (S020)
 
 Unambiguous one-sided changes can synchronize normally. Divergence, initial collision, unbaselined differences, and one-sided absence block ordinary operations. Removing a mapping or ignoring an entry prunes its baseline; later reintroduction is new membership. (S001)
+
+Feature 037 defines one narrow initial-match transition: an exact source selector that resolves to one complete equivalent active managed entry may use ordinary `sync` to accept baseline evidence without copying payload. No-selector, tree-root, and multi-entry subtree scopes do not accept initial matches, and status and diff remain read-only. (S030)
 
 An exact managed destination symlink is classified as `unresolved_destination_link`, not as supported payload or accepted baseline evidence. Status and blocked dry runs identify the managed source and link path; only an executable exact source-winning force command is presented. (S026)
 

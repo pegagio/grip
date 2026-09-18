@@ -35,7 +35,17 @@ pub fn build_sync_with_parent_requirements(
     scope: ClassificationScope,
     records: Vec<ClassificationRecord>,
     requirements: Vec<ParentRequirement>,
+    accept_initial_match: bool,
 ) -> Result<MutationPlan, GripError> {
+    let records = records
+        .into_iter()
+        .map(|mut record| {
+            if accept_initial_match && record.classification == Classification::InitialMatch {
+                record.classification = Classification::ConvergedTwoSidedChange;
+            }
+            record
+        })
+        .collect();
     build_with_parent_requirements_for(MutationOperation::Sync, scope, records, requirements)
 }
 
@@ -1100,6 +1110,95 @@ fn plan_digest(plan: &MutationPlan) -> Result<String, GripError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn initial_match_record(relative_path: &[u8]) -> ClassificationRecord {
+        let mapping = crate::observation::model::ResolvedMapping {
+            kind: crate::mapping::MappingKind::Tree,
+            source: PathBuf::from("/source"),
+            destination: PathBuf::from("/destination"),
+        };
+        let identity =
+            crate::observation::model::EntryIdentity::new(mapping.clone(), relative_path.to_vec())
+                .unwrap();
+        ClassificationRecord {
+            identity: identity.clone(),
+            classification: Classification::InitialMatch,
+            mapping_kind: crate::mapping::MappingKind::Tree,
+            mapping_source: mapping.source,
+            relative_path: identity.relative_safe_path(),
+            source_path: crate::discovery::model::SafePath::from_path(&identity.source_path()),
+            destination_path: crate::discovery::model::SafePath::from_path(
+                &identity.destination_path(),
+            ),
+            source: None,
+            destination: None,
+            baseline: None,
+            source_complete: None,
+            destination_complete: None,
+            baseline_complete: None,
+            destination_link: None,
+            compatibility_findings: Vec::new(),
+            endpoint_capabilities: Vec::new(),
+            prospective_direction: crate::classification::model::Direction::None,
+            changed_dimensions: crate::classification::model::ChangedDimensions {
+                source_to_baseline: None,
+                destination_to_baseline: None,
+                source_to_destination: None,
+            },
+            attention: true,
+            blocking: false,
+            reasons: vec!["baseline_uninitialized".into()],
+        }
+    }
+
+    fn tree_scope(kind: &str, selector: Option<&str>) -> ClassificationScope {
+        ClassificationScope {
+            kind: kind.into(),
+            path_space: crate::observation::model::PathSpace::Source,
+            selector: selector.map(|value| {
+                crate::discovery::model::SafePath::from_path(std::path::Path::new(value))
+            }),
+            mapping_source: Some("/source".into()),
+        }
+    }
+
+    #[test]
+    fn sync_initial_match_acceptance_requires_the_exact_single_entry_policy() {
+        let exact = build_sync_with_parent_requirements(
+            tree_scope("subtree", Some("nested/selected")),
+            vec![initial_match_record(b"nested/selected")],
+            Vec::new(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(exact.entries[0].disposition, Disposition::AcceptOnly);
+
+        for (scope, records) in [
+            (
+                tree_scope("all", None),
+                vec![initial_match_record(b"nested/selected")],
+            ),
+            (
+                tree_scope("mapping", Some("source")),
+                vec![initial_match_record(b"nested/selected")],
+            ),
+            (
+                tree_scope("subtree", Some("nested")),
+                vec![
+                    initial_match_record(b"nested/first"),
+                    initial_match_record(b"nested/second"),
+                ],
+            ),
+        ] {
+            let plan =
+                build_sync_with_parent_requirements(scope, records, Vec::new(), false).unwrap();
+            assert!(
+                plan.entries
+                    .iter()
+                    .all(|entry| entry.disposition == Disposition::NoAction)
+            );
+        }
+    }
 
     #[test]
     fn disposition_for_covers_all_inherited_classifications() {

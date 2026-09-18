@@ -355,7 +355,7 @@ fn execute_push(args: &cli::PushArgs) -> Result<CommandOutcome, GripError> {
     let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
         .map_err(|error| error.for_operation("push"))?;
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("push"))?;
-    let records = observed
+    let records: Vec<_> = observed
         .values()
         .map(|entry| {
             classification::classify_accepted_with_options(
@@ -429,7 +429,7 @@ fn execute_aggregate_force_push(
         .map_err(|error| error.for_operation("aggregate_force_push"))?;
     state::publication::revalidate(&home, &state)
         .map_err(|error| error.for_operation("aggregate_force_push"))?;
-    let records = observed
+    let records: Vec<_> = observed
         .values()
         .map(|entry| {
             classification::classify_accepted_with_options(
@@ -932,7 +932,7 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
     let observed = observation::inspect(&home, &registry, &state.accepted, &selection)
         .map_err(|error| error.for_operation("sync"))?;
     state::publication::revalidate(&home, &state).map_err(|error| error.for_operation("sync"))?;
-    let records = observed
+    let records: Vec<_> = observed
         .values()
         .map(|entry| {
             classification::classify_accepted_with_options(
@@ -943,10 +943,15 @@ fn execute_sync(args: &cli::SyncArgs) -> Result<CommandOutcome, GripError> {
         })
         .collect();
     let scope = classification_scope(&selection, selector.as_deref(), path_space);
+    let accept_initial_match = matches!(
+        selection,
+        observation::model::Selection::Entry(_) | observation::model::Selection::Subtree(_)
+    ) && records.len() == 1;
     let mut plan = mutation::plan::build_sync_with_parent_requirements(
         scope,
         records,
         registry.missing_destination_parents(),
+        accept_initial_match,
     )?;
     mutation::plan::configure_modification_time(&mut plan, args.use_modification_time)?;
     if args.dry_run

@@ -1,20 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.21.0 -> 1.21.1
-Bump rationale: Record Feature 035 verification after its follow-up debrief resolved the validation blocker.
+Version change: 1.22.2 -> 1.22.3
+Bump rationale: Record Feature 037 verification after a no-finding implementation debrief.
 
 Changes this revision:
-  - Added Feature 034 Optional Modification-Time Detection [implemented]
-  - Added Feature 035 Pull Destination Selectors [in-progress]
-  - Added Feature 036 Destination Adoption [implemented]
-  - Verified Feature 036 Destination Adoption
-  - Verified Feature 035 Pull Destination Selectors
+  - Advanced Feature 037 Initial-Match Baseline Synchronization from implemented to verified
 
-Specs affected: 035
+Specs affected: 037
 Open questions added/resolved: none
 
-Notes: Feature 034 makes timestamps an explicit per-operation comparison choice. Feature 035 makes `pull` destination-oriented without changing pull's destination-winning force authority; its follow-up debrief resolved the prior validation blocker. Feature 036 permits one exact, explicit import of a destination-only regular file without broadening ordinary tree discovery; its debrief found no Must-Address issues.
+Notes: Feature 037 closes the observed acceptance-only sync gap for an equal discovered child beneath a tree mapping. Its implementation debrief found no findings and the feature artifacts and wiki reconciliation are committed together. It does not add a public baseline command, permit automatic acceptance, or broaden force authority.
 -->
 
 # Grip — Spec Roadmap
@@ -490,6 +486,18 @@ The following specifications form the approved path from a read-only foundation 
 - **Addresses:** Direct active-user decision on 2026-09-17 that one existing destination-only file must be adoptable through Grip under a parent tree mapping, without a separate mapping or shell copy.
 - **Notes:** Adoption is intentionally an exact-path exception to source-defined tree membership. It requires a source-side directory ancestor, does not follow symbolic links, and applies `--force` only to the selected path's ignore-policy rejection. A forced adoption leaves `.gripignore` unchanged and reports precise negation rules needed for ordinary later discovery to retain membership. Verification evidence: `specs/036-destination-adoption/roadmap-reviews/debrief-20260917T165449Z.md` (`PROCEED WITH UPDATES`; no Must-Address findings).
 
+### 037 — Initial-Match Baseline Synchronization  [status: verified]
+
+- **Spec dir:** `specs/037-initial-match-sync-baseline`
+- **Description:** Allow `grip sync PATH` to establish accepted baseline evidence for an exact source-defined managed entry whose source and destination are already equivalent but have no accepted baseline.
+- **Outcome:** An operator can clear `Needs baseline` for an equal discovered child of a tree mapping through its ordinary exact `sync` selector, without copying payloads, recreating the ancestor mapping, or adding a separate baseline command.
+- **Scope (in):** Acceptance-only synchronization for eligible exact initial matches; source-path selection beneath tree mappings; deterministic baseline publication and no-payload-change verification; dry-run behavior; human and JSON result consistency; documentation; and isolated regression coverage.
+- **Scope (out):** A public `baseline` or `accept` command; automatic acceptance from `status` or `diff`; acceptance of unequal, absent, unsupported, ignored, unsafe, or destination-only entries; changes to force scope, conflict resolution, mapping membership, state schema, or metadata policy.
+- **Depends on:** 004, 007, 011, 015, 036
+- **Governed by:** C-01, C-02, C-03, C-04, C-05, C-10, C-11
+- **Addresses:** Direct active-user decision on 2026-09-18 after a `Needs baseline` child under a tree mapping produced `Nothing to synchronize` and force correctly rejected it as lacking an established exact entry.
+- **Notes:** The feature amends the current `sync` planning gap only. Existing baseline construction already permits complete equivalent initial evidence; the operation retains the ordinary synchronization safety and verification boundary. Verification evidence: `specs/037-initial-match-sync-baseline/roadmap-reviews/debrief-20260918T184757Z.md` (`PROCEED`; no findings).
+
 ## Open Questions
 
 These questions are intentionally deferred to the specification that owns the decision. They do not change the approved feature sequence or initial-product boundary.
@@ -533,4 +541,4 @@ These notes guide specification work without prematurely resolving feature-owned
 
 ---
 
-**Version**: 1.21.1 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-17
+**Version**: 1.22.3 | **Ratified**: 2026-09-03 | **Last Amended**: 2026-09-18

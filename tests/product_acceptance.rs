@@ -313,6 +313,7 @@ fn run_partial_failure_flow(root: &Path) {
         },
         records,
         registry.missing_destination_parents(),
+        false,
     )
     .unwrap();
     assert_eq!(plan.actions.len(), 2);

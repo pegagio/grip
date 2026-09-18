@@ -2,12 +2,12 @@
 title: Initial delivery roadmap
 type: reference
 sources: [S003]
-updated: 2026-09-17
+updated: 2026-09-18
 ---
 
 # Initial delivery roadmap
 
-Roadmap version 1.21.1 records verified Features 001 through 012, 014, 015, 018, 019, 021 through 028, and 035 through 036. Features 013, 016, 017, and 029 through 034 remain implemented pending roadmap transitions; Feature 020 is abandoned because the release artifact was already below its size target. (S003)
+Roadmap version 1.22.3 records verified Features 001 through 012, 014, 015, 018, 019, 021 through 028, and 035 through 037. Features 013, 016, 017, and 029 through 034 remain implemented pending roadmap transitions; and Feature 020 is abandoned because the release artifact was already below its size target. (S003)
 
 1. **001 — CLI, Configuration, and State Foundation (`verified`):** establish the Rust application, per-user root, versioned configuration and state envelopes, and distinct human, machine, and diagnostic interfaces without payload mutation. (S003)
 2. **002 — Mapping Registry and Ownership Validation (`verified`):** define file and tree mapping intent, canonical source identity, lifecycle commands, and ambiguous or recursive topology rejection. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
@@ -21,7 +21,7 @@ Roadmap version 1.21.1 records verified Features 001 through 012, 014, 015, 018,
 10. **010 — Project-Scoped Initialization and Portable Mappings (`verified`):** replaces the global mapping model with initialized projects, committed portable declarations, exact explicit or ancestor-based selection, and isolated machine-local state. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 11. **011 — Git-Inspired Command Hierarchy (`verified`):** replaces the broad nested public surface with `init`, `version`, `add`, `list`, `remove`, `status`, `diff`, `push`, `pull`, and `sync`; retains direct `.gripignore` policy and makes Git or another selected system responsible for history and recovery. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
 12. **012 — Destination Path Forms (`verified`):** broadens destination declarations to absolute paths, `~`, and any `~/` spelling while retaining exact declaration text and project-relative source declarations. Its attributable implementation debrief recorded `PROCEED` with no findings. (S003)
-The [later features](./initial-delivery-roadmap-later-features.md) continue this ledger with Features 013 through 020, the [recent features](./initial-delivery-roadmap-recent-features.md) cover Features 021 through 026, the [future features](./initial-delivery-roadmap-future-features.md) cover Features 027 and 028, and the [current features](./initial-delivery-roadmap-current-features.md) cover Features 029 through 036. (S003)
+The [later features](./initial-delivery-roadmap-later-features.md) continue this ledger with Features 013 through 020, the [recent features](./initial-delivery-roadmap-recent-features.md) cover Features 021 through 026, the [future features](./initial-delivery-roadmap-future-features.md) cover Features 027 and 028, and the [current features](./initial-delivery-roadmap-current-features.md) cover Features 029 through 037. (S003)
 
 ## Related pages
 
